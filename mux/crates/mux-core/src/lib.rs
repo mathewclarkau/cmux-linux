@@ -13,6 +13,7 @@ mod model;
 mod mux;
 mod notify;
 mod persist;
+pub mod remote_pty;
 mod short_id;
 mod surface;
 
@@ -27,6 +28,7 @@ pub use layout::{
 };
 pub use model::{Node, Pane, Screen, State, Workspace};
 pub use mux::{Mux, MuxEvent};
+pub use remote_pty::RemoteSpec;
 pub use short_id::assign_short_ids;
 pub use surface::{
     AgentReport, AgentState, AgentStateSource, AttachFrame, AttachStream, BrowserAttachState,

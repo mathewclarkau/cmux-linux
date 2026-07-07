@@ -16,6 +16,7 @@ mod git_info;
 mod host_colors;
 mod keys;
 mod session;
+mod ssh_bootstrap;
 mod ui;
 
 use std::path::PathBuf;
@@ -51,6 +52,7 @@ USAGE:
   cmux-mux attach [OPTIONS]    Attach to an existing session's socket
   cmux-mux <verb> [OPTIONS]    Run one control-socket command
   cmux-mux claude <subcommand> Claude Code hook integration (see below)
+  cmux-mux ssh <host> [OPTS]   Open a remote workspace over SSH (see below)
 
 OPTIONS:
   --session <name>   Session name (default: main). Determines the socket path.
@@ -96,6 +98,15 @@ CLAUDE CODE HOOK INTEGRATION
   cmux-mux claude hook
       Not for interactive use — this is what install-hooks points Claude
       Code's own hook config at.
+
+REMOTE (SSH) WORKSPACES
+  cmux-mux ssh <host> [--name <workspace-name>] [--session <mux-session>]
+      Opens a workspace whose tab is a shell on <host> instead of local.
+      Builds and caches a cmuxd-remote binary for the remote's OS/arch
+      the first time (needs Go on PATH), uploads it, and starts it in
+      persistent mode: closing the tab detaches without killing the
+      remote shell, and this session's own daemon restarting reattaches
+      to it automatically (see mux/docs/getting-started.md).
 ";
 
 struct Args {
@@ -151,6 +162,9 @@ fn main() {
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("claude") {
         std::process::exit(claude_hook::run(&raw_args[1..]));
+    }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("ssh") {
+        std::process::exit(ssh_bootstrap::run(&raw_args[1..]));
     }
     if cli::is_cli_invocation(&raw_args) {
         std::process::exit(cli::run(&raw_args, USAGE));

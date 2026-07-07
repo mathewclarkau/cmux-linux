@@ -1943,6 +1943,60 @@ Example:
 {"id":108,"ok":true,"data":{"surface":1,"state":"working","source":"socket","session":"abc"}}
 ```
 
+### new-remote-workspace
+
+| Field | Value |
+| --- | --- |
+| name | `new-remote-workspace` |
+| status | implemented |
+| since | protocol 6 |
+
+Creates a workspace whose single tab is a remote shell reached through `cmuxd-remote` over SSH (see `docs/protocol.md`'s "Remote Workspaces" section and `mux-core/src/remote_pty.rs`) instead of a local pty. The caller is responsible for having already built/uploaded a `cmuxd-remote` binary for the target's OS/arch and passing its local path; the bundled `cmux-mux ssh <host>` CLI does this and is the intended entry point, not this command directly.
+
+Params:
+
+| Name | JSON type | Required/default | Constraints |
+| --- | --- | --- | --- |
+| `host` | `string` | required | SSH destination, passed to `ssh`/`scp` as-is (may be a full `user@host` or an entry in `~/.ssh/config`) |
+| `slot` | `string` | required | Groups sessions under one persistent remote daemon per host |
+| `session_id` | `string` | required | Fresh id starts a new remote shell; an existing id (e.g. from a persisted snapshot) reattaches to it |
+| `local_binary_path` | `string` | required | Local filesystem path to a `cmuxd-remote` binary built for the remote's OS/arch |
+| `name` | `string?` | default null | Workspace display name |
+| `cols` | `uint16?` | default null | Initial surface width; `rows` must also be set to take effect |
+| `rows` | `uint16?` | default null | Initial surface height; `cols` must also be set to take effect |
+
+Result:
+
+```text
+object{surface:Id}
+```
+
+Errors:
+
+| Error | Condition |
+| --- | --- |
+| `bad request: ...` | Missing fields or wrong JSON type |
+| other `Err` messages | SSH/upload/daemon-handshake failure; message is passed through from `remote_pty.rs`, not a fixed set |
+
+CLI mapping:
+
+| Item | Value |
+| --- | --- |
+| Verb | `ssh` |
+| Flags | `<host> [--name <workspace-name>] [--session <mux-session>] [--socket <path>]` |
+| Plain stdout | no output |
+| JSON stdout | exact result object |
+| Exit codes | common |
+
+Example:
+
+```json
+{"id":60,"cmd":"new-remote-workspace","host":"myhost","slot":"cmux-mux","session_id":"cmux-mux-...","local_binary_path":"/home/me/.cache/cmux-mux/cmuxd-remote-linux-amd64","name":"work"}
+{"id":60,"ok":true,"data":{"surface":7}}
+```
+
+Closing the resulting surface detaches the remote shell (`pty.detach`) rather than killing it (`pty.close`); see `docs/getting-started.md`'s "Remote (SSH) workspaces" section for the persistence/restore story and how to actually terminate a stale remote session.
+
 ## Proposed Hooks Config
 
 Hooks are proposed protocol v6 config, not a socket command. They are declared in `~/.config/cmux/mux.json` under `hooks`.

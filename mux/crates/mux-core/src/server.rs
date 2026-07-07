@@ -156,6 +156,23 @@ enum Command {
         #[serde(default)]
         rows: Option<u16>,
     },
+    /// New workspace whose tab is a `cmuxd-remote` session over SSH
+    /// instead of a local shell (see `remote_pty.rs`). Building/caching
+    /// the daemon binary for the remote's OS/arch is the caller's job
+    /// (typically `cmux-mux ssh <host>`, not this socket API directly);
+    /// `local_binary_path` must already point at one.
+    NewRemoteWorkspace {
+        host: String,
+        slot: String,
+        session_id: String,
+        local_binary_path: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        cols: Option<u16>,
+        #[serde(default)]
+        rows: Option<u16>,
+    },
     /// New screen in a workspace (default: the active one).
     NewScreen {
         #[serde(default)]
@@ -680,6 +697,16 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
         }
         Command::NewWorkspace { name, cols, rows } => {
             let surface = mux.new_workspace(name, cols.zip(rows))?;
+            Ok(json!({ "surface": surface.id }))
+        }
+        Command::NewRemoteWorkspace { host, slot, session_id, local_binary_path, name, cols, rows } => {
+            let spec = crate::remote_pty::RemoteSpec {
+                host,
+                slot,
+                session_id,
+                local_binary_path: local_binary_path.into(),
+            };
+            let surface = mux.new_remote_workspace(spec, name, cols.zip(rows))?;
             Ok(json!({ "surface": surface.id }))
         }
         Command::NewScreen { workspace, cols, rows } => {

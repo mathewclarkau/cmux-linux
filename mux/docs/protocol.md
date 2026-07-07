@@ -65,6 +65,7 @@ attach-surface
 scroll-surface
 report-agent
 list-agents
+new-remote-workspace
 ```
 
 `move-tab` moves a surface to a target pane and insertion index. It supports same-pane reorder and cross-pane moves.
@@ -181,3 +182,14 @@ Each detected notification does two things: emits `report-agent` with `state: "b
 ```
 
 The bundled TUI forwards this to the host desktop via `notify-send`. There is no socket command to trigger this deliberately — it is purely a detector on real pty output — see `spec/events.md` for the full event contract and how this differs from the still-unimplemented `notify`/notification-inbox proposal elsewhere in `spec/`.
+
+## Remote Workspaces
+
+`new-remote-workspace` creates a workspace whose tab is a `cmuxd-remote` session over SSH instead of a local shell (see `getting-started.md`'s "Remote (SSH) workspaces" and `remote_pty.rs`'s module doc for the transport). Building/caching the daemon binary for the remote's OS/arch is the caller's job — the bundled `cmux-mux ssh <host>` CLI command does it and is the intended way to use this, not calling the socket command directly:
+
+```json
+{"id":60,"cmd":"new-remote-workspace","host":"myhost","slot":"cmux-mux","session_id":"cmux-mux-...","local_binary_path":"/home/me/.cache/cmux-mux/cmuxd-remote-linux-amd64","name":"work"}
+{"id":60,"ok":true,"data":{"surface":7}}
+```
+
+`slot` groups sessions under one persistent remote daemon per host; reuse the same slot for multiple sessions on the same host. `session_id` decides fresh-vs-reattach: a new one starts a new remote shell, an existing one (e.g. from a prior run's persisted snapshot) reattaches to it, replaying scrollback. Closing the resulting surface (`close-surface`/`close-pane`/quitting the tab) detaches rather than killing the remote shell — see `getting-started.md` for how that interacts with session persistence, and for how to actually terminate a stale remote session (no socket command does that today).

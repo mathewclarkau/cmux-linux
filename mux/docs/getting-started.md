@@ -57,6 +57,41 @@ Every session (headless or local TUI) writes a snapshot of its workspace/screen/
 
 Not restored: a tab's *command*. Every restored tab is the default shell, `cd`'d into its recorded directory (visibly, briefly, before a `clear`) — if something specific was running there (a dev server, `claude --resume ...`), you'll need to relaunch it. See `mux-core/src/persist.rs` for why, and `Mux::restore_session`/`Mux::enable_persistence` for the implementation.
 
+## Remote (SSH) workspaces
+
+```bash
+cargo run -p mux-tui -- ssh <host>
+cargo run -p mux-tui -- ssh <host> --name my-remote-work
+```
+
+Opens a workspace whose tab is a shell on `<host>` instead of local, backed by
+[`cmuxd-remote`](../../daemon/remote) (vendored from upstream cmux, unmodified) speaking
+NDJSON RPC over an SSH-exec'd pipe (not a real allocated local pty — see
+`mux-core/src/remote_pty.rs`'s module doc for how `portable_pty`'s traits get
+implemented against that RPC channel instead). The first connection to a host
+builds and caches a `cmuxd-remote` binary for its OS/arch (needs Go on `PATH`;
+cross-compiles via `GOOS`/`GOARCH`, no toolchain needed on the remote), uploads
+it, and starts it in **persistent** mode: it forks a detached background daemon
+on the remote that outlives both the SSH connection and this local process.
+
+Two consequences:
+
+- **Closing the tab detaches, not kills.** The remote shell keeps running; the
+  session survives disconnecting.
+- **Restarting this session's daemon reattaches automatically**, the same way
+  local tabs' layout restores (see Session Persistence above) — a workspace's
+  first tab being remote is recorded in the snapshot (host, slot, session id,
+  and the cached binary path) and `Mux::restore_session` calls
+  `Mux::new_remote_workspace` with the same session id instead of spawning a
+  local shell. This only works for a workspace's very first tab today — a
+  second tab in a pane, or any pane a split created, has no such path
+  (`new_tab`/`split` only ever spawn local shells) and downgrades to an
+  ordinary local tab on restore, with a status message noting it.
+
+There's no verb to actually end a remote session (only detach it) — a stale one
+needs manual cleanup on the remote host (`rm -rf ~/.cmux/daemon ~/.cache/cmux-mux`
+there, or `kill` its `cmuxd-remote serve --persistent-server` process).
+
 ## Platforms and XDG
 
 cmux-mux supports macOS and Linux; Windows support via ConPTY is planned for phase 2. The TUI config path resolves `CMUX_MUX_CONFIG`, then `$XDG_CONFIG_HOME/cmux/mux.json`, then `~/.config/cmux/mux.json`.

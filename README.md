@@ -47,9 +47,19 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
    recorded directory; something you had running there needs relaunching.
    Verified via a real kill-and-restart of the compiled binary, not just
    library tests — see `mux/docs/getting-started.md`'s "Session persistence".
-5. Remote/SSH workspaces, wiring upstream's existing Go `cmuxd-remote` daemon
-   (already cross-compiles for `linux/amd64` and `linux/arm64`) into `mux-core`
-   as a transport
+5. ~~Remote/SSH workspaces~~ — done. `cmux-mux ssh <host>` opens a workspace
+   backed by upstream's existing Go `cmuxd-remote` daemon (vendored unmodified
+   in `daemon/remote/`, already cross-compiles for `linux/{amd64,arm64}`) instead
+   of a local shell. `mux-core/src/remote_pty.rs` implements `portable_pty`'s
+   `MasterPty`/`SlavePty`/`Child` traits against an SSH-exec'd NDJSON RPC pipe —
+   no real local pty involved. The first connection to a host builds/uploads/
+   starts `cmuxd-remote` in persistent mode, so it survives both the SSH
+   connection and the local `cmux-mux` process dying; closing the tab detaches
+   rather than kills, and restarting the session daemon reattaches
+   automatically for a workspace's first tab (same mechanism as #4). Verified
+   against a real sshd (localhost), including a kill-and-restart of the
+   compiled binary that reattached to the still-running remote shell — see
+   `mux/docs/getting-started.md`'s "Remote (SSH) workspaces".
 
 ### Known environment quirk (not a cmux-mux bug)
 

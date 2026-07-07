@@ -53,6 +53,10 @@ pub struct SurfaceOptions {
     pub browser_max_capture_megapixels: f64,
     /// Optional fixed browser capture scale, where 1.0 captures at pane pixels.
     pub browser_capture_scale: Option<f64>,
+    /// When set, this PTY is backed by `cmuxd-remote` over SSH instead of
+    /// a local child process (see `remote_pty.rs`). Per-spawn, not part
+    /// of a `Mux`'s default template.
+    pub remote: Option<crate::remote_pty::RemoteSpec>,
 }
 
 impl Default for SurfaceOptions {
@@ -74,6 +78,7 @@ impl Default for SurfaceOptions {
             browser_ephemeral: false,
             browser_max_capture_megapixels: 2.0,
             browser_capture_scale: None,
+            remote: None,
         }
     }
 }
@@ -242,6 +247,10 @@ pub struct PtySurface {
     /// [`pwd`](PtySurface::pwd) supersedes it once the shell reports OSC 7,
     /// but this stays as a fallback for shells that never do.
     initial_cwd: Option<String>,
+    /// Set only for a surface spawned via `SurfaceOptions.remote`. Lets
+    /// `persist.rs` capture enough to reattach the same remote session on
+    /// restore, instead of recreating this tab as a local shell.
+    remote: Option<crate::remote_pty::RemoteSpec>,
     agent: Mutex<Option<AgentReport>>,
     size: Mutex<(u16, u16)>,
     /// Live output subscribers (attach streams). Guarded by the terminal
@@ -264,12 +273,11 @@ impl Surface {
         opts: SurfaceOptions,
         mux: Weak<Mux>,
     ) -> anyhow::Result<Arc<Surface>> {
-        let pty = native_pty_system().openpty(PtySize {
-            rows: opts.rows,
-            cols: opts.cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
+        let size = PtySize { rows: opts.rows, cols: opts.cols, pixel_width: 0, pixel_height: 0 };
+        let pty = match &opts.remote {
+            Some(spec) => crate::remote_pty::open_remote_pty(spec, size)?,
+            None => native_pty_system().openpty(size)?,
+        };
 
         let argv = opts
             .command
@@ -286,10 +294,13 @@ impl Surface {
         for (k, v) in &opts.extra_env {
             cmd.env(k, v);
         }
-        let initial_cwd = opts
-            .cwd
-            .clone()
-            .or_else(|| platform::home_dir().map(|p| p.display().to_string()));
+        // The local-home-dir fallback only makes sense for a local child;
+        // for a remote surface, an unset cwd should mean "let the remote
+        // shell start wherever it normally would," not "assume it starts
+        // in this machine's $HOME."
+        let initial_cwd = opts.cwd.clone().or_else(|| {
+            opts.remote.is_none().then(platform::home_dir).flatten().map(|p| p.display().to_string())
+        });
         if let Some(cwd) = initial_cwd.as_deref() {
             cmd.cwd(cwd);
         }
@@ -342,6 +353,7 @@ impl Surface {
             title: Mutex::new(String::new()),
             pwd: Mutex::new(None),
             initial_cwd,
+            remote: opts.remote.clone(),
             agent: Mutex::new(None),
             size: Mutex::new((opts.cols, opts.rows)),
             taps: Mutex::new(Vec::new()),
@@ -540,6 +552,12 @@ impl Surface {
     /// available, otherwise the directory the surface was spawned in.
     pub fn cwd(&self) -> Option<String> {
         self.as_pty().and_then(|pty| pty.pwd.lock().unwrap().clone().or_else(|| pty.initial_cwd.clone()))
+    }
+
+    /// The `RemoteSpec` this surface was spawned with, if it's a
+    /// `cmuxd-remote` session rather than a local shell.
+    pub fn remote_spec(&self) -> Option<crate::remote_pty::RemoteSpec> {
+        self.as_pty().and_then(|pty| pty.remote.clone())
     }
 
     pub fn agent_report(&self) -> Option<AgentReport> {

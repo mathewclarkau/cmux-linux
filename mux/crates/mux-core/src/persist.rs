@@ -9,6 +9,15 @@
 //! command through `new_workspace`/`new_screen`/`split`'s spawn calls
 //! would be a reasonable follow-up; this keeps the first version to what
 //! the existing spawn APIs already support cleanly.
+//!
+//! Remote (`cmuxd-remote`) tabs are a partial exception: a workspace's
+//! very first pane's first tab reattaches to the *same remote session*
+//! (via `Mux::new_remote_workspace`, not the local-shell path at all) —
+//! see `Mux::restore_workspace`. A remote tab anywhere else in the tree
+//! (a second tab in a pane, or any pane created by a split) has no such
+//! path today - `new_tab`/`split` only ever spawn local shells - so it's
+//! captured faithfully but restored as an ordinary local tab, with a
+//! `MuxEvent::Status` noting the downgrade rather than failing silently.
 
 use serde::{Deserialize, Serialize};
 
@@ -46,12 +55,30 @@ enum LayoutSnapshot {
     Split { dir: DirSnapshot, ratio: f32, a: Box<LayoutSnapshot>, b: Box<LayoutSnapshot> },
 }
 
+/// Enough of a `RemoteSpec` to reattach the same `cmuxd-remote` session on
+/// restore. `local_binary_path` is persisted too even though it's really
+/// a cache artifact from `ssh_bootstrap` (a frontend concern, which
+/// `persist.rs`/`Mux::restore_session` otherwise know nothing about) -
+/// restore happens inside `mux-core`, with no Go toolchain access of its
+/// own, so reusing the same cached path is the only option; if that file
+/// is gone or stale, `open_remote_pty`'s upload step fails cleanly and
+/// the user reconnects manually via `cmux-mux ssh <host>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RemoteTabSnapshot {
+    host: String,
+    slot: String,
+    session_id: String,
+    local_binary_path: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct TabSnapshot {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
     cwd: Option<String>,
+    #[serde(default)]
+    remote: Option<RemoteTabSnapshot>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -140,9 +167,18 @@ fn capture_screen(state: &State, screen: &Screen) -> ScreenSnapshot {
                     .iter()
                     .map(|sid| {
                         let surface = state.surfaces.get(sid);
+                        let remote = surface.and_then(|s| s.remote_spec()).map(|spec| {
+                            RemoteTabSnapshot {
+                                host: spec.host,
+                                slot: spec.slot,
+                                session_id: spec.session_id,
+                                local_binary_path: spec.local_binary_path.to_string_lossy().into_owned(),
+                            }
+                        });
                         TabSnapshot {
                             name: surface.and_then(|s| s.name()),
                             cwd: surface.and_then(|s| s.cwd()),
+                            remote,
                         }
                     })
                     .collect(),
@@ -202,6 +238,7 @@ pub(crate) struct RestorePane<'a> {
 pub(crate) struct RestoreTab<'a> {
     pub name: Option<&'a str>,
     pub cwd: Option<&'a str>,
+    pub remote: Option<crate::remote_pty::RemoteSpec>,
 }
 
 /// Borrowed, engine-agnostic view of a snapshot for `Mux::restore` to
@@ -233,6 +270,12 @@ pub(crate) fn workspaces(snapshot: &SessionSnapshot) -> (Vec<RestoreWorkspace<'_
                                 .map(|tab| RestoreTab {
                                     name: tab.name.as_deref(),
                                     cwd: tab.cwd.as_deref(),
+                                    remote: tab.remote.as_ref().map(|r| crate::remote_pty::RemoteSpec {
+                                        host: r.host.clone(),
+                                        slot: r.slot.clone(),
+                                        session_id: r.session_id.clone(),
+                                        local_binary_path: r.local_binary_path.clone().into(),
+                                    }),
                                 })
                                 .collect(),
                         })
@@ -287,12 +330,12 @@ mod tests {
                         PaneSnapshot {
                             name: None,
                             active_tab_index: 0,
-                            tabs: vec![TabSnapshot { name: None, cwd: Some("/a".into()) }],
+                            tabs: vec![TabSnapshot { name: None, cwd: Some("/a".into()), remote: None }],
                         },
                         PaneSnapshot {
                             name: Some("logs".into()),
                             active_tab_index: 0,
-                            tabs: vec![TabSnapshot { name: None, cwd: Some("/b".into()) }],
+                            tabs: vec![TabSnapshot { name: None, cwd: Some("/b".into()), remote: None }],
                         },
                     ],
                 }],

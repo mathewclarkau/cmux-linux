@@ -134,6 +134,23 @@ impl Mux {
         Ok(surface)
     }
 
+    fn spawn_remote_surface(
+        self: &Arc<Self>,
+        remote: crate::remote_pty::RemoteSpec,
+        size: Option<(u16, u16)>,
+    ) -> anyhow::Result<Arc<Surface>> {
+        let id = self.next_id();
+        let mut opts = self.surface_options.clone();
+        opts.remote = Some(remote);
+        if let Some((cols, rows)) = size {
+            opts.cols = cols.max(1);
+            opts.rows = rows.max(1);
+        }
+        let surface = Surface::spawn(id, opts, Arc::downgrade(self))?;
+        self.state.lock().unwrap().surfaces.insert(id, surface.clone());
+        Ok(surface)
+    }
+
     fn spawn_browser_surface(
         self: &Arc<Self>,
         url: String,
@@ -268,10 +285,13 @@ impl Mux {
         let (workspaces, active_workspace) = crate::persist::workspaces(&snapshot);
         for ws in &workspaces {
             if let Err(e) = self.restore_workspace(ws) {
-                self.emit(MuxEvent::Status(format!(
-                    "failed to restore workspace {:?}: {e}",
-                    ws.name
-                )));
+                let message = format!("failed to restore workspace {:?}: {e}", ws.name);
+                // restore_session runs before the control socket is even
+                // listening, so no subscriber could possibly see this
+                // Status event live - eprintln! is the only way a headless
+                // daemon's restore failures are visible anywhere.
+                eprintln!("cmux-mux: {message}");
+                self.emit(MuxEvent::Status(message));
             }
         }
         self.select_workspace(Some(active_workspace), None);
@@ -281,7 +301,15 @@ impl Mux {
         self: &Arc<Self>,
         ws: &crate::persist::RestoreWorkspace<'_>,
     ) -> anyhow::Result<()> {
-        let first_surface = self.new_workspace(Some(ws.name.to_string()), None)?;
+        // A workspace's very first tab is the one case restore can
+        // recreate as a genuine remote reattach (via new_remote_workspace)
+        // rather than a local shell - see the persist module doc for why
+        // that's the only one.
+        let first_tab_remote = ws.screens[0].panes[0].tabs[0].remote.clone();
+        let first_surface = match first_tab_remote {
+            Some(spec) => self.new_remote_workspace(spec, Some(ws.name.to_string()), None)?,
+            None => self.new_workspace(Some(ws.name.to_string()), None)?,
+        };
         let ws_id = self.with_state(|s| s.workspaces.last().unwrap().id);
         let (screen_id, pane_id) = self.with_state(|s| {
             let pane_id = s.pane_of(first_surface.id).unwrap();
@@ -321,15 +349,38 @@ impl Mux {
             if let Some(name) = pane.name {
                 self.rename_pane(pane_id, name.to_string());
             }
-            // Tab 0 is always the pane's auto-spawned tab (from
-            // new_workspace, new_screen, or split) - a live `cd`, since
-            // none of those spawn calls take a command/cwd override for
-            // it (see the persist module doc).
-            let tab0_surface = self.with_state(|s| s.panes[&pane_id].tabs[0]);
-            if let Some(surface) = self.surface(tab0_surface) {
-                self.apply_tab(&surface, &pane.tabs[0]);
+            match &pane.tabs[0].remote {
+                // pane_id == initial_pane: restore_workspace already
+                // recreated this exact tab via new_remote_workspace;
+                // nothing left to do. Any other pane can't be remote -
+                // split()/new_tab always spawn a local shell - so it's
+                // already a (wrong) local shell; say so instead of
+                // silently pretending the reconnect worked.
+                Some(remote) if pane_id != initial_pane => {
+                    self.emit(MuxEvent::Status(format!(
+                        "restored a local shell instead of reattaching to remote session {} on {} (only a workspace's first pane can do that)",
+                        remote.session_id, remote.host
+                    )));
+                }
+                Some(_) => {}
+                None => {
+                    // Tab 0 is always the pane's auto-spawned tab (from
+                    // new_workspace, new_screen, or split) - a live `cd`,
+                    // since none of those spawn calls take a command/cwd
+                    // override for it (see the persist module doc).
+                    let tab0_surface = self.with_state(|s| s.panes[&pane_id].tabs[0]);
+                    if let Some(surface) = self.surface(tab0_surface) {
+                        self.apply_tab(&surface, &pane.tabs[0]);
+                    }
+                }
             }
             for tab in &pane.tabs[1..] {
+                if let Some(remote) = &tab.remote {
+                    self.emit(MuxEvent::Status(format!(
+                        "restored a local shell instead of reattaching to remote session {} on {} (only a workspace's first pane can do that)",
+                        remote.session_id, remote.host
+                    )));
+                }
                 let surface = self.new_tab(Some(pane_id), tab.cwd.map(str::to_string), None)?;
                 if let Some(name) = tab.name {
                     self.rename_surface(surface.id, name.to_string());
@@ -461,6 +512,30 @@ impl Mux {
         size: Option<(u16, u16)>,
     ) -> anyhow::Result<Arc<Surface>> {
         let surface = self.spawn_surface(None, size)?;
+        Ok(self.attach_new_workspace(surface, name))
+    }
+
+    /// Like [`Self::new_workspace`], but the tab is a `cmuxd-remote`
+    /// session over SSH instead of a local shell (see `remote_pty.rs`).
+    /// `remote.session_id` decides whether this creates a fresh remote
+    /// shell or reattaches to one from a prior run - callers that want
+    /// reconnect-after-restart pass back a session_id they've persisted
+    /// (see `persist.rs`'s `TabSnapshot`); a fresh one starts a new shell.
+    pub fn new_remote_workspace(
+        self: &Arc<Self>,
+        remote: crate::remote_pty::RemoteSpec,
+        name: Option<String>,
+        size: Option<(u16, u16)>,
+    ) -> anyhow::Result<Arc<Surface>> {
+        let surface = self.spawn_remote_surface(remote, size)?;
+        Ok(self.attach_new_workspace(surface, name))
+    }
+
+    /// Wraps an already-spawned surface in a brand new workspace/screen/
+    /// pane and makes it active. Shared by [`Self::new_workspace`] and
+    /// [`Self::new_remote_workspace`], which only differ in how the
+    /// surface itself gets spawned.
+    fn attach_new_workspace(self: &Arc<Self>, surface: Arc<Surface>, name: Option<String>) -> Arc<Surface> {
         let (pane_id, pane) = self.make_pane(surface.id);
         let screen_id = self.next_id();
         let ws_id = self.next_id();
@@ -483,7 +558,7 @@ impl Mux {
         }
         self.emit(MuxEvent::TreeChanged);
         self.reap_if_dead(&surface);
-        Ok(surface)
+        surface
     }
 
     /// Create a screen in a workspace (default: the active one) with one
