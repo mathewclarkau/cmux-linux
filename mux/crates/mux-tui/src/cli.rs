@@ -250,6 +250,23 @@ const VERBS: &[VerbSpec] = &[
         print: print_empty,
         stream: true,
     },
+    VerbSpec {
+        name: "report-agent",
+        // "session" collides with the global --session (mux session name)
+        // flag, so the agent's own session id is --agent-session on the
+        // CLI even though the wire protocol field is plain "session".
+        allowed: &["surface", "state", "source", "agent-session"],
+        build: build_report_agent,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
+        name: "list-agents",
+        allowed: &["surface", "state"],
+        build: build_list_agents,
+        print: print_agents,
+        stream: false,
+    },
 ];
 
 pub fn is_cli_invocation(args: &[String]) -> bool {
@@ -682,6 +699,25 @@ fn build_scroll_surface(flags: &FlagMap) -> Result<Value, UsageError> {
     }))
 }
 
+fn build_report_agent(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({
+        "surface": flags.required_u64("surface")?,
+        "state": flags.required("state")?,
+        "source": flags.required("source")?,
+    });
+    if let Some(session) = flags.optional("agent-session") {
+        value["session"] = json!(session);
+    }
+    Ok(value)
+}
+
+fn build_list_agents(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({});
+    flags.insert_optional_u64(&mut value, "surface")?;
+    flags.insert_optional_string(&mut value, "state");
+    Ok(value)
+}
+
 fn selector_request(flags: &FlagMap) -> Result<Value, UsageError> {
     match (flags.optional("index"), flags.optional("delta")) {
         (Some(_), Some(_)) => Err(UsageError("use only one of --index or --delta".to_string())),
@@ -781,6 +817,23 @@ fn parse_isize(name: &str, value: &str) -> Result<isize, UsageError> {
 }
 
 fn print_empty(_: &Value, _: &mut dyn Write) -> io::Result<()> {
+    Ok(())
+}
+
+fn print_agents(data: &Value, out: &mut dyn Write) -> io::Result<()> {
+    let Some(agents) = data.get("agents").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for agent in agents {
+        writeln!(
+            out,
+            "{} {} {} {}",
+            agent.get("surface").and_then(Value::as_u64).unwrap_or(0),
+            agent.get("state").and_then(Value::as_str).unwrap_or("unknown"),
+            agent.get("source").and_then(Value::as_str).unwrap_or("?"),
+            agent.get("session").and_then(Value::as_str).unwrap_or("-"),
+        )?;
+    }
     Ok(())
 }
 

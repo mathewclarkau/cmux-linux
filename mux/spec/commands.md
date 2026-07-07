@@ -1841,10 +1841,10 @@ Example:
 | Field | Value |
 | --- | --- |
 | name | `list-agents` |
-| status | proposed |
-| since | proposed protocol 6 |
+| status | implemented |
+| since | protocol 6 |
 
-Returns known agent status records. Records may come from detection, explicit reports, or hooks. Explicit hook-authority reports override detection for the same surface until another explicit report changes the state or the surface closes.
+Returns known agent status records. Records may come from detection, explicit reports, or hooks; **only explicit reports (`source: "hook"` or `"socket"`) are implemented in this fork** — there is no automatic detection. Explicit hook-authority reports override detection for the same surface until another explicit report changes the state or the surface closes.
 
 Params:
 
@@ -1897,10 +1897,10 @@ Example:
 | Field | Value |
 | --- | --- |
 | name | `report-agent` |
-| status | proposed |
-| since | proposed protocol 6 |
+| status | implemented |
+| since | protocol 6 |
 
-Reports agent state for a surface. This is a telemetry command and must not change focus. Reports with `source:"hook"` have hook authority and override detector-derived state. Reports with `source:"socket"` override detector-derived state but are lower priority than a newer hook report.
+Reports agent state for a surface. This is a telemetry command and must not change focus. Reports with `source:"hook"` have hook authority and override detector-derived state. Reports with `source:"socket"` override detector-derived state but are lower priority than a newer hook report (concretely: a `socket` report is rejected outright while the current report's source is `hook`, regardless of timing).
 
 Params:
 

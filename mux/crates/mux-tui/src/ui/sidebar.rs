@@ -1,17 +1,30 @@
 //! Left sidebar: a "workspaces" header (with a blank line under it),
-//! then two lines per workspace (name, then the active pane's title)
-//! with a blank line between workspaces, and a new-workspace row at the
-//! end. Uses the terminal's default background so it blends with pane
-//! content; only the active workspace rows get a highlight. Owns its
-//! full column including the status-bar row (the status bar starts
-//! after the sidebar). Rebuilds the click hit map as it draws.
+//! then two lines per workspace (name, then an agent-state dot + git
+//! branch + the active pane's title) with a blank line between
+//! workspaces, and a new-workspace row at the end. Uses the terminal's
+//! default background so it blends with pane content; only the active
+//! workspace rows get a highlight. Owns its full column including the
+//! status-bar row (the status bar starts after the sidebar). Rebuilds
+//! the click hit map as it draws.
 
-use mux_core::Rect;
+use mux_core::{AgentState, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::Frame;
 
 use super::truncate;
 use crate::app::{App, Hit};
+
+/// Color for the sidebar's agent-state dot. `Working`/`Blocked` are the
+/// two states worth a glance (busy vs. needs you); `Idle`/`Done`/`Unknown`
+/// share a quiet color since none of them need attention.
+fn agent_glyph_color(state: AgentState) -> Color {
+    match state {
+        AgentState::Working => Color::Yellow,
+        AgentState::Blocked => Color::Red,
+        AgentState::Done => Color::Green,
+        AgentState::Idle | AgentState::Unknown => Color::Indexed(242),
+    }
+}
 
 pub fn draw(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
@@ -87,14 +100,19 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
         let screen_count = ws.screens.len();
         let subtitle = if screen_count > 1 {
             format!(
-                "  {prefix}{} ({screen_count} screens)",
+                " {prefix}{} ({screen_count} screens)",
                 truncate(title, content_w.saturating_sub(13 + prefix_w))
             )
         } else {
-            format!("  {prefix}{}", truncate(title, content_w.saturating_sub(3 + prefix_w)))
+            format!(" {prefix}{}", truncate(title, content_w.saturating_sub(3 + prefix_w)))
         };
         let sub_style = if active { active_style.add_modifier(Modifier::DIM) } else { dim };
-        set_line_from(buf, 1, y + 1, subtitle.trim_start(), sub_style);
+        let agent_state = pane.and_then(|p| p.active_agent_state());
+        if let Some(state) = agent_state {
+            let glyph_style = sub_style.fg(agent_glyph_color(state)).remove_modifier(Modifier::DIM);
+            buf[(1, y + 1)].set_symbol("●").set_style(glyph_style);
+        }
+        set_line_from(buf, 2, y + 1, subtitle.trim_start(), sub_style);
         hits.push((row_rect(y + 1), Hit::Workspace { index: i, id: ws.id }));
         y += 3; // two content lines + one blank separator line
     }

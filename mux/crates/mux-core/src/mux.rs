@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::browser::{self, BrowserBootstrap, BrowserRuntime};
 use crate::model::{Node, Pane, Screen, State, Workspace};
-use crate::surface::{DefaultColors, Surface, SurfaceOptions};
+use crate::surface::{AgentReport, AgentState, AgentStateSource, DefaultColors, Surface, SurfaceOptions};
 use crate::{PaneId, ScreenId, SplitDir, SurfaceId, WorkspaceId};
 
 /// Events pushed to subscribed frontends.
@@ -33,6 +33,12 @@ pub enum MuxEvent {
     TreeChanged,
     /// Every workspace is gone.
     Empty,
+    /// A surface's reported agent state changed (see `report-agent`).
+    AgentStateChanged {
+        surface: SurfaceId,
+        previous: Option<AgentState>,
+        report: AgentReport,
+    },
 }
 
 /// The multiplexer. Shared by frontends and the control socket server.
@@ -716,6 +722,46 @@ impl Mux {
         surface.set_name((!name.is_empty()).then_some(name));
         self.emit(MuxEvent::TreeChanged);
         true
+    }
+
+    /// Reports agent state for a surface (see `spec/commands.md`). Returns
+    /// the report now in effect, which may be unchanged from before if a
+    /// lower-authority source tried to override a hook report.
+    pub fn report_agent(
+        &self,
+        target: SurfaceId,
+        state: AgentState,
+        source: AgentStateSource,
+        session: Option<String>,
+    ) -> Option<AgentReport> {
+        let surface = self.state.lock().unwrap().surfaces.get(&target).cloned()?;
+        let previous = surface.agent_report().map(|r| r.state);
+        let (report, applied) = surface.set_agent_report(state, source, session)?;
+        if applied {
+            self.emit(MuxEvent::AgentStateChanged {
+                surface: target,
+                previous,
+                report: report.clone(),
+            });
+        }
+        Some(report)
+    }
+
+    /// Known agent-status records, optionally filtered by surface or state.
+    pub fn list_agents(
+        &self,
+        surface: Option<SurfaceId>,
+        state: Option<AgentState>,
+    ) -> Vec<(SurfaceId, AgentReport)> {
+        self.state
+            .lock()
+            .unwrap()
+            .surfaces
+            .iter()
+            .filter(|(id, _)| surface.is_none_or(|filter| filter == **id))
+            .filter_map(|(id, s)| s.agent_report().map(|report| (*id, report)))
+            .filter(|(_, report)| state.is_none_or(|filter| filter == report.state))
+            .collect()
     }
 
     /// Set a screen's user-visible name. An empty name clears it (the
@@ -1423,6 +1469,84 @@ mod tests {
             assert_eq!(s.active_workspace, 0);
         });
         assert!(events.try_iter().count() > 0);
+    }
+
+    #[test]
+    fn report_agent_hook_overrides_socket_but_not_vice_versa() {
+        let mux = test_mux();
+        mux.new_workspace(None, None).unwrap();
+        let surface = mux.with_state(|s| {
+            let pane = s.workspaces[0].screens[0].active_pane;
+            s.panes[&pane].tabs[0]
+        });
+
+        assert!(mux.list_agents(None, None).is_empty());
+
+        let report = mux
+            .report_agent(surface, AgentState::Working, AgentStateSource::Socket, None)
+            .unwrap();
+        assert_eq!(report.state, AgentState::Working);
+        assert_eq!(report.source, AgentStateSource::Socket);
+
+        // A hook report overrides a socket report.
+        let report = mux
+            .report_agent(
+                surface,
+                AgentState::Blocked,
+                AgentStateSource::Hook,
+                Some("sess-1".into()),
+            )
+            .unwrap();
+        assert_eq!(report.state, AgentState::Blocked);
+        assert_eq!(report.source, AgentStateSource::Hook);
+
+        // A socket report cannot override an existing hook report.
+        let report = mux
+            .report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None)
+            .unwrap();
+        assert_eq!(report.state, AgentState::Blocked, "socket report should not downgrade a hook report");
+        assert_eq!(report.source, AgentStateSource::Hook);
+
+        // A newer hook report still applies.
+        let report = mux
+            .report_agent(surface, AgentState::Idle, AgentStateSource::Hook, Some("sess-1".into()))
+            .unwrap();
+        assert_eq!(report.state, AgentState::Idle);
+
+        let agents = mux.list_agents(None, None);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].0, surface);
+
+        assert!(mux.list_agents(Some(surface), Some(AgentState::Idle)).len() == 1);
+        assert!(mux.list_agents(Some(surface), Some(AgentState::Working)).is_empty());
+        assert!(mux.list_agents(Some(surface + 1), None).is_empty());
+    }
+
+    #[test]
+    fn report_agent_emits_event_only_when_applied() {
+        let mux = test_mux();
+        mux.new_workspace(None, None).unwrap();
+        let surface = mux.with_state(|s| {
+            let pane = s.workspaces[0].screens[0].active_pane;
+            s.panes[&pane].tabs[0]
+        });
+
+        mux.report_agent(surface, AgentState::Working, AgentStateSource::Hook, None).unwrap();
+        let events = mux.subscribe();
+
+        // Rejected: socket cannot override the existing hook report, so no
+        // event should fire.
+        mux.report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None).unwrap();
+        assert!(
+            events.try_iter().count() == 0,
+            "a rejected report must not emit agent-state-changed"
+        );
+
+        mux.report_agent(surface, AgentState::Done, AgentStateSource::Hook, None).unwrap();
+        let fired = events.try_iter().any(|e| {
+            matches!(e, MuxEvent::AgentStateChanged { report, .. } if report.state == AgentState::Done)
+        });
+        assert!(fired, "an applied report must emit agent-state-changed");
     }
 
     #[test]

@@ -281,8 +281,8 @@ Example:
 | Field | Value |
 | --- | --- |
 | event | `agent-state-changed` |
-| status | proposed |
-| since | proposed protocol 6 |
+| status | implemented |
+| since | protocol 6 |
 
 Payload:
 

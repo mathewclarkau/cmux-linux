@@ -84,6 +84,82 @@ pub struct DefaultColors {
     pub bg: Option<Rgb>,
 }
 
+/// Coding-agent lifecycle state for a surface, as reported by `report-agent`
+/// (see `spec/commands.md`). Not detected automatically; a frontend or a
+/// hook script is the source of truth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentState {
+    Working,
+    Blocked,
+    Idle,
+    Done,
+    Unknown,
+}
+
+impl AgentState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AgentState::Working => "working",
+            AgentState::Blocked => "blocked",
+            AgentState::Idle => "idle",
+            AgentState::Done => "done",
+            AgentState::Unknown => "unknown",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "working" => AgentState::Working,
+            "blocked" => AgentState::Blocked,
+            "idle" => AgentState::Idle,
+            "done" => AgentState::Done,
+            "unknown" => AgentState::Unknown,
+            _ => return None,
+        })
+    }
+}
+
+/// Authority of an agent-state report. A hook report always applies; a
+/// socket report is rejected while a hook report is the current source
+/// (see `spec/commands.md`'s `report-agent` authority rules).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AgentStateSource {
+    Socket,
+    Hook,
+}
+
+impl AgentStateSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AgentStateSource::Socket => "socket",
+            AgentStateSource::Hook => "hook",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "socket" => AgentStateSource::Socket,
+            "hook" => AgentStateSource::Hook,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentReport {
+    pub state: AgentState,
+    pub source: AgentStateSource,
+    pub session: Option<String>,
+    pub updated_at_ms: u64,
+}
+
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// Everything an attaching frontend needs to adopt a PTY surface: its
 /// size, a VT replay of the current state, and a live stream of every pty
 /// byte applied after the replay snapshot.
@@ -159,6 +235,7 @@ pub struct PtySurface {
     /// [`pwd`](PtySurface::pwd) supersedes it once the shell reports OSC 7,
     /// but this stays as a fallback for shells that never do.
     initial_cwd: Option<String>,
+    agent: Mutex<Option<AgentReport>>,
     size: Mutex<(u16, u16)>,
     /// Live output subscribers (attach streams). Guarded by the terminal
     /// lock ordering: the reader thread broadcasts while holding the
@@ -195,6 +272,10 @@ impl Surface {
         let mut cmd = CommandBuilder::new(&argv[0]);
         cmd.args(&argv[1..]);
         cmd.env("TERM", &opts.term);
+        // Lets a hook script (e.g. a Claude Code hook) invoked from inside
+        // this pty call back into `cmux-mux report-agent --surface
+        // $CMUX_MUX_SURFACE ...` without needing to know its own surface id.
+        cmd.env("CMUX_MUX_SURFACE", id.to_string());
         for (k, v) in &opts.extra_env {
             cmd.env(k, v);
         }
@@ -254,6 +335,7 @@ impl Surface {
             title: Mutex::new(String::new()),
             pwd: Mutex::new(None),
             initial_cwd,
+            agent: Mutex::new(None),
             size: Mutex::new((opts.cols, opts.rows)),
             taps: Mutex::new(Vec::new()),
         }));
@@ -434,6 +516,34 @@ impl Surface {
     /// available, otherwise the directory the surface was spawned in.
     pub fn cwd(&self) -> Option<String> {
         self.as_pty().and_then(|pty| pty.pwd.lock().unwrap().clone().or_else(|| pty.initial_cwd.clone()))
+    }
+
+    pub fn agent_report(&self) -> Option<AgentReport> {
+        self.as_pty().and_then(|pty| pty.agent.lock().unwrap().clone())
+    }
+
+    /// Applies a new agent-state report under the authority rules from
+    /// `spec/commands.md`: a hook report always applies; a socket report
+    /// is rejected while the current source is a hook report. Returns the
+    /// report now in effect and whether this call is the one that applied
+    /// it (`false` when rejected by the authority rule, in which case the
+    /// report is the unchanged prior one), or `None` for a non-PTY surface.
+    pub fn set_agent_report(
+        &self,
+        state: AgentState,
+        source: AgentStateSource,
+        session: Option<String>,
+    ) -> Option<(AgentReport, bool)> {
+        let pty = self.as_pty()?;
+        let mut current = pty.agent.lock().unwrap();
+        let accept = current.as_ref().is_none_or(|existing| source >= existing.source);
+        if accept {
+            let report = AgentReport { state, source, session, updated_at_ms: now_ms() };
+            *current = Some(report.clone());
+            Some((report, true))
+        } else {
+            current.clone().map(|report| (report, false))
+        }
     }
 
     pub fn is_dead(&self) -> bool {

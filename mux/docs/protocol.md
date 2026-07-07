@@ -28,7 +28,7 @@ Bad JSON returns `ok:false` with no request id.
 
 ## Command Contract
 
-The full API contract is intended to live in `mux/spec/`, but that directory is not present in this checkout. Until it lands, `mux-core/src/server.rs` is the command source of truth.
+The full API contract lives in `mux/spec/` (`commands.md`, `events.md`); `report-agent`, `list-agents`, and the `agent-state-changed` event documented there as "proposed" are implemented as of this fork. `mux-core/src/server.rs` remains the source of truth for exactly what's live.
 
 The server command set in this branch is:
 
@@ -63,6 +63,8 @@ select-workspace
 subscribe
 attach-surface
 scroll-surface
+report-agent
+list-agents
 ```
 
 `move-tab` moves a surface to a target pane and insertion index. It supports same-pane reorder and cross-pane moves.
@@ -145,3 +147,25 @@ Browser surfaces appear in `list-workspaces` as `kind: "browser"` with `browser_
 ## Working Directory
 
 Each PTY tab in `list-workspaces` carries `cwd`: the shell's live OSC 7 report when available, otherwise the directory the surface was spawned in. It is `null` for browser surfaces and for PTY surfaces spawned without a resolvable home directory.
+
+## Agent State
+
+`report-agent` records coding-agent lifecycle state for a PTY surface (full contract in `spec/commands.md`); every PTY tab in `list-workspaces` also carries `agent_state` (`null` until something reports for that surface). A hook script (see the Claude Code hook layer) is the intended source, but any client can report:
+
+```json
+{"id":50,"cmd":"report-agent","surface":1,"state":"working","source":"hook","session":"abc123"}
+{"id":50,"ok":true,"data":{"surface":1,"state":"working","source":"hook","session":"abc123","updated_at_ms":1710000000000}}
+```
+
+`state` is one of `working`, `blocked`, `idle`, `done`, `unknown`. `source` is `hook` or `socket`; a hook report always applies, a socket report is rejected while the current source is a hook report (so an ad hoc `report-agent` call from a script can't clobber a live hook integration). Subscribers see accepted reports as `agent-state-changed`:
+
+```json
+{"event":"agent-state-changed","surface":1,"previous":null,"state":"working","source":"hook","session":"abc123","updated_at_ms":1710000000000}
+```
+
+`list-agents` returns current records, optionally filtered:
+
+```json
+{"id":51,"cmd":"list-agents","state":"blocked"}
+{"id":51,"ok":true,"data":{"agents":[{"surface":3,"state":"blocked","source":"hook","session":"abc123","updated_at_ms":1710000000000}]}}
+```

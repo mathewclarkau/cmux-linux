@@ -108,6 +108,71 @@ fn cli_verbs_cover_command_output_errors_and_streams() {
     assert_subscribe_reports_tree_changed(&server);
 }
 
+#[test]
+fn report_agent_and_list_agents_round_trip() {
+    let server = HeadlessServer::start("agents");
+    let workspace = cli(&server, &["new-workspace", "--name", "agent-test"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    // Nothing reported yet.
+    let empty = cli(&server, &["--json", "list-agents"]);
+    assert_success(&empty);
+    let value: serde_json::Value = serde_json::from_slice(&empty.stdout).unwrap();
+    assert_eq!(value["agents"].as_array().unwrap().len(), 0);
+
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "working",
+            "--source",
+            "hook",
+            "--agent-session",
+            "sess-abc",
+        ],
+    );
+    assert_success(&report);
+    assert!(report.stdout.is_empty(), "report-agent should be quiet on success");
+
+    let list = cli(&server, &["--json", "list-agents"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let agents = value["agents"].as_array().unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["surface"].as_u64(), Some(surface));
+    assert_eq!(agents[0]["state"].as_str(), Some("working"));
+    assert_eq!(agents[0]["source"].as_str(), Some("hook"));
+    assert_eq!(agents[0]["session"].as_str(), Some("sess-abc"));
+
+    // A socket report cannot downgrade an existing hook report.
+    let downgrade = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "idle", "--source", "socket"],
+    );
+    assert_success(&downgrade);
+    let list = cli(&server, &["--json", "list-agents", "--state", "working"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(value["agents"].as_array().unwrap().len(), 1, "hook report should still be in effect");
+
+    // Plain (non-JSON) output is one line per agent.
+    let plain = cli(&server, &["list-agents"]);
+    assert_success(&plain);
+    let text = String::from_utf8(plain.stdout).unwrap();
+    assert_eq!(text.trim(), format!("{surface} working hook sess-abc"));
+
+    // Bad state/source are rejected.
+    let bad = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "nonsense", "--source", "hook"],
+    );
+    assert_eq!(bad.status.code(), Some(1));
+}
+
 fn assert_subscribe_reports_tree_changed(server: &HeadlessServer) {
     let mut child = Command::new(bin())
         .args(["--socket"])

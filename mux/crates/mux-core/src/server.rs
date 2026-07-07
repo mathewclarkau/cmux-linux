@@ -269,6 +269,22 @@ enum Command {
         surface: SurfaceId,
         delta: isize,
     },
+    /// Reports agent state for a surface. Hook-sourced reports have
+    /// authority over socket-sourced ones (see `spec/commands.md`).
+    ReportAgent {
+        surface: SurfaceId,
+        state: String,
+        source: String,
+        #[serde(default)]
+        session: Option<String>,
+    },
+    /// Known agent-status records, optionally filtered.
+    ListAgents {
+        #[serde(default)]
+        surface: Option<SurfaceId>,
+        #[serde(default)]
+        state: Option<String>,
+    },
 }
 
 #[derive(Serialize)]
@@ -392,6 +408,7 @@ fn pane_json(state: &State, id: PaneId, short_ids: &HashMap<u64, String>) -> Val
                 "name": surface.and_then(|s| s.name()),
                 "title": surface.map(|s| s.title()).unwrap_or_default(),
                 "cwd": surface.and_then(|s| s.cwd()),
+                "agent_state": surface.and_then(|s| s.agent_report()).map(|r| r.state.as_str()),
                 "size": surface.map(|s| {
                     let (c, r) = s.size();
                     json!({"cols": c, "rows": r})
@@ -452,6 +469,16 @@ fn workspaces_json(state: &State) -> Value {
 
 fn get_surface(mux: &Mux, id: SurfaceId) -> anyhow::Result<Arc<crate::Surface>> {
     mux.surface(id).ok_or_else(|| anyhow::anyhow!("unknown surface {id}"))
+}
+
+fn agent_report_json(surface: SurfaceId, report: &crate::AgentReport) -> Value {
+    json!({
+        "surface": surface,
+        "state": report.state.as_str(),
+        "source": report.source.as_str(),
+        "session": report.session,
+        "updated_at_ms": report.updated_at_ms,
+    })
 }
 
 fn require_pty(surface: &crate::Surface) -> anyhow::Result<()> {
@@ -789,6 +816,30 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             surface.try_with_terminal(|t| t.scroll_delta(delta))?;
             Ok(json!({}))
         }
+        Command::ReportAgent { surface, state, source, session } => {
+            get_surface(mux, surface)?;
+            let state = crate::AgentState::parse(&state)
+                .ok_or_else(|| anyhow::anyhow!("bad state {state:?}"))?;
+            let source = crate::AgentStateSource::parse(&source)
+                .ok_or_else(|| anyhow::anyhow!("bad source {source:?}"))?;
+            let report = mux
+                .report_agent(surface, state, source, session)
+                .ok_or_else(|| anyhow::anyhow!("surface {surface} does not support agent state"))?;
+            Ok(agent_report_json(surface, &report))
+        }
+        Command::ListAgents { surface, state } => {
+            let state = state
+                .map(|s| {
+                    crate::AgentState::parse(&s).ok_or_else(|| anyhow::anyhow!("bad state {s:?}"))
+                })
+                .transpose()?;
+            let agents = mux
+                .list_agents(surface, state)
+                .iter()
+                .map(|(id, report)| agent_report_json(*id, report))
+                .collect::<Vec<_>>();
+            Ok(json!({ "agents": agents }))
+        }
         Command::Subscribe => {
             let events = mux.subscribe();
             let writer = writer.clone();
@@ -818,6 +869,15 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                         }
                         MuxEvent::TreeChanged => json!({"event": "tree-changed"}),
                         MuxEvent::Empty => json!({"event": "empty"}),
+                        MuxEvent::AgentStateChanged { surface, previous, report } => json!({
+                            "event": "agent-state-changed",
+                            "surface": surface,
+                            "previous": previous.map(|s| s.as_str()),
+                            "state": report.state.as_str(),
+                            "source": report.source.as_str(),
+                            "session": report.session,
+                            "updated_at_ms": report.updated_at_ms,
+                        }),
                     };
                     if writer.send(&value).is_err() {
                         break;

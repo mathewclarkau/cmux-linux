@@ -2,8 +2,8 @@
 //! plus the JSON parser for the remote `list-workspaces` shape.
 
 use mux_core::{
-    assign_short_ids, BrowserSource, Node, PaneId, ScreenId, SplitDir, State, SurfaceId,
-    SurfaceKind, WorkspaceId,
+    assign_short_ids, AgentState, BrowserSource, Node, PaneId, ScreenId, SplitDir, State,
+    SurfaceId, SurfaceKind, WorkspaceId,
 };
 use serde_json::Value;
 
@@ -52,6 +52,7 @@ pub struct TabView {
     pub name: Option<String>,
     pub title: String,
     pub cwd: Option<String>,
+    pub agent_state: Option<AgentState>,
     pub kind: SurfaceKind,
     pub browser_source: Option<BrowserSource>,
     pub browser_frames_stalled: bool,
@@ -136,6 +137,11 @@ impl PaneView {
     pub fn active_cwd(&self) -> Option<&str> {
         self.tabs.get(self.active_tab)?.cwd.as_deref()
     }
+
+    /// Reported agent state of the active tab, if any.
+    pub fn active_agent_state(&self) -> Option<AgentState> {
+        self.tabs.get(self.active_tab)?.agent_state
+    }
 }
 
 /// Snapshot a local mux state into a TreeView.
@@ -168,6 +174,7 @@ pub fn tree_from_state(state: &State) -> TreeView {
                     name: state.surfaces.get(sid).and_then(|s| s.name()),
                     title: state.surfaces.get(sid).map(|s| s.title()).unwrap_or_default(),
                     cwd: state.surfaces.get(sid).and_then(|s| s.cwd()),
+                    agent_state: state.surfaces.get(sid).and_then(|s| s.agent_report()).map(|r| r.state),
                     kind: state.surfaces.get(sid).map(|s| s.kind()).unwrap_or(SurfaceKind::Pty),
                     browser_source: state.surfaces.get(sid).and_then(|s| s.browser_source()),
                     browser_frames_stalled: state
@@ -256,6 +263,10 @@ fn parse_pane(value: &Value) -> Option<PaneView> {
                                 .unwrap_or_default()
                                 .to_string(),
                             cwd: tab.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            agent_state: tab
+                                .get("agent_state")
+                                .and_then(|v| v.as_str())
+                                .and_then(AgentState::parse),
                             kind: match tab.get("kind").and_then(|v| v.as_str()) {
                                 Some("browser") => SurfaceKind::Browser,
                                 _ => SurfaceKind::Pty,

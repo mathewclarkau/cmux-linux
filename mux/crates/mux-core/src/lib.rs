@@ -27,8 +27,9 @@ pub use model::{Node, Pane, Screen, State, Workspace};
 pub use mux::{Mux, MuxEvent};
 pub use short_id::assign_short_ids;
 pub use surface::{
-    AttachFrame, AttachStream, BrowserAttachState, BrowserFrame, BrowserFrameStream, BrowserSource,
-    BrowserStatus, DefaultColors, Surface, SurfaceKind, SurfaceOptions,
+    AgentReport, AgentState, AgentStateSource, AttachFrame, AttachStream, BrowserAttachState,
+    BrowserFrame, BrowserFrameStream, BrowserSource, BrowserStatus, DefaultColors, Surface,
+    SurfaceKind, SurfaceOptions,
 };
 
 pub use ghostty_vt::Rgb;
