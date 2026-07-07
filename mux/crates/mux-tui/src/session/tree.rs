@@ -51,6 +51,7 @@ pub struct TabView {
     pub short_id: String,
     pub name: Option<String>,
     pub title: String,
+    pub cwd: Option<String>,
     pub kind: SurfaceKind,
     pub browser_source: Option<BrowserSource>,
     pub browser_frames_stalled: bool,
@@ -130,6 +131,11 @@ impl PaneView {
             .map(|t| if t.title.is_empty() { "shell" } else { t.title.as_str() })
             .unwrap_or("shell")
     }
+
+    /// Working directory of the active tab, if known.
+    pub fn active_cwd(&self) -> Option<&str> {
+        self.tabs.get(self.active_tab)?.cwd.as_deref()
+    }
 }
 
 /// Snapshot a local mux state into a TreeView.
@@ -161,6 +167,7 @@ pub fn tree_from_state(state: &State) -> TreeView {
                     short_id: short_ids.get(sid).cloned().unwrap_or_default(),
                     name: state.surfaces.get(sid).and_then(|s| s.name()),
                     title: state.surfaces.get(sid).map(|s| s.title()).unwrap_or_default(),
+                    cwd: state.surfaces.get(sid).and_then(|s| s.cwd()),
                     kind: state.surfaces.get(sid).map(|s| s.kind()).unwrap_or(SurfaceKind::Pty),
                     browser_source: state.surfaces.get(sid).and_then(|s| s.browser_source()),
                     browser_frames_stalled: state
@@ -248,6 +255,7 @@ fn parse_pane(value: &Value) -> Option<PaneView> {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or_default()
                                 .to_string(),
+                            cwd: tab.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string()),
                             kind: match tab.get("kind").and_then(|v| v.as_str()) {
                                 Some("browser") => SurfaceKind::Browser,
                                 _ => SurfaceKind::Pty,

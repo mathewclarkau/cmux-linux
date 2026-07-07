@@ -32,6 +32,7 @@ use ratatui::Terminal as RatatuiTerminal;
 
 use crate::browser_input::{BrowserInputDispatcher, BrowserInputEvent, BrowserInputKind};
 use crate::config::{Action, Config, ScrollbarPosition};
+use crate::git_info::GitInfoCache;
 use crate::keys;
 use crate::session::{Session, SurfaceHandle, TreeView};
 use crate::ui::graphics::GraphicPlacement;
@@ -384,6 +385,7 @@ pub struct App {
     pub session: Session,
     pub config: Config,
     pub tree: TreeView,
+    pub git_info: GitInfoCache,
     pub render_states: HashMap<SurfaceId, RenderState>,
     pub graphics_writer: Option<GraphicsWriter>,
     pub graphics_supported: bool,
@@ -636,6 +638,7 @@ pub fn run(session: Session, session_label: String) -> anyhow::Result<()> {
         session,
         config,
         tree: TreeView::default(),
+        git_info: GitInfoCache::new(),
         render_states: HashMap::new(),
         graphics_writer,
         graphics_supported,

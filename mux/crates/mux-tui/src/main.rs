@@ -10,6 +10,7 @@ mod app;
 mod browser_input;
 mod cli;
 mod config;
+mod git_info;
 mod host_colors;
 mod keys;
 mod session;

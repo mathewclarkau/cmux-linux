@@ -155,6 +155,10 @@ pub struct PtySurface {
     dirty: AtomicBool,
     title: Mutex<String>,
     pwd: Mutex<Option<String>>,
+    /// Working directory the child was spawned in. Fixed at spawn time;
+    /// [`pwd`](PtySurface::pwd) supersedes it once the shell reports OSC 7,
+    /// but this stays as a fallback for shells that never do.
+    initial_cwd: Option<String>,
     size: Mutex<(u16, u16)>,
     /// Live output subscribers (attach streams). Guarded by the terminal
     /// lock ordering: the reader thread broadcasts while holding the
@@ -194,10 +198,12 @@ impl Surface {
         for (k, v) in &opts.extra_env {
             cmd.env(k, v);
         }
-        if let Some(cwd) = opts.cwd.as_deref() {
+        let initial_cwd = opts
+            .cwd
+            .clone()
+            .or_else(|| platform::home_dir().map(|p| p.display().to_string()));
+        if let Some(cwd) = initial_cwd.as_deref() {
             cmd.cwd(cwd);
-        } else if let Some(home) = platform::home_dir() {
-            cmd.cwd(home);
         }
 
         let mut child = pty.slave.spawn_command(cmd)?;
@@ -247,6 +253,7 @@ impl Surface {
             dirty: AtomicBool::new(false),
             title: Mutex::new(String::new()),
             pwd: Mutex::new(None),
+            initial_cwd,
             size: Mutex::new((opts.cols, opts.rows)),
             taps: Mutex::new(Vec::new()),
         }));
@@ -421,6 +428,12 @@ impl Surface {
 
     pub fn pwd(&self) -> Option<String> {
         self.as_pty().and_then(|pty| pty.pwd.lock().unwrap().clone())
+    }
+
+    /// Best-known working directory: the shell's live OSC 7 report when
+    /// available, otherwise the directory the surface was spawned in.
+    pub fn cwd(&self) -> Option<String> {
+        self.as_pty().and_then(|pty| pty.pwd.lock().unwrap().clone().or_else(|| pty.initial_cwd.clone()))
     }
 
     pub fn is_dead(&self) -> bool {

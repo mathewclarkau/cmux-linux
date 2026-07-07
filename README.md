@@ -16,7 +16,11 @@ under what license.
 The vendored `mux-tui` builds and runs as-is on Linux (verified on this machine).
 What's missing before this feels like `cmux` rather than a bare multiplexer:
 
-1. Git branch / PR / cwd info in the sidebar
+1. ~~Git branch / cwd info in the sidebar~~ — done. Every pane tracks a cwd (live
+   OSC 7 report when the shell sends one, else the directory it was spawned in —
+   see `Surface::cwd()` in `mux-core`), and the sidebar shows the git branch for
+   it (`crates/mux-tui/src/git_info.rs`). PR status is not included — it needs
+   `gh`/GitHub API access and felt like a separate, heavier addition.
 2. Claude Code hook layer (session tracking, restore) ported to speak `mux-mux`'s
    control-socket protocol instead of the macOS app's
 3. Agent-state notifications (OSC 9/99/777 → desktop notification / "needs attention")
@@ -24,6 +28,14 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
 5. Remote/SSH workspaces, wiring upstream's existing Go `cmuxd-remote` daemon
    (already cross-compiles for `linux/amd64` and `linux/arm64`) into `mux-core`
    as a transport
+
+### Known environment quirk (not a cmux-mux bug)
+
+Every new pane spawns your login shell (`$SHELL`) fresh. If you use zsh with
+Powerlevel10k and haven't completed its setup wizard yet (no `~/.p10k.zsh`),
+that wizard launches in every new pane and blocks on an interactive prompt.
+Run `p10k configure` once in a normal terminal (outside cmux-mux) to fix it
+for good.
 
 ## Build
 

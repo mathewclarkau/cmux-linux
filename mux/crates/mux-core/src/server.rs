@@ -391,6 +391,7 @@ fn pane_json(state: &State, id: PaneId, short_ids: &HashMap<u64, String>) -> Val
                 "browser_frames_stalled": surface.and_then(|s| s.browser_frames_stalled()),
                 "name": surface.and_then(|s| s.name()),
                 "title": surface.map(|s| s.title()).unwrap_or_default(),
+                "cwd": surface.and_then(|s| s.cwd()),
                 "size": surface.map(|s| {
                     let (c, r) = s.size();
                     json!({"cols": c, "rows": r})

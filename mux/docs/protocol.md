@@ -141,3 +141,7 @@ When several attach clients render the same surface at different sizes, sizing f
 ## Browser Limitations
 
 Browser surfaces appear in `list-workspaces` as `kind: "browser"` with `browser_source: "external"` or `"launched"`. PTY and VT commands against browser surfaces return errors. `attach-surface` does not stream browser pixels as of protocol v6, and the remote TUI shows a placeholder for browser panes.
+
+## Working Directory
+
+Each PTY tab in `list-workspaces` carries `cwd`: the shell's live OSC 7 report when available, otherwise the directory the surface was spawned in. It is `null` for browser surfaces and for PTY surfaces spawned without a resolvable home directory.

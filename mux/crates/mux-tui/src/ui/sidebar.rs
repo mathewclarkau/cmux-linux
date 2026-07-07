@@ -81,11 +81,17 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
         let screen = ws.active_screen_ref();
         let pane = screen.and_then(|s| s.pane(s.active_pane));
         let title = pane.map(|p| p.display_name()).unwrap_or("shell");
+        let branch = pane.and_then(|p| p.active_cwd()).and_then(|cwd| app.git_info.branch_for(cwd));
+        let prefix = branch.map(|b| format!("{b} · ")).unwrap_or_default();
+        let prefix_w = prefix.chars().count();
         let screen_count = ws.screens.len();
         let subtitle = if screen_count > 1 {
-            format!("  {} ({screen_count} screens)", truncate(title, content_w.saturating_sub(13)))
+            format!(
+                "  {prefix}{} ({screen_count} screens)",
+                truncate(title, content_w.saturating_sub(13 + prefix_w))
+            )
         } else {
-            format!("  {}", truncate(title, content_w.saturating_sub(3)))
+            format!("  {prefix}{}", truncate(title, content_w.saturating_sub(3 + prefix_w)))
         };
         let sub_style = if active { active_style.add_modifier(Modifier::DIM) } else { dim };
         set_line_from(buf, 1, y + 1, subtitle.trim_start(), sub_style);
