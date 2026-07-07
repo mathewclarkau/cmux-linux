@@ -21,8 +21,13 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
    see `Surface::cwd()` in `mux-core`), and the sidebar shows the git branch for
    it (`crates/mux-tui/src/git_info.rs`). PR status is not included — it needs
    `gh`/GitHub API access and felt like a separate, heavier addition.
-2. Claude Code hook layer (session tracking, restore) ported to speak `mux-mux`'s
-   control-socket protocol instead of the macOS app's
+2. ~~Claude Code hook layer (session tracking, restore)~~ — done. `cmux-mux claude
+   install-hooks` wires `~/.claude/settings.json` to call `cmux-mux claude hook` on
+   every lifecycle event (merged alongside any hooks already there, safely
+   idempotent). It reports agent state over `report-agent`/`list-agents`
+   (`crates/mux-tui/src/claude_hook.rs`) and records sessions to
+   `$XDG_STATE_HOME/cmux-mux/claude-sessions.json` for `cmux-mux claude sessions`
+   / `cmux-mux claude resume <session-id>`.
 3. Agent-state notifications (OSC 9/99/777 → desktop notification / "needs attention")
 4. Session persistence across daemon restarts
 5. Remote/SSH workspaces, wiring upstream's existing Go `cmuxd-remote` daemon
@@ -66,6 +71,22 @@ cmux-mux
 ```
 
 (assumes `~/.local/bin` is on your `PATH`, as it already is on this machine)
+
+### Claude Code integration
+
+```bash
+cmux-mux claude install-hooks        # wire up ~/.claude/settings.json (see below)
+cmux-mux claude install-hooks --uninstall
+cmux-mux claude sessions             # recorded sessions: id, cwd, last event
+cmux-mux claude resume <session-id>  # new pane in the recorded cwd, runs claude --resume
+```
+
+Once installed, panes running Claude Code show a status dot in the sidebar next to
+the git branch: amber while working, red when it needs you (a permission prompt or
+similar), green when a turn finishes, dim when idle. This has no effect outside a
+cmux-mux pane (`CMUX_MUX_SOCKET`/`CMUX_MUX_SURFACE` are unset, so the hook is a no-op
+past recording the session locally) — safe to install even if you don't always run
+Claude Code inside cmux-mux.
 
 See [`mux/README.md`](./mux/README.md) and [`mux/docs/`](./mux/docs/) for the full
 multiplexer docs (keybindings, config, control-socket protocol) — all still accurate

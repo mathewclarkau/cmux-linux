@@ -8,6 +8,7 @@
 
 mod app;
 mod browser_input;
+mod claude_hook;
 mod cli;
 mod config;
 mod git_info;
@@ -48,6 +49,7 @@ USAGE:
   cmux-mux [OPTIONS]           Start a session (TUI + control socket)
   cmux-mux attach [OPTIONS]    Attach to an existing session's socket
   cmux-mux <verb> [OPTIONS]    Run one control-socket command
+  cmux-mux claude <subcommand> Claude Code hook integration (see below)
 
 OPTIONS:
   --session <name>   Session name (default: main). Determines the socket path.
@@ -81,6 +83,18 @@ CLI VERBS
   rename-workspace, resize-surface, focus-pane, select-tab,
   select-screen, select-workspace, move-tab, move-workspace,
   scroll-surface, subscribe, attach-surface, report-agent, list-agents
+
+CLAUDE CODE HOOK INTEGRATION
+  cmux-mux claude install-hooks [--uninstall]
+      Wires ~/.claude/settings.json's hooks to call `cmux-mux claude hook`
+      on every lifecycle event, merged alongside any hooks already there.
+  cmux-mux claude sessions
+      Lists recorded Claude Code sessions (session id, cwd, last event).
+  cmux-mux claude resume <session-id>
+      Opens a new pane in the recorded cwd and runs `claude --resume`.
+  cmux-mux claude hook
+      Not for interactive use — this is what install-hooks points Claude
+      Code's own hook config at.
 ";
 
 struct Args {
@@ -133,6 +147,9 @@ fn main() {
     if raw_args.first().map(|arg| arg.as_str()) == Some("help") {
         print!("{USAGE}");
         std::process::exit(0);
+    }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("claude") {
+        std::process::exit(claude_hook::run(&raw_args[1..]));
     }
     if cli::is_cli_invocation(&raw_args) {
         std::process::exit(cli::run(&raw_args, USAGE));
