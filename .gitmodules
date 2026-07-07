@@ -1,0 +1,4 @@
+[submodule "ghostty"]
+	path = ghostty
+	url = https://github.com/manaflow-ai/ghostty.git
+	branch = main
