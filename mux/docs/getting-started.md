@@ -51,6 +51,12 @@ $TMPDIR/cmux-mux-<uid>/<session>.sock
 
 The usual default is `$XDG_RUNTIME_DIR/cmux-mux-<uid>/main.sock` when `XDG_RUNTIME_DIR` is set, then `$TMPDIR/cmux-mux-<uid>/main.sock`, then `/tmp/cmux-mux-<uid>/main.sock`. `--session <name>` changes the final file name. `--socket <path>` bypasses the session-derived path. Server-started child processes receive `CMUX_MUX_SOCKET` with the socket path.
 
+## Session persistence
+
+Every session (headless or local TUI) writes a snapshot of its workspace/screen/pane layout — split shape and ratios, names, and each tab's cwd — to `$XDG_STATE_HOME/cmux-mux/sessions/<session>.json` (falling back to `~/.local/state/...`), debounced a few hundred ms after each structural change and again on clean shutdown. Starting a session with the same `--session` name again (a real daemon restart, or just restarting the local TUI) replays that snapshot: same panes, same directories. Closing every workspace deletes the file rather than leaving a stale one to resurrect later.
+
+Not restored: a tab's *command*. Every restored tab is the default shell, `cd`'d into its recorded directory (visibly, briefly, before a `clear`) — if something specific was running there (a dev server, `claude --resume ...`), you'll need to relaunch it. See `mux-core/src/persist.rs` for why, and `Mux::restore_session`/`Mux::enable_persistence` for the implementation.
+
 ## Platforms and XDG
 
 cmux-mux supports macOS and Linux; Windows support via ConPTY is planned for phase 2. The TUI config path resolves `CMUX_MUX_CONFIG`, then `$XDG_CONFIG_HOME/cmux/mux.json`, then `~/.config/cmux/mux.json`.

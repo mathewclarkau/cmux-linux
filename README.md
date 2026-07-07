@@ -36,7 +36,17 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
    `notify-send`. Needed extending libghostty-vt's C API by two data-extraction
    values — see `patches/` — since it could already *detect* this OSC command
    but not extract its title/body text.
-4. Session persistence across daemon restarts
+4. ~~Session persistence across daemon restarts~~ — done. Every session
+   (headless or local TUI) debounce-writes a snapshot of its workspace/screen/
+   pane layout — split shape+ratios, names, each tab's cwd, active selections —
+   to `$XDG_STATE_HOME/cmux-mux/sessions/<session>.json`
+   (`crates/mux-core/src/persist.rs`), and replays it on next start with the
+   same `--session` name. Closing every workspace deletes the file instead of
+   leaving something to resurrect later. Deliberately not restored: a tab's
+   *command* — every restored tab is the default shell, `cd`'d into its
+   recorded directory; something you had running there needs relaunching.
+   Verified via a real kill-and-restart of the compiled binary, not just
+   library tests — see `mux/docs/getting-started.md`'s "Session persistence".
 5. Remote/SSH workspaces, wiring upstream's existing Go `cmuxd-remote` daemon
    (already cross-compiles for `linux/amd64` and `linux/arm64`) into `mux-core`
    as a transport

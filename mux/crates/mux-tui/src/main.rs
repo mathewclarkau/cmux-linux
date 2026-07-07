@@ -190,6 +190,8 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     surface_options.extra_env.push(("CMUX_MUX_SOCKET".into(), socket_path.display().to_string()));
 
     let mux = Mux::new(args.session.clone(), surface_options);
+    mux.restore_session();
+    mux.enable_persistence();
     mux_core::server::serve(mux.clone(), Some(socket_path.clone()))?;
 
     let result = if args.headless {

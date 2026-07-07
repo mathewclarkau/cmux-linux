@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use ghostty_vt::RenderState;
 use mux_core::platform::transport;
 use mux_core::{
-    AgentState, AgentStateSource, AttachFrame, DefaultColors, Mux, MuxEvent, Rgb, SurfaceOptions,
+    AgentState, AgentStateSource, AttachFrame, DefaultColors, Mux, MuxEvent, Rgb, SplitDir,
+    SurfaceOptions,
 };
 
 fn wait_for<T>(mut f: impl FnMut() -> Option<T>, timeout: Duration) -> Option<T> {
@@ -647,4 +648,97 @@ fn new_tab_on_empty_headless_session_creates_workspace() {
     assert_eq!(mux.surface_count(), before);
 
     mux.close_surface(surface.id);
+}
+
+/// `XDG_STATE_HOME` is process-global; tests that set it must not run
+/// concurrently with each other.
+static PERSIST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn restore_session_with_no_snapshot_is_a_silent_noop() {
+    let _guard = PERSIST_ENV_LOCK.lock().unwrap();
+    let dir = std::env::temp_dir().join(format!("mux-persist-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::env::set_var("XDG_STATE_HOME", &dir);
+
+    let mux = Mux::new(unique_session("persist-empty"), shell_opts("sleep 30"));
+    mux.restore_session();
+    mux.with_state(|s| assert_eq!(s.workspaces.len(), 0));
+
+    std::env::remove_var("XDG_STATE_HOME");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn session_persists_layout_and_cwd_across_simulated_restart() {
+    let _guard = PERSIST_ENV_LOCK.lock().unwrap();
+    let dir = std::env::temp_dir().join(format!("mux-persist-full-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::env::set_var("XDG_STATE_HOME", &dir);
+
+    let session = unique_session("persist-full");
+    let custom_cwd = dir.to_str().unwrap().to_string();
+    const WS_NAME: &str = "restored-ws";
+    const PANE_NAME: &str = "restored-pane";
+    const TAB_NAME: &str = "restored-tab";
+
+    {
+        let mux = Mux::new(session.clone(), shell_opts("sleep 30"));
+        mux.enable_persistence();
+
+        let surface0 = mux.new_workspace(Some(WS_NAME.to_string()), None).unwrap();
+        let pane0 = mux.with_state(|s| s.pane_of(surface0.id).unwrap());
+        let surface1 = mux.split(pane0, SplitDir::Right, None).unwrap();
+        let pane1 = mux.with_state(|s| s.pane_of(surface1.id).unwrap());
+        assert!(mux.set_ratio(pane0, SplitDir::Right, 0.3));
+        assert!(mux.rename_pane(pane1, PANE_NAME.to_string()));
+
+        // A second tab with an explicit, spawn-time cwd - reliable to
+        // assert on later without depending on shell OSC 7 support.
+        let extra_tab = mux.new_tab(Some(pane1), Some(custom_cwd.clone()), None).unwrap();
+        assert!(mux.rename_surface(extra_tab.id, TAB_NAME.to_string()));
+        mux.select_tab(Some(pane1), Some(1), None);
+
+        // enable_persistence's background writer should pick up the
+        // TreeChanged burst above on its own, debounced.
+        let snapshot_path = mux_core::platform::session_snapshot_path(&session);
+        assert!(
+            wait_for(|| snapshot_path.exists().then_some(()), Duration::from_secs(5)).is_some(),
+            "enable_persistence never wrote a snapshot"
+        );
+
+        mux.shutdown(); // also writes a final, guaranteed-fresh snapshot
+    }
+
+    // A fresh Mux for the same session name simulates the daemon
+    // restarting: nothing here is shared with the instance above.
+    let mux2 = Mux::new(session.clone(), shell_opts("sleep 30"));
+    mux2.restore_session();
+
+    let ws_name = mux2.with_state(|s| s.workspaces[0].name.clone());
+    assert_eq!(ws_name, WS_NAME);
+
+    let mut pane_ids = Vec::new();
+    mux2.with_state(|s| s.workspaces[0].screens[0].root.pane_ids(&mut pane_ids));
+    assert_eq!(pane_ids.len(), 2, "the split survived restore");
+
+    let restored_pane1 =
+        mux2.with_state(|s| s.panes.values().find(|p| p.name.as_deref() == Some(PANE_NAME)).unwrap().id);
+    let tabs = mux2.with_state(|s| s.panes[&restored_pane1].tabs.clone());
+    assert_eq!(tabs.len(), 2, "the extra tab survived restore");
+    assert_eq!(
+        mux2.with_state(|s| s.panes[&restored_pane1].active_tab),
+        1,
+        "the active tab index survived restore"
+    );
+
+    let restored_extra_tab = mux2.surface(tabs[1]).unwrap();
+    assert_eq!(restored_extra_tab.cwd().as_deref(), Some(custom_cwd.as_str()));
+    assert_eq!(restored_extra_tab.name().as_deref(), Some(TAB_NAME));
+
+    mux2.shutdown();
+    std::env::remove_var("XDG_STATE_HOME");
+    let _ = std::fs::remove_dir_all(&dir);
 }

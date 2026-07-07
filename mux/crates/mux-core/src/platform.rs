@@ -114,6 +114,16 @@ pub fn runtime_dir() -> PathBuf {
     runtime_base_dir().join(format!("cmux-mux-{}", user_id_component()))
 }
 
+/// Where a session's persisted tree snapshot lives, honoring the XDG
+/// override order. Not a runtime dir (`$XDG_RUNTIME_DIR` is wiped on
+/// logout/reboot — exactly when this needs to survive).
+pub fn session_snapshot_path(session: &str) -> PathBuf {
+    let base = env_path("XDG_STATE_HOME")
+        .or_else(|| home_dir().map(|home| home.join(".local").join("state")))
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("cmux-mux").join("sessions").join(format!("{session}.json"))
+}
+
 /// User config file path, honoring the XDG override order.
 pub fn config_path() -> Option<PathBuf> {
     if let Some(path) = env_path("CMUX_MUX_CONFIG") {

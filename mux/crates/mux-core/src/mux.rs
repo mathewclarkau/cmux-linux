@@ -61,6 +61,11 @@ pub struct Mux {
     browser_runtime: Mutex<Option<Arc<BrowserRuntime>>>,
     cell_pixels: Mutex<(u16, u16)>,
     default_colors: Mutex<DefaultColors>,
+    /// Set only by `enable_persistence()`. Gates every snapshot write,
+    /// including the one on `shutdown()` — without this, every ephemeral
+    /// `Mux` a test or one-shot CLI invocation creates would write a
+    /// session file to the real `$XDG_STATE_HOME`.
+    persistence_enabled: std::sync::atomic::AtomicBool,
     pub session: String,
 }
 
@@ -83,6 +88,7 @@ impl Mux {
             browser_runtime: Mutex::new(None),
             cell_pixels: Mutex::new((8, 16)),
             default_colors: Mutex::new(DefaultColors::default()),
+            persistence_enabled: std::sync::atomic::AtomicBool::new(false),
             session,
         })
     }
@@ -214,6 +220,9 @@ impl Mux {
     }
 
     pub fn shutdown(&self) {
+        if self.persistence_enabled.load(Ordering::Acquire) {
+            self.write_snapshot();
+        }
         let surfaces = self.state.lock().unwrap().surfaces.values().cloned().collect::<Vec<_>>();
         for surface in surfaces {
             surface.kill();
@@ -221,6 +230,183 @@ impl Mux {
         if let Some(runtime) = self.browser_runtime.lock().unwrap().take() {
             runtime.shutdown();
         }
+    }
+
+    fn snapshot_path(&self) -> std::path::PathBuf {
+        crate::platform::session_snapshot_path(&self.session)
+    }
+
+    fn write_snapshot(&self) {
+        let snapshot = self.with_state(crate::persist::capture);
+        let path = self.snapshot_path();
+        let result = if snapshot.is_empty() {
+            // An intentionally-emptied session shouldn't resurrect old
+            // panes next time it starts.
+            match std::fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e),
+            }
+        } else {
+            snapshot.save(&path)
+        };
+        if let Err(e) = result {
+            self.emit(MuxEvent::Status(format!("session snapshot write failed: {e}")));
+        }
+    }
+
+    /// Restores workspace/screen/pane layout and each tab's cwd from a
+    /// prior [`Self::enable_persistence`] snapshot for this session, if
+    /// one exists. Every restored tab is the default shell, `cd`'d into
+    /// its recorded cwd (see `persist.rs` for why commands aren't
+    /// restored). Call once, right after [`Self::new`], before any other
+    /// mutation — it assumes an empty tree.
+    pub fn restore_session(self: &Arc<Self>) {
+        let Some(snapshot) = crate::persist::SessionSnapshot::load(&self.snapshot_path()) else {
+            return;
+        };
+        let (workspaces, active_workspace) = crate::persist::workspaces(&snapshot);
+        for ws in &workspaces {
+            if let Err(e) = self.restore_workspace(ws) {
+                self.emit(MuxEvent::Status(format!(
+                    "failed to restore workspace {:?}: {e}",
+                    ws.name
+                )));
+            }
+        }
+        self.select_workspace(Some(active_workspace), None);
+    }
+
+    fn restore_workspace(
+        self: &Arc<Self>,
+        ws: &crate::persist::RestoreWorkspace<'_>,
+    ) -> anyhow::Result<()> {
+        let first_surface = self.new_workspace(Some(ws.name.to_string()), None)?;
+        let ws_id = self.with_state(|s| s.workspaces.last().unwrap().id);
+        let (screen_id, pane_id) = self.with_state(|s| {
+            let pane_id = s.pane_of(first_surface.id).unwrap();
+            let (wi, si) = s.screen_of(pane_id).unwrap();
+            (s.workspaces[wi].screens[si].id, pane_id)
+        });
+        self.restore_screen(&ws.screens[0], screen_id, pane_id)?;
+
+        for screen in &ws.screens[1..] {
+            let surface = self.new_screen(Some(ws_id), None)?;
+            let (screen_id, pane_id) = self.with_state(|s| {
+                let pane_id = s.pane_of(surface.id).unwrap();
+                let (wi, si) = s.screen_of(pane_id).unwrap();
+                (s.workspaces[wi].screens[si].id, pane_id)
+            });
+            self.restore_screen(screen, screen_id, pane_id)?;
+        }
+
+        self.select_screen(Some(ws.active_screen), None);
+        Ok(())
+    }
+
+    fn restore_screen(
+        self: &Arc<Self>,
+        screen: &crate::persist::RestoreScreen<'_>,
+        screen_id: ScreenId,
+        initial_pane: PaneId,
+    ) -> anyhow::Result<()> {
+        // `initial_pane` always ends up mapped to snapshot index 0: both
+        // capture (`Node::pane_ids`) and `replay_layout` walk the tree
+        // "a" before "b", and `initial_pane` is `replay_layout`'s root,
+        // which only ever recurses down the "a" side of itself.
+        let pane_ids = self.replay_layout(&screen.layout, initial_pane)?;
+
+        for (index, pane) in screen.panes.iter().enumerate() {
+            let pane_id = pane_ids[&index];
+            if let Some(name) = pane.name {
+                self.rename_pane(pane_id, name.to_string());
+            }
+            // Tab 0 is always the pane's auto-spawned tab (from
+            // new_workspace, new_screen, or split) - a live `cd`, since
+            // none of those spawn calls take a command/cwd override for
+            // it (see the persist module doc).
+            let tab0_surface = self.with_state(|s| s.panes[&pane_id].tabs[0]);
+            if let Some(surface) = self.surface(tab0_surface) {
+                self.apply_tab(&surface, &pane.tabs[0]);
+            }
+            for tab in &pane.tabs[1..] {
+                let surface = self.new_tab(Some(pane_id), tab.cwd.map(str::to_string), None)?;
+                if let Some(name) = tab.name {
+                    self.rename_surface(surface.id, name.to_string());
+                }
+            }
+            self.select_tab(Some(pane_id), Some(pane.active_tab_index), None);
+        }
+
+        if let Some(name) = screen.name {
+            self.rename_screen(screen_id, name.to_string());
+        }
+        self.focus_pane(pane_ids[&screen.active_pane_index]);
+        Ok(())
+    }
+
+    /// Replays a [`crate::persist::RestoreLayout`] tree as `split()` calls
+    /// starting from `root`, which represents the whole screen (a single
+    /// unsplit pane) going in. Returns every leaf's pane id, keyed by its
+    /// snapshot index.
+    fn replay_layout(
+        self: &Arc<Self>,
+        layout: &crate::persist::RestoreLayout,
+        root: PaneId,
+    ) -> anyhow::Result<HashMap<usize, PaneId>> {
+        match layout {
+            crate::persist::RestoreLayout::Leaf(index) => {
+                Ok(HashMap::from([(*index, root)]))
+            }
+            crate::persist::RestoreLayout::Split { dir, ratio, a, b } => {
+                // `split()` keeps `root` as the "a" side and puts a new
+                // pane on the "b" side - see `Node::split_leaf`.
+                let new_surface = self.split(root, *dir, None)?;
+                let new_pane = self.with_state(|s| s.pane_of(new_surface.id).unwrap());
+                self.set_ratio(root, *dir, *ratio);
+                let mut map = self.replay_layout(a, root)?;
+                map.extend(self.replay_layout(b, new_pane)?);
+                Ok(map)
+            }
+        }
+    }
+
+    /// Applies a restored tab's name and cwd to an already-spawned
+    /// surface (see the module doc on why this is a live `cd`, not a
+    /// spawn-time option).
+    fn apply_tab(&self, surface: &Arc<Surface>, tab: &crate::persist::RestoreTab<'_>) {
+        if let Some(name) = tab.name {
+            self.rename_surface(surface.id, name.to_string());
+        }
+        if let Some(cwd) = tab.cwd {
+            let _ = surface.write_bytes(
+                format!("cd {} && clear\n", crate::persist::shell_quote(cwd)).as_bytes(),
+            );
+        }
+    }
+
+    /// Enables background session persistence: an internal subscriber
+    /// debounces `TreeChanged` bursts and writes a snapshot to
+    /// `platform::session_snapshot_path(session)`, which
+    /// [`Self::restore_session`] reads back on next start. Opt-in (tests
+    /// and one-shot CLI invocations should not write session files).
+    pub fn enable_persistence(self: &Arc<Self>) {
+        self.persistence_enabled.store(true, Ordering::Release);
+        let events = self.subscribe();
+        let mux = Arc::downgrade(self);
+        let _ = std::thread::Builder::new().name("mux-persist".into()).spawn(move || loop {
+            match events.recv() {
+                Ok(MuxEvent::TreeChanged) => {}
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+            // Debounce: let a burst of structural changes (e.g. setting
+            // up several splits) settle before writing.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            while events.try_recv().is_ok() {}
+            let Some(mux) = mux.upgrade() else { break };
+            mux.write_snapshot();
+        });
     }
 
     pub fn set_cell_pixel_size(&self, width_px: u16, height_px: u16) {
