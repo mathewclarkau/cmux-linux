@@ -16,6 +16,49 @@ endorsed by, or supported by Manaflow, Inc. Upstream `cmux` is dual-licensed
 (GPL-3.0-or-later or a commercial license from Manaflow); this repo only
 carries forward the GPL-3.0-or-later grant — see [`LICENSE`](./LICENSE).
 
+## Installation
+
+### Prerequisites
+
+- **Rust** (stable, via [rustup](https://rustup.rs) or your distro) — builds `mux-core`/`mux-tui`.
+- **`clang`/libclang** — `ghostty-vt-sys` uses `bindgen` to generate FFI bindings against libclang at build time.
+  Debian/Ubuntu: `apt install clang libclang-dev`. Fedora: `dnf install clang clang-devel`. Arch: `pacman -S clang`.
+- **`git`, `curl`, `tar`** — standard on most systems; `bootstrap.sh` uses them to fetch the pinned zig toolchain.
+- Zig is **not** a prerequisite — `scripts/bootstrap.sh` downloads the exact pinned version (0.15.2) into
+  `.tools/` itself, without touching any system zig install. The pin isn't paranoia: zig is pre-1.0 and zig
+  0.16 breaks this build with at least two unrelated stdlib signature changes (`Dir.readFileAlloc`'s new
+  `Io`-threaded signature, `std.process.EnvMap` moving) within the first few seconds of the build graph —
+  confirmed by patching around both and hitting more.
+- **Go** is only needed for [remote/SSH workspaces](./mux/docs/getting-started.md#remote-ssh-workspaces) — `cmux-mux
+  ssh <host>` shells out to `go build` on first connection to a given host, to cross-compile the vendored
+  `cmuxd-remote` daemon for that host's OS/arch. Everything else builds and runs without Go installed.
+
+### Clone, build, and put it on your `PATH`
+
+```bash
+git clone --recurse-submodules https://github.com/mathewclarkau/cmux-linux.git
+cd cmux-linux
+./scripts/bootstrap.sh                                          # fetches zig, builds mux-tui in release mode
+ln -sf "$(pwd)/mux/target/release/cmux-mux" ~/.local/bin/cmux-mux  # requires ~/.local/bin on PATH
+```
+
+Forgot `--recurse-submodules`? `bootstrap.sh` initializes the `ghostty` submodule itself if it's missing, so a
+plain `git clone` followed by `./scripts/bootstrap.sh` also works. It also applies this repo's patches to the
+submodule (see [`patches/README.md`](./patches/README.md) — the submodule pointer stays on the real upstream
+commit; local changes are layered on top so a fresh clone can always fetch it), and is idempotent to re-run
+(skips the zig download and does an incremental `cargo build` if nothing changed).
+
+### Run it
+
+```bash
+cmux-mux                          # start a session named "main" (TUI + control socket)
+cmux-mux --session agents         # start (or attach to) a differently-named session
+cmux-mux attach --session agents  # attach a second TUI to an already-running session
+```
+
+See [`mux/docs/getting-started.md`](./mux/docs/getting-started.md) for headless mode, socket paths, and session
+persistence/restore semantics.
+
 ## Status
 
 The vendored `mux-tui` builds and runs as-is on Linux (verified on this machine).
@@ -74,37 +117,7 @@ that wizard launches in every new pane and blocks on an interactive prompt.
 Run `p10k configure` once in a normal terminal (outside cmux-mux) to fix it
 for good.
 
-## Build
-
-Requires **zig 0.15.2** exactly and a Rust toolchain. `build.zig` hard-gates on that
-version, and it's not just a paranoid check: zig 0.16 breaks the build with at least
-two unrelated stdlib signature changes (`Dir.readFileAlloc`'s new `Io`-threaded
-signature, `std.process.EnvMap` moving) in the first few seconds of the build graph —
-confirmed by patching around both and hitting more. Zig is pre-1.0 and makes exactly
-this kind of sweeping breaking change between minor releases, so pinning the exact
-version upstream tested against is the correct move, not a workaround.
-
-`scripts/bootstrap.sh` fetches zig 0.15.2 into `.tools/` (not system-wide, doesn't
-touch any other zig install), initializes the `ghostty` submodule if needed, applies
-this repo's patches to it (see [`patches/README.md`](./patches/README.md) — the
-submodule pointer stays on the real upstream commit; local changes are layered on
-top so a fresh clone can always fetch it), and builds `mux-tui` in release mode:
-
-```bash
-./scripts/bootstrap.sh
-```
-
-Re-running it is idempotent (skips the zig download and does an incremental
-`cargo build` if nothing changed).
-
-## Run
-
-```bash
-ln -sf "$(pwd)/mux/target/release/cmux-mux" ~/.local/bin/cmux-mux
-cmux-mux
-```
-
-(assumes `~/.local/bin` is on your `PATH`, as it already is on this machine)
+## Usage
 
 ### Desktop notifications
 
@@ -131,6 +144,25 @@ cmux-mux pane (`CMUX_MUX_SOCKET`/`CMUX_MUX_SURFACE` are unset, so the hook is a 
 past recording the session locally) — safe to install even if you don't always run
 Claude Code inside cmux-mux.
 
-See [`mux/README.md`](./mux/README.md) and [`mux/docs/`](./mux/docs/) for the full
-multiplexer docs (keybindings, config, control-socket protocol) — all still accurate
-here since `mux/` was vendored verbatim.
+## Documentation
+
+The full multiplexer docs live in [`mux/docs/`](./mux/docs/) — still accurate here since `mux/` was vendored
+verbatim and this fork's additions (hooks, notifications, persistence, remote workspaces) are documented inline
+alongside the rest:
+
+| Doc | Covers |
+| --- | --- |
+| [`getting-started.md`](./mux/docs/getting-started.md) | Build prerequisites, local/headless runs, sockets, detach/attach, session persistence, remote (SSH) workspaces |
+| [`concepts.md`](./mux/docs/concepts.md) | Session tree, focus, collapse behavior, tab naming, smart split, PTY and browser surfaces |
+| [`keyboard.md`](./mux/docs/keyboard.md) | Prefix model, modeless Alt layer, default bindings, `mux.json` key remapping |
+| [`mouse.md`](./mux/docs/mouse.md) | Clickable UI, drag reorder, resize, scrollbars, menus, selection, pointer shape |
+| [`configuration.md`](./mux/docs/configuration.md) | Full `mux.json` reference with defaults and a worked example |
+| [`protocol.md`](./mux/docs/protocol.md) | Control-socket JSON-lines framing, attach streams, events, agent state, remote workspaces |
+| [`browser-panes.md`](./mux/docs/browser-panes.md) | CDP-backed browser tabs, rendering, input, profiles, current limitations |
+
+For the formal wire-protocol contract (exact request/response schemas, error tables, CLI mappings — the source
+generated clients would target), see [`mux/spec/`](./mux/spec/), starting with
+[`mux/spec/README.md`](./mux/spec/README.md).
+
+For what's vendored from upstream versus new to this fork, and under what license, see
+[`PROVENANCE.md`](./PROVENANCE.md).
