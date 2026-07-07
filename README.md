@@ -27,22 +27,33 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
 
 ## Build
 
-Requires **zig 0.15.2** exactly (0.16 breaks the build on a stdlib signature change)
-and a Rust toolchain. Don't need to install zig 0.15.2 system-wide — point `ZIG` at
-a local copy:
+Requires **zig 0.15.2** exactly and a Rust toolchain. `build.zig` hard-gates on that
+version, and it's not just a paranoid check: zig 0.16 breaks the build with at least
+two unrelated stdlib signature changes (`Dir.readFileAlloc`'s new `Io`-threaded
+signature, `std.process.EnvMap` moving) in the first few seconds of the build graph —
+confirmed by patching around both and hitting more. Zig is pre-1.0 and makes exactly
+this kind of sweeping breaking change between minor releases, so pinning the exact
+version upstream tested against is the correct move, not a workaround.
+
+`scripts/bootstrap.sh` fetches zig 0.15.2 into `.tools/` (not system-wide, doesn't
+touch any other zig install), initializes the `ghostty` submodule if needed, and
+builds `mux-tui` in release mode:
 
 ```bash
-git submodule update --init ghostty
-cd mux
-ZIG=/path/to/zig-0.15.2/zig cargo build -p mux-tui
+./scripts/bootstrap.sh
 ```
+
+Re-running it is idempotent (skips the zig download and does an incremental
+`cargo build` if nothing changed).
 
 ## Run
 
 ```bash
-cd mux
-cargo run -p mux-tui
+ln -sf "$(pwd)/mux/target/release/cmux-mux" ~/.local/bin/cmux-mux
+cmux-mux
 ```
+
+(assumes `~/.local/bin` is on your `PATH`, as it already is on this machine)
 
 See [`mux/README.md`](./mux/README.md) and [`mux/docs/`](./mux/docs/) for the full
 multiplexer docs (keybindings, config, control-socket protocol) — all still accurate
