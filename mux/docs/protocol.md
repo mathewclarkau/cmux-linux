@@ -157,7 +157,7 @@ Each PTY tab in `list-workspaces` carries `cwd`: the shell's live OSC 7 report w
 {"id":50,"ok":true,"data":{"surface":1,"state":"working","source":"hook","session":"abc123","updated_at_ms":1710000000000}}
 ```
 
-`state` is one of `working`, `blocked`, `idle`, `done`, `unknown`. `source` is `hook` or `socket`; a hook report always applies, a socket report is rejected while the current source is a hook report (so an ad hoc `report-agent` call from a script can't clobber a live hook integration). Subscribers see accepted reports as `agent-state-changed`:
+`state` is one of `working`, `blocked`, `idle`, `done`, `unknown`. `source` is `detected`, `socket`, or `hook`, lowest to highest authority: a hook report always applies; a socket report is rejected while the current source is a hook report (so an ad hoc `report-agent` call from a script can't clobber a live hook integration); a `detected` report — mux-core watching the surface's own output, currently just OSC desktop notifications, see [Desktop Notifications](#desktop-notifications) below — is rejected while the current source is `socket` or `hook`. Subscribers see accepted reports as `agent-state-changed`:
 
 ```json
 {"event":"agent-state-changed","surface":1,"previous":null,"state":"working","source":"hook","session":"abc123","updated_at_ms":1710000000000}
@@ -169,3 +169,15 @@ Each PTY tab in `list-workspaces` carries `cwd`: the shell's live OSC 7 report w
 {"id":51,"cmd":"list-agents","state":"blocked"}
 {"id":51,"ok":true,"data":{"agents":[{"surface":3,"state":"blocked","source":"hook","session":"abc123","updated_at_ms":1710000000000}]}}
 ```
+
+## Desktop Notifications
+
+mux-core watches every PTY surface's raw output for an OSC 9, OSC 777 (rxvt), or kitty-protocol desktop notification — the same three formats libghostty's own OSC parser recognizes as one unified command (`ghostty_vt::OscParser`, extending libghostty-vt's public C API with two data-extraction kinds this fork added: `GHOSTTY_OSC_DATA_DESKTOP_NOTIFICATION_TITLE_STR`/`..._BODY_STR`, alongside the existing window-title extraction). Detection needs no configuration — any program in the pane can trigger it just by writing the sequence, e.g. `printf '\033]9;Build failed\007'`.
+
+Each detected notification does two things: emits `report-agent` with `state: "blocked"`, `source: "detected"` (see Agent State above), and broadcasts an `osc-notification` event to subscribers:
+
+```json
+{"event":"osc-notification","surface":3,"title":"","body":"Build failed"}
+```
+
+The bundled TUI forwards this to the host desktop via `notify-send`. There is no socket command to trigger this deliberately — it is purely a detector on real pty output — see `spec/events.md` for the full event contract and how this differs from the still-unimplemented `notify`/notification-inbox proposal elsewhere in `spec/`.

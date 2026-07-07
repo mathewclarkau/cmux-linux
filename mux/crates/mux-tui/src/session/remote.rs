@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use ghostty_vt::{Callbacks, RenderState, Terminal};
 use mux_core::{
-    platform::transport, BrowserFrame, BrowserSource, BrowserStatus, DefaultColors, MuxEvent, Rgb,
-    SurfaceId, SurfaceKind,
+    platform::transport, AgentReport, AgentState, AgentStateSource, BrowserFrame, BrowserSource,
+    BrowserStatus, DefaultColors, MuxEvent, Rgb, SurfaceId, SurfaceKind,
 };
 use serde_json::{json, Value};
 
@@ -366,6 +366,39 @@ impl RemoteSession {
                 }
             }
             Some("empty") => self.emit(MuxEvent::Empty),
+            Some("agent-state-changed") => {
+                let (Some(id), Some(state), Some(source)) = (
+                    surface_id(),
+                    value.get("state").and_then(|v| v.as_str()).and_then(AgentState::parse),
+                    value.get("source").and_then(|v| v.as_str()).and_then(AgentStateSource::parse),
+                ) else {
+                    return;
+                };
+                let previous =
+                    value.get("previous").and_then(|v| v.as_str()).and_then(AgentState::parse);
+                let session = value.get("session").and_then(|v| v.as_str()).map(str::to_string);
+                let updated_at_ms = value.get("updated_at_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+                self.tree_stale.store(true, Ordering::Release);
+                self.emit(MuxEvent::AgentStateChanged {
+                    surface: id,
+                    previous,
+                    report: AgentReport { state, source, session, updated_at_ms },
+                });
+            }
+            Some("osc-notification") => {
+                let (Some(id), Some(title), Some(body)) = (
+                    surface_id(),
+                    value.get("title").and_then(|v| v.as_str()),
+                    value.get("body").and_then(|v| v.as_str()),
+                ) else {
+                    return;
+                };
+                self.emit(MuxEvent::OscNotification {
+                    surface: id,
+                    title: title.to_string(),
+                    body: body.to_string(),
+                });
+            }
             Some(_) => {}
         }
     }

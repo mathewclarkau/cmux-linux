@@ -28,7 +28,14 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
    (`crates/mux-tui/src/claude_hook.rs`) and records sessions to
    `$XDG_STATE_HOME/cmux-mux/claude-sessions.json` for `cmux-mux claude sessions`
    / `cmux-mux claude resume <session-id>`.
-3. Agent-state notifications (OSC 9/99/777 → desktop notification / "needs attention")
+3. ~~Agent-state notifications (OSC 9/99/777 → desktop notification)~~ — done.
+   Every pane's raw output is watched for an OSC 9, OSC 777, or kitty-protocol
+   desktop notification (`crates/mux-core/src/notify.rs`); each one sets
+   `agent_state: blocked` (lowest-authority "detected" source — a hook or
+   `report-agent` call still wins) and forwards to the desktop via
+   `notify-send`. Needed extending libghostty-vt's C API by two data-extraction
+   values — see `patches/` — since it could already *detect* this OSC command
+   but not extract its title/body text.
 4. Session persistence across daemon restarts
 5. Remote/SSH workspaces, wiring upstream's existing Go `cmuxd-remote` daemon
    (already cross-compiles for `linux/amd64` and `linux/arm64`) into `mux-core`
@@ -53,8 +60,10 @@ this kind of sweeping breaking change between minor releases, so pinning the exa
 version upstream tested against is the correct move, not a workaround.
 
 `scripts/bootstrap.sh` fetches zig 0.15.2 into `.tools/` (not system-wide, doesn't
-touch any other zig install), initializes the `ghostty` submodule if needed, and
-builds `mux-tui` in release mode:
+touch any other zig install), initializes the `ghostty` submodule if needed, applies
+this repo's patches to it (see [`patches/README.md`](./patches/README.md) — the
+submodule pointer stays on the real upstream commit; local changes are layered on
+top so a fresh clone can always fetch it), and builds `mux-tui` in release mode:
 
 ```bash
 ./scripts/bootstrap.sh
@@ -71,6 +80,15 @@ cmux-mux
 ```
 
 (assumes `~/.local/bin` is on your `PATH`, as it already is on this machine)
+
+### Desktop notifications
+
+No setup needed: any program in any pane gets a real desktop notification (via
+`notify-send`) and a red sidebar dot just by writing an OSC 9 sequence, e.g.
+`printf '\033]9;Build failed\007'`. OSC 777 and the kitty notification protocol
+(both can include a title) work the same way. This also feeds the Claude Code
+hook layer's status dot: a `report-agent` call (from a hook or the socket) always
+takes priority over this passive detection.
 
 ### Claude Code integration
 

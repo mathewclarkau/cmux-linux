@@ -92,6 +92,22 @@ impl TreeView {
             .map(|tab| tab.kind)
             .unwrap_or(SurfaceKind::Pty)
     }
+
+    /// A human label for a surface, for contexts (like desktop
+    /// notifications) that need to identify a pane outside the sidebar's
+    /// own rendering: `"<workspace> · <tab title or agent name>"`.
+    pub fn tab_label(&self, id: SurfaceId) -> Option<String> {
+        self.workspaces.iter().find_map(|ws| {
+            let tab = ws
+                .screens
+                .iter()
+                .flat_map(|screen| screen.panes.iter())
+                .flat_map(|pane| pane.tabs.iter())
+                .find(|tab| tab.surface == id)?;
+            let title = tab.name.as_deref().filter(|s| !s.is_empty()).unwrap_or(&tab.title);
+            Some(if title.is_empty() { ws.name.clone() } else { format!("{} · {title}", ws.name) })
+        })
+    }
 }
 
 impl WorkspaceView {

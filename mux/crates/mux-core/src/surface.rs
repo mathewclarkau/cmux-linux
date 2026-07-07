@@ -119,11 +119,16 @@ impl AgentState {
     }
 }
 
-/// Authority of an agent-state report. A hook report always applies; a
-/// socket report is rejected while a hook report is the current source
-/// (see `spec/commands.md`'s `report-agent` authority rules).
+/// Authority of an agent-state report, lowest to highest (derived `Ord`
+/// follows declaration order): a hook report always applies; a socket
+/// report is rejected while a hook report is the current source; a
+/// detected report (from watching the surface's own output, e.g. an OSC 9
+/// notification) is rejected while either an explicit socket or hook
+/// report is current (see `spec/commands.md`'s `report-agent` authority
+/// rules, which name "detected" as the lowest tier).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AgentStateSource {
+    Detected,
     Socket,
     Hook,
 }
@@ -131,6 +136,7 @@ pub enum AgentStateSource {
 impl AgentStateSource {
     pub fn as_str(self) -> &'static str {
         match self {
+            AgentStateSource::Detected => "detected",
             AgentStateSource::Socket => "socket",
             AgentStateSource::Hook => "hook",
         }
@@ -138,6 +144,7 @@ impl AgentStateSource {
 
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
+            "detected" => AgentStateSource::Detected,
             "socket" => AgentStateSource::Socket,
             "hook" => AgentStateSource::Hook,
             _ => return None,
@@ -346,6 +353,10 @@ impl Surface {
             let mux = mux.clone();
             move || {
                 let mut buf = [0u8; 64 * 1024];
+                // Best-effort: if the OSC parser can't even allocate, skip
+                // notification detection for this surface rather than
+                // failing the whole pty.
+                let mut osc_watcher = crate::notify::OscWatcher::new().ok();
                 loop {
                     let n = match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
@@ -371,6 +382,19 @@ impl Surface {
                         }
                         if let Some(pwd) = term.pwd() {
                             *pty.pwd.lock().unwrap() = Some(pwd);
+                        }
+                    }
+                    if let Some(watcher) = osc_watcher.as_mut() {
+                        for (title, body) in watcher.feed(&buf[..n]) {
+                            if let Some(mux) = mux.upgrade() {
+                                mux.report_agent(
+                                    surface.id,
+                                    crate::AgentState::Blocked,
+                                    crate::AgentStateSource::Detected,
+                                    None,
+                                );
+                                mux.emit(MuxEvent::OscNotification { surface: surface.id, title, body });
+                            }
                         }
                     }
                     let responses = std::mem::take(&mut *pending_responses.lock().unwrap());

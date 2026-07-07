@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 
 use ghostty_vt::RenderState;
 use mux_core::platform::transport;
-use mux_core::{AttachFrame, DefaultColors, Mux, MuxEvent, Rgb, SurfaceOptions};
+use mux_core::{
+    AgentState, AgentStateSource, AttachFrame, DefaultColors, Mux, MuxEvent, Rgb, SurfaceOptions,
+};
 
 fn wait_for<T>(mut f: impl FnMut() -> Option<T>, timeout: Duration) -> Option<T> {
     let start = Instant::now();
@@ -79,6 +81,60 @@ fn surface_runs_command_and_screen_updates() {
     assert!(text.is_some(), "marker never appeared on screen");
 
     mux.close_surface(surface.id);
+}
+
+#[test]
+fn osc9_notification_from_real_pty_output_sets_detected_agent_state() {
+    let mux = Mux::new(
+        unique_session("test-osc9"),
+        shell_opts("printf '\\033]9;Build failed\\007'; sleep 30"),
+    );
+    let events = mux.subscribe();
+    let surface = mux.new_workspace(None, None).unwrap();
+
+    let notification = wait_for(
+        || {
+            events.try_iter().find_map(|e| match e {
+                MuxEvent::OscNotification { surface: id, title, body } if id == surface.id => {
+                    Some((title, body))
+                }
+                _ => None,
+            })
+        },
+        Duration::from_secs(10),
+    );
+    assert_eq!(notification, Some(("".to_string(), "Build failed".to_string())));
+
+    let agents = mux.list_agents(Some(surface.id), None);
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].1.state, AgentState::Blocked);
+    assert_eq!(agents[0].1.source, AgentStateSource::Detected);
+
+    // A detected report must not override an existing hook report - the
+    // opposite direction of the authority rule covered in mux.rs's unit
+    // tests, verified here against the real detection path.
+    mux.report_agent(surface.id, AgentState::Working, AgentStateSource::Hook, None);
+    let mux2 = Mux::new(
+        unique_session("test-osc9-hook-priority"),
+        shell_opts("printf '\\033]9;again\\007'; sleep 30"),
+    );
+    let events2 = mux2.subscribe();
+    let surface2 = mux2.new_workspace(None, None).unwrap();
+    mux2.report_agent(surface2.id, AgentState::Working, AgentStateSource::Hook, None);
+    assert!(
+        wait_for(
+            || events2.try_iter().find(|e| matches!(e, MuxEvent::OscNotification { .. })),
+            Duration::from_secs(10),
+        )
+        .is_some(),
+        "notification event should still fire even when detection can't change agent state"
+    );
+    let agents2 = mux2.list_agents(Some(surface2.id), None);
+    assert_eq!(agents2[0].1.state, AgentState::Working, "hook report must survive a later detection");
+    assert_eq!(agents2[0].1.source, AgentStateSource::Hook);
+
+    mux.close_surface(surface.id);
+    mux2.close_surface(surface2.id);
 }
 
 #[test]

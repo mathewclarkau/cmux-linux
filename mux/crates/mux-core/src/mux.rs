@@ -39,6 +39,16 @@ pub enum MuxEvent {
         previous: Option<AgentState>,
         report: AgentReport,
     },
+    /// A surface's pty output contained an OSC 9 / OSC 777 / kitty desktop
+    /// notification. Distinct from the mux's own (unimplemented) notify
+    /// inbox in `spec/commands.md`/`events.md` - this is a raw, ephemeral
+    /// signal from the pane's own output, not a stored, dismissible
+    /// notification record.
+    OscNotification {
+        surface: SurfaceId,
+        title: String,
+        body: String,
+    },
 }
 
 /// The multiplexer. Shared by frontends and the control socket server.

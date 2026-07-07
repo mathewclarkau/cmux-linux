@@ -11,6 +11,7 @@
 mod browser;
 mod model;
 mod mux;
+mod notify;
 mod short_id;
 mod surface;
 

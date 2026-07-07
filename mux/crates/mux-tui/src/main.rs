@@ -11,6 +11,7 @@ mod browser_input;
 mod claude_hook;
 mod cli;
 mod config;
+mod desktop_notify;
 mod git_info;
 mod host_colors;
 mod keys;

@@ -306,6 +306,35 @@ Example:
 {"event":"agent-state-changed","surface":1,"previous":"working","state":"blocked","source":"hook","session":"abc","updated_at_ms":1710000000000}
 ```
 
+### osc-notification
+
+| Field | Value |
+| --- | --- |
+| event | `osc-notification` |
+| status | implemented |
+| since | protocol 6 (this fork; not in the original proposal) |
+
+Payload:
+
+```text
+object{
+  event:"osc-notification",
+  surface:Id,
+  title:string,
+  body:string
+}
+```
+
+Meaning: the surface's pty output contained an OSC 9, OSC 777 (rxvt), or kitty-protocol desktop notification (`mux-core/src/notify.rs`, using `ghostty_vt::OscParser`, the same OSC parser libghostty itself uses). `title` is frequently empty (OSC 9 carries only a body). Every occurrence also triggers a `report-agent` call with `state: "blocked"`, `source: "detected"` — see `agent-state-changed` and `commands.md`'s `report-agent`.
+
+This is a distinct, simpler mechanism from the `notify`/`notification`/`list-notifications` inbox proposed elsewhere in this spec (still unimplemented): it's a raw, ephemeral signal straight from a pane's own output, not a stored, dismissible record with an id and severity level. The bundled TUI forwards it to the desktop via `notify-send`.
+
+Example:
+
+```json
+{"event":"osc-notification","surface":3,"title":"","body":"Build failed"}
+```
+
 ### notification
 
 | Field | Value |

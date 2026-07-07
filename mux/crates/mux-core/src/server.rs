@@ -878,6 +878,12 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                             "session": report.session,
                             "updated_at_ms": report.updated_at_ms,
                         }),
+                        MuxEvent::OscNotification { surface, title, body } => json!({
+                            "event": "osc-notification",
+                            "surface": surface,
+                            "title": title,
+                            "body": body,
+                        }),
                     };
                     if writer.send(&value).is_err() {
                         break;

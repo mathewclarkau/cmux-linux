@@ -13,7 +13,11 @@ included here. What's included:
 - `ghostty/` — git submodule tracking `manaflow-ai/ghostty` (Manaflow's Ghostty fork),
   pinned to the same commit (`a78fe53efaaea56b80d47569d85e0d7b76512aa7`) that upstream
   cmux pins. Only its VT engine (`libghostty-vt`) is built; the macOS GUI app parts of
-  that tree are unused.
+  that tree are unused. The submodule pointer itself stays pinned to that exact
+  upstream commit (so a fresh clone can always fetch it from the real
+  `manaflow-ai/ghostty` remote); local modifications live as patch files in
+  `patches/`, applied by `scripts/bootstrap.sh` after `submodule update`. See
+  `patches/*.patch` for what each one does and why.
 
 ## Licensing
 

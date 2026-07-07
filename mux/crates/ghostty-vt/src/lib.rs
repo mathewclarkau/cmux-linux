@@ -5,6 +5,7 @@
 //! rendered from this crate matches what a real Ghostty surface would show.
 
 mod key;
+mod osc;
 mod render;
 mod terminal;
 
@@ -12,6 +13,7 @@ mod terminal;
 pub use ghostty_vt_sys as sys;
 
 pub use key::{KeyAction, KeyEncoder, KeyInput, Mods};
+pub use osc::{OscCommand, OscParser};
 pub use render::{Cell, ColorSpec, CursorInfo, CursorShape, Dirty, RenderState};
 pub use terminal::{Callbacks, NotifyFn, PtyWriteFn, Rgb, Screen, Scrollbar, Terminal};
 

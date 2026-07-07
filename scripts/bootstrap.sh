@@ -28,6 +28,15 @@ if [ ! -e "$ROOT/ghostty/build.zig" ]; then
   git -C "$ROOT" submodule update --init ghostty
 fi
 
+for patch in "$ROOT"/patches/*.patch; do
+  [ -e "$patch" ] || continue
+  if git -C "$ROOT/ghostty" apply --check --reverse "$patch" 2>/dev/null; then
+    continue # already applied
+  fi
+  echo "==> applying $(basename "$patch") to ghostty/"
+  git -C "$ROOT/ghostty" apply "$patch"
+done
+
 echo "==> building mux-tui (release)"
 cd "$ROOT/mux"
 ZIG="$ZIG_DIR/zig" cargo build --release -p mux-tui

@@ -933,6 +933,11 @@ impl App {
                     Ok(RenderAction::Draw)
                 }
             }
+            AppEvent::Mux(MuxEvent::OscNotification { surface, title, body }) => {
+                let label = self.tree.tab_label(surface).unwrap_or_else(|| "cmux-mux".to_string());
+                crate::desktop_notify::send(&label, &title, &body);
+                Ok(RenderAction::Draw)
+            }
             AppEvent::Mux(_) => Ok(RenderAction::Draw),
             AppEvent::Input(Event::Key(key)) => {
                 if key.kind != KeyEventKind::Release {

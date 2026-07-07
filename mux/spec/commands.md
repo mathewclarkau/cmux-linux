@@ -1844,7 +1844,7 @@ Example:
 | status | implemented |
 | since | protocol 6 |
 
-Returns known agent status records. Records may come from detection, explicit reports, or hooks; **only explicit reports (`source: "hook"` or `"socket"`) are implemented in this fork** — there is no automatic detection. Explicit hook-authority reports override detection for the same surface until another explicit report changes the state or the surface closes.
+Returns known agent status records. Records may come from detection, explicit reports, or hooks — all three are implemented in this fork: `source: "detected"` comes from watching a surface's own pty output for an OSC 9 / OSC 777 / kitty desktop notification (see `mux-core/src/notify.rs`), which sets state `blocked`. Detected reports have the lowest authority: a `socket` or `hook` report always wins over a `detected` one, regardless of order (see `report-agent`'s authority rules below). Explicit hook-authority reports override detection for the same surface until another explicit report changes the state or the surface closes.
 
 Params:
 
