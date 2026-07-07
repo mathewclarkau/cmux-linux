@@ -11,6 +11,11 @@ screen → pane → surface model over a JSON-Lines Unix-socket control protocol
 [`PROVENANCE.md`](./PROVENANCE.md) for exactly what was vendored from where, and
 under what license.
 
+This is an unofficial, community-maintained port and is not affiliated with,
+endorsed by, or supported by Manaflow, Inc. Upstream `cmux` is dual-licensed
+(GPL-3.0-or-later or a commercial license from Manaflow); this repo only
+carries forward the GPL-3.0-or-later grant — see [`LICENSE`](./LICENSE).
+
 ## Status
 
 The vendored `mux-tui` builds and runs as-is on Linux (verified on this machine).
