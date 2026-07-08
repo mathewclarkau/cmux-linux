@@ -32,6 +32,7 @@ uds_windows = "1.2"
 
 [profile.release]
 lto = "thin"
+strip = true
 
 # Debug builds are what mux-dev dogfood runs; opt-level 0 makes the
 # per-frame render/diff path visibly laggy. Light optimization for our

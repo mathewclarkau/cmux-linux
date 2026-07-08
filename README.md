@@ -18,7 +18,21 @@ carries forward the GPL-3.0-or-later grant — see [`LICENSE`](./LICENSE).
 
 ## Installation
 
-### Prerequisites
+### Prebuilt binary
+
+```bash
+curl -fsSL -o ~/.local/bin/cmux-mux \
+  "https://github.com/mathewclarkau/cmux-linux/releases/latest/download/cmux-mux-linux-$(uname -m)"
+chmod +x ~/.local/bin/cmux-mux
+```
+
+Covers `x86_64` and `aarch64`, no Rust/clang toolchain needed — skip straight to [Run it](#run-it) below.
+Built by [`.github/workflows/release.yml`](./.github/workflows/release.yml) from a tagged commit, the same way
+`bootstrap.sh` builds it locally.
+
+### Build from source
+
+#### Prerequisites
 
 - **Rust** (stable, via [rustup](https://rustup.rs) or your distro) — builds `mux-core`/`mux-tui`.
 - **`clang`/libclang** — `ghostty-vt-sys` uses `bindgen` to generate FFI bindings against libclang at build time.
@@ -33,7 +47,7 @@ carries forward the GPL-3.0-or-later grant — see [`LICENSE`](./LICENSE).
   ssh <host>` shells out to `go build` on first connection to a given host, to cross-compile the vendored
   `cmuxd-remote` daemon for that host's OS/arch. Everything else builds and runs without Go installed.
 
-### Clone, build, and put it on your `PATH`
+#### Clone, build, and put it on your `PATH`
 
 ```bash
 git clone --recurse-submodules https://github.com/mathewclarkau/cmux-linux.git
