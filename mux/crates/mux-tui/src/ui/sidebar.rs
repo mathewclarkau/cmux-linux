@@ -7,12 +7,14 @@
 //! status-bar row (the status bar starts after the sidebar). Rebuilds
 //! the click hit map as it draws.
 
+use std::time::Instant;
+
 use mux_core::{AgentState, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::Frame;
 
 use super::truncate;
-use crate::app::{App, Hit};
+use crate::app::{flash_active, App, Hit};
 
 /// Color for the sidebar's agent-state dot. `Working`/`Blocked` are the
 /// two states worth a glance (busy vs. needs you); `Idle`/`Done`/`Unknown`
@@ -34,6 +36,12 @@ fn rail_color(workspace_color: Option<Color>, active: bool, theme_rail: Color) -
     workspace_color.or(if active { Some(theme_rail) } else { None })
 }
 
+/// Bright, fixed pulse color for a manual flash — deliberately ignores
+/// the workspace's own color/active state so it reads as "look here"
+/// regardless of context. Layered on top of `rail_color`'s result, not a
+/// replacement for it.
+const FLASH_COLOR: Color = Color::White;
+
 pub fn draw(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
     let width = app.sidebar_width;
@@ -46,6 +54,7 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
     let workspace_drag = app.workspace_drag();
     let buf = frame.buffer_mut();
 
+    let now = Instant::now();
     let base = Style::default();
     let dim = base.fg(Color::Indexed(242));
     let active_style = Style::default()
@@ -81,6 +90,8 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
             break;
         }
         let active = i == app.tree.active_workspace;
+        let flashing =
+            app.flashing.get(&ws.id).is_some_and(|start| flash_active(now.duration_since(*start)));
         let mut style = if active { active_style } else { base };
         if workspace_drag.is_some_and(|(id, _)| id == ws.id) {
             style = style.add_modifier(Modifier::DIM);
@@ -94,7 +105,9 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
                 buf[(x, y + 1)].set_style(active_style);
             }
         }
-        if let Some(color) = rail_color(ws.color, active, rail) {
+        let rail_pulse =
+            if flashing { Some(FLASH_COLOR) } else { rail_color(ws.color, active, rail) };
+        if let Some(color) = rail_pulse {
             let rail_style = (if active { active_style } else { base }).fg(color);
             buf[(0, y)].set_symbol("▎").set_style(rail_style);
             buf[(0, y + 1)].set_symbol("▎").set_style(rail_style);

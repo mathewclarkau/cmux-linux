@@ -252,6 +252,14 @@ enum Command {
         #[serde(default)]
         colour: Option<String>,
     },
+    /// Emits a transient `flash` event to subscribers. `surface` is
+    /// advisory (not validated against the workspace) and just passed
+    /// through.
+    TriggerFlash {
+        workspace: WorkspaceId,
+        #[serde(default)]
+        surface: Option<SurfaceId>,
+    },
     ResizeSurface {
         surface: SurfaceId,
         cols: u16,
@@ -833,6 +841,12 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             }
             Ok(json!({}))
         }
+        Command::TriggerFlash { workspace, surface } => {
+            if !mux.trigger_flash(workspace, surface) {
+                anyhow::bail!("unknown workspace {workspace}");
+            }
+            Ok(json!({}))
+        }
         Command::ResizeSurface { surface, cols, rows } => {
             mux.resize_surface(surface, cols, rows)?;
             Ok(json!({}))
@@ -909,6 +923,11 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                             json!({"event": "title-changed", "surface": id})
                         }
                         MuxEvent::Bell(id) => json!({"event": "bell", "surface": id}),
+                        MuxEvent::Flash { workspace, surface } => json!({
+                            "event": "flash",
+                            "workspace": workspace,
+                            "surface": surface,
+                        }),
                         MuxEvent::Status(message) => {
                             json!({"event": "status", "message": message})
                         }

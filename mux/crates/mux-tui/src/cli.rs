@@ -188,6 +188,13 @@ const VERBS: &[VerbSpec] = &[
         stream: false,
     },
     VerbSpec {
+        name: "trigger-flash",
+        allowed: &["workspace", "surface"],
+        build: build_trigger_flash,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
         name: "resize-surface",
         allowed: &["surface", "cols", "rows"],
         build: build_resize_surface,
@@ -678,6 +685,13 @@ fn build_set_workspace_color(flags: &FlagMap) -> Result<Value, UsageError> {
     let colour = flags.required("colour")?;
     let colour = if colour.is_empty() { Value::Null } else { json!(colour) };
     Ok(json!({ "workspace": workspace, "colour": colour }))
+}
+
+fn build_trigger_flash(flags: &FlagMap) -> Result<Value, UsageError> {
+    let workspace = flags.required_u64("workspace")?;
+    let mut value = json!({ "workspace": workspace });
+    flags.insert_optional_u64(&mut value, "surface")?;
+    Ok(value)
 }
 
 fn build_resize_surface(flags: &FlagMap) -> Result<Value, UsageError> {

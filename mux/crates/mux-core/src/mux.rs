@@ -49,6 +49,14 @@ pub enum MuxEvent {
         title: String,
         body: String,
     },
+    /// A manual flash was triggered for a workspace (e.g. via the
+    /// `trigger-flash` command), for frontends to render a transient
+    /// visual pulse. `surface` is advisory context about which surface
+    /// triggered it, if any — not validated.
+    Flash {
+        workspace: WorkspaceId,
+        surface: Option<SurfaceId>,
+    },
 }
 
 /// The multiplexer. Shared by frontends and the control socket server.
@@ -986,6 +994,20 @@ impl Mux {
             self.emit(MuxEvent::TreeChanged);
         }
         changed
+    }
+
+    /// Emits `MuxEvent::Flash` for a workspace, for frontends to render a
+    /// transient visual pulse (e.g. a manual "look here" signal). Doesn't
+    /// mutate state, so no `TreeChanged` follows.
+    pub fn trigger_flash(&self, workspace: WorkspaceId, surface: Option<SurfaceId>) -> bool {
+        let exists = {
+            let state = self.state.lock().unwrap();
+            state.workspaces.iter().any(|ws| ws.id == workspace)
+        };
+        if exists {
+            self.emit(MuxEvent::Flash { workspace, surface });
+        }
+        exists
     }
 
     /// Set a pane's user-visible name. An empty name clears it (the pane
