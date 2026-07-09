@@ -1053,7 +1053,7 @@ Params:
 | Name | JSON type | Required/default | Constraints |
 | --- | --- | --- | --- |
 | `workspace` | `Id` | required | Must identify a live workspace |
-| `colour` | `ColorHex \| null` | required | Field should be present in the request; `null` clears the color, a `ColorHex` string sets it |
+| `colour` | `ColorHex \| null` | optional (default: `null`) | Absent or `null` clears the color, a `ColorHex` string sets it. The CLI always sends the key explicitly (see CLI mapping below), but the wire protocol itself does not require it. |
 
 Result:
 
