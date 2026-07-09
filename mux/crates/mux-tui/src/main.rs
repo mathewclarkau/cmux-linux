@@ -9,6 +9,10 @@
 mod app;
 mod browser_input;
 mod claude_hook;
+mod antigravity_hook;
+mod codex_hook;
+mod pi_hook;
+mod aider_hook;
 mod cli;
 mod config;
 mod desktop_notify;
@@ -18,6 +22,7 @@ mod keys;
 mod session;
 mod ssh_bootstrap;
 mod ui;
+mod skill_content;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,6 +57,10 @@ USAGE:
   cmux-mux attach [OPTIONS]    Attach to an existing session's socket
   cmux-mux <verb> [OPTIONS]    Run one control-socket command
   cmux-mux claude <subcommand> Claude Code hook integration (see below)
+  cmux-mux antigravity install-hooks  Antigravity CLI hook integration (see below)
+  cmux-mux codex install-hooks        Codex CLI hook integration (see below)
+  cmux-mux pi install-hooks           Pi agent extension integration (see below)
+  cmux-mux aider install-hooks        Aider wrapper integration (see below)
   cmux-mux ssh <host> [OPTS]   Open a remote workspace over SSH (see below)
 
 OPTIONS:
@@ -91,6 +100,8 @@ CLAUDE CODE HOOK INTEGRATION
   cmux-mux claude install-hooks [--uninstall]
       Wires ~/.claude/settings.json's hooks to call `cmux-mux claude hook`
       on every lifecycle event, merged alongside any hooks already there.
+  cmux-mux claude install-skill [--uninstall] [--global]
+      Appends the orchestration skill to CLAUDE.md (or ~/CLAUDE.md if --global).
   cmux-mux claude sessions
       Lists recorded Claude Code sessions (session id, cwd, last event).
   cmux-mux claude resume <session-id>
@@ -98,6 +109,35 @@ CLAUDE CODE HOOK INTEGRATION
   cmux-mux claude hook
       Not for interactive use — this is what install-hooks points Claude
       Code's own hook config at.
+
+ANTIGRAVITY CLI INTEGRATION
+  cmux-mux antigravity install-hooks [--uninstall] [--global]
+      Installs hooks into .agents/hooks.json (or ~/.gemini/config/hooks.json if --global)
+      to automatically report state changes to cmux-mux.
+  cmux-mux antigravity install-skill [--uninstall] [--global]
+      Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
+      (or ~/.gemini/antigravity-cli/skills/cmux-orchestration/SKILL.md if --global).
+
+CODEX CLI INTEGRATION
+  cmux-mux codex install-hooks [--uninstall] [--global]
+      Installs hooks into .codex/hooks.json (or ~/.codex/hooks.json if --global) and
+      enables hooks feature in config.toml to report state to cmux-mux.
+  cmux-mux codex install-skill [--uninstall] [--global]
+      Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
+      (or ~/.codex/skills/cmux-orchestration/SKILL.md if --global).
+
+PI AGENT INTEGRATION
+  cmux-mux pi install-hooks [--uninstall] [--global]
+      Installs TypeScript extensions into .pi/extensions/ (or ~/.pi/agent/extensions/
+      if --global) to report state changes.
+  cmux-mux pi install-skill [--uninstall] [--global]
+      Appends the orchestration skill to .pi/APPEND_SYSTEM.md
+      (or ~/.pi/agent/APPEND_SYSTEM.md if --global).
+
+AIDER INTEGRATION
+  cmux-mux aider install-hooks [--uninstall] [--global]
+      Creates a wrapper script at .bin/aider (or ~/.local/bin/aider if --global)
+      that wraps the real aider binary to report working/done state.
 
 REMOTE (SSH) WORKSPACES
   cmux-mux ssh <host> [--name <workspace-name>] [--session <mux-session>]
@@ -162,6 +202,18 @@ fn main() {
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("claude") {
         std::process::exit(claude_hook::run(&raw_args[1..]));
+    }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("antigravity") {
+        std::process::exit(antigravity_hook::run(&raw_args[1..]));
+    }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("codex") {
+        std::process::exit(codex_hook::run(&raw_args[1..]));
+    }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("pi") {
+        std::process::exit(pi_hook::run(&raw_args[1..]));
+    }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("aider") {
+        std::process::exit(aider_hook::run(&raw_args[1..]));
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("ssh") {
         std::process::exit(ssh_bootstrap::run(&raw_args[1..]));

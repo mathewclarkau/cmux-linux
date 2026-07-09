@@ -142,21 +142,48 @@ No setup needed: any program in any pane gets a real desktop notification (via
 hook layer's status dot: a `report-agent` call (from a hook or the socket) always
 takes priority over this passive detection.
 
-### Claude Code integration
+### LLM Harness Integrations
 
+`cmux-linux` provides first-class integrations to automatically report agent status (e.g., active, idle, done) for display on sidebar tabs.
+
+#### 1. Claude Code
 ```bash
-cmux-mux claude install-hooks        # wire up ~/.claude/settings.json (see below)
+cmux-mux claude install-hooks        # wire up ~/.claude/settings.json
 cmux-mux claude install-hooks --uninstall
 cmux-mux claude sessions             # recorded sessions: id, cwd, last event
 cmux-mux claude resume <session-id>  # new pane in the recorded cwd, runs claude --resume
 ```
+Once installed, panes running Claude Code show status dots next to the git branch (amber while working, red when blocked, green when done).
 
-Once installed, panes running Claude Code show a status dot in the sidebar next to
-the git branch: amber while working, red when it needs you (a permission prompt or
-similar), green when a turn finishes, dim when idle. This has no effect outside a
-cmux-mux pane (`CMUX_MUX_SOCKET`/`CMUX_MUX_SURFACE` are unset, so the hook is a no-op
-past recording the session locally) — safe to install even if you don't always run
-Claude Code inside cmux-mux.
+#### 2. Antigravity CLI (`agy`)
+```bash
+cmux-mux antigravity install-hooks            # installs workspace-level hooks in .agents/hooks.json
+cmux-mux antigravity install-hooks --global   # installs global hooks in ~/.gemini/config/hooks.json
+cmux-mux antigravity install-hooks --uninstall
+```
+Triggers state updates automatically during tool execution phases (`PreToolUse`, `PostToolUse`, `Stop`).
+
+#### 3. Codex CLI
+```bash
+cmux-mux codex install-hooks            # installs hooks in .codex/hooks.json and enables in config.toml
+cmux-mux codex install-hooks --global   # installs hooks in ~/.codex/hooks.json and enables globally
+cmux-mux codex install-hooks --uninstall
+```
+
+#### 4. Pi Coding Agent (`pi`)
+```bash
+cmux-mux pi install-hooks            # installs TypeScript extensions into .pi/extensions/cmux.ts
+cmux-mux pi install-hooks --global   # installs extensions globally in ~/.pi/agent/extensions/cmux.ts
+cmux-mux pi install-hooks --uninstall
+```
+
+#### 5. Aider
+```bash
+cmux-mux aider install-hooks            # creates a wrapper executable at .bin/aider
+cmux-mux aider install-hooks --global   # creates a wrapper globally at ~/.local/bin/aider
+cmux-mux aider install-hooks --uninstall
+```
+*Note: For the local wrapper, ensure `.bin/` is prepended to your `$PATH` or call `./.bin/aider` directly.*
 
 ## Documentation
 
