@@ -13,6 +13,7 @@ mod antigravity_hook;
 mod codex_hook;
 mod pi_hook;
 mod aider_hook;
+mod hook_merge;
 mod cli;
 mod config;
 mod desktop_notify;

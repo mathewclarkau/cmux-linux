@@ -10,7 +10,6 @@ on:
       - opened
       - synchronize
       - reopened
-  workflow_dispatch: {}
 
 jobs:
   build:
@@ -34,9 +33,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.75.0
 
       - name: Bootstrap (fetch zig 0.15.2)
-        run: |
-          ./scripts/bootstrap.sh
-          echo "ZIG=$GITHUB_WORKSPACE/.tools/zig-${{ matrix.arch }}-linux-0.15.2/zig" >> "$GITHUB_ENV"
+        run: ./scripts/bootstrap.sh
 
       - name: Cargo check (mux-tui)
         working-directory: mux
