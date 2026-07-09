@@ -245,6 +245,13 @@ enum Command {
         workspace: WorkspaceId,
         name: String,
     },
+    /// `colour: Some(hex)` sets the workspace color; `colour: None` (an
+    /// explicit `null` or the key absent) clears it.
+    SetWorkspaceColor {
+        workspace: WorkspaceId,
+        #[serde(default)]
+        colour: Option<String>,
+    },
     ResizeSurface {
         surface: SurfaceId,
         cols: u16,
@@ -475,6 +482,7 @@ fn workspaces_json(state: &State) -> Value {
                 "id": ws.id,
                 "short_id": short_ids.get(&ws.id).cloned().unwrap_or_default(),
                 "name": ws.name,
+                "color": ws.color.map(|c| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)),
                 "active": i == state.active_workspace,
                 "screens": ws.screens.iter().enumerate().map(|(s, screen)| {
                     screen_json(state, screen, s == ws.active_screen, &short_ids)
@@ -514,7 +522,7 @@ fn require_browser(surface: &crate::Surface) -> anyhow::Result<()> {
     }
 }
 
-fn parse_hex_color(value: &str) -> anyhow::Result<Rgb> {
+pub(crate) fn parse_hex_color(value: &str) -> anyhow::Result<Rgb> {
     let bytes = value.as_bytes();
     if bytes.len() != 7 || bytes[0] != b'#' {
         anyhow::bail!("bad color {value:?} (want \"#rrggbb\")");
@@ -811,6 +819,16 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
         }
         Command::RenameWorkspace { workspace, name } => {
             if !mux.rename_workspace(workspace, name) {
+                anyhow::bail!("unknown workspace {workspace}");
+            }
+            Ok(json!({}))
+        }
+        Command::SetWorkspaceColor { workspace, colour } => {
+            let color = match colour {
+                Some(hex) => Some(parse_hex_color(&hex)?),
+                None => None,
+            };
+            if !mux.set_workspace_color(workspace, color) {
                 anyhow::bail!("unknown workspace {workspace}");
             }
             Ok(json!({}))
