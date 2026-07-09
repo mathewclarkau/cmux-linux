@@ -71,7 +71,7 @@ fn main() {
 
     // Generate bindings from the public C header.
     let include_dir = ghostty_dir.join("include");
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default()
         .header(include_dir.join("ghostty/vt.h").to_str().unwrap().to_string())
         .clang_arg(format!("-I{}", include_dir.display()))
         .allowlist_function("ghostty_.*")
@@ -79,7 +79,31 @@ fn main() {
         .allowlist_var("GHOSTTY_.*")
         .prepend_enum_name(false)
         .derive_default(true)
-        .layout_tests(false)
+        .layout_tests(false);
+
+    // Feed system include paths to clang to help find headers (like limits.h)
+    // when libclang doesn't have its own resource directory headers.
+    //
+    // Try the project's own toolchain first (cc -> clang), then gcc as a
+    // last resort. CI uses `apt install clang libclang-dev` (no gcc) so the
+    // gcc-only probe would silently no-op there.
+    for cc in ["cc", "clang", "gcc"] {
+        if let Some(paths) = probe_system_includes(cc) {
+            for path in paths {
+                builder = builder.clang_arg(format!("-isystem{}", path.display()));
+            }
+            break;
+        }
+    }
+
+    // If clang is on PATH, ask it for its resource dir and feed it to
+    // bindgen via -resource-dir. This is the surest way to find clang's
+    // bundled limits.h/stddef.h on stripped-down clang packages.
+    if let Some(resdir) = clang_resource_dir() {
+        builder = builder.clang_arg(format!("-resource-dir={}", resdir.display()));
+    }
+
+    let bindings = builder
         .generate()
         .expect("bindgen failed for ghostty/vt.h");
     bindings.write_to_file(out_dir.join("bindings.rs")).expect("failed to write bindings.rs");
@@ -91,5 +115,64 @@ fn zig_target_for_rust_target(target: &str) -> Option<&'static str> {
         "x86_64-pc-windows-msvc" => Some("x86_64-windows-msvc"),
         "aarch64-pc-windows-msvc" => Some("aarch64-windows-msvc"),
         _ => None,
+    }
+}
+
+/// Run `<cc> -E -Wp,-v -` and return the include paths listed between
+/// `#include <...>` and `End of search list.` on stderr. Returns None if
+/// the probe couldn't be run (binary missing or non-zero exit).
+fn probe_system_includes(cc: &str) -> Option<Vec<std::path::PathBuf>> {
+    let output = Command::new(cc)
+        .args(["-E", "-Wp,-v", "-"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut paths = Vec::new();
+    let mut in_search_list = false;
+    for line in stderr.lines() {
+        if line.contains("#include <...>") {
+            in_search_list = true;
+            continue;
+        }
+        if line.contains("End of search list.") {
+            break;
+        }
+        if in_search_list {
+            let path = line.trim();
+            if !path.is_empty() && std::path::Path::new(path).exists() {
+                paths.push(std::path::PathBuf::from(path));
+            }
+        }
+    }
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
+    }
+}
+
+/// Ask `clang` for its resource directory (the path containing clang's
+/// bundled `include/limits.h` etc.). Returns None if clang isn't on PATH
+/// or the probe failed. We feed this to bindgen via `-resource-dir` so
+/// the build works on systems where the system `limits.h` is missing or
+/// libclang's resource-dir detection is broken (thin Arch `clang`,
+/// distroless images, some Nix shells).
+fn clang_resource_dir() -> Option<std::path::PathBuf> {
+    let output = Command::new("clang")
+        .arg("-print-resource-dir")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if dir.is_empty() {
+        None
+    } else {
+        Some(std::path::PathBuf::from(dir))
     }
 }

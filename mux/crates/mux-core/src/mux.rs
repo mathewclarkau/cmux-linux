@@ -1029,9 +1029,9 @@ impl Mux {
             .unwrap()
             .surfaces
             .iter()
-            .filter(|(id, _)| surface.is_none_or(|filter| filter == **id))
+            .filter(|(id, _)| surface.map_or(true, |filter| filter == **id))
             .filter_map(|(id, s)| s.agent_report().map(|report| (*id, report)))
-            .filter(|(_, report)| state.is_none_or(|filter| filter == report.state))
+            .filter(|(_, report)| state.map_or(true, |filter| filter == report.state))
             .collect()
     }
 
