@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc;
@@ -227,6 +228,67 @@ fn set_workspace_color_sets_and_clears() {
     assert_eq!(bad.status.code(), Some(1));
 }
 
+// Refuses when the install target is a symlink; exit non-zero, message
+// mentions "symlink", and the symlink target file is byte-identical after the
+// run (regression test for the symlink_metadata pre-check in claude_hook.rs).
+#[test]
+fn install_skill_refuses_symlinks() {
+    // AC1 setup: a temp project dir whose .claude/skills/cmux-orchestration/SKILL.md
+    // is a symlink to a temp file with known content. Drop guard removes both.
+    let guard = SymlinkSkillFixture::new();
+
+    // Invoke the REAL cmux-mux binary (integration test, not a unit call into
+    // run_install_skill), so AC3's "remove the check and the test fails" holds.
+    // `claude` MUST be arg[0] (main.rs dispatches it before --socket parsing),
+    // so we cannot use the cli() helper; install-skill never used the socket
+    // anyway. current_dir pins skill_path(false)'s CWD-relative target.
+    let output = Command::new(bin())
+        .args(["claude", "install-skill"])
+        .current_dir(&guard.project_dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .expect("failed to spawn cmux-mux claude install-skill");
+
+    // Assertion 1 — exit code is non-zero (the refusal path returns 1;
+    // claude_hook.rs:474).
+    assert!(
+        !output.status.success(),
+        "install-skill must refuse a symlink target, got status {:?}\n\
+         stdout:\n{}\n\
+         stderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // Assertion 3 — combined stdout+stderr mentions "symlink"
+    // (case-insensitive), so the user learns *why* it failed
+    // (the eprintln at claude_hook.rs:470-473).
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        combined.to_lowercase().contains("symlink"),
+        "error output must mention \"symlink\", got: {combined:?}"
+    );
+
+    // Assertion 2 — the symlink target file is byte-for-byte unchanged,
+    // proving the refusal happened *before* fs::write (which would otherwise
+    // follow the symlink and clobber the target — the exact attack vector).
+    let read_back = fs::read(&guard.target_path)
+        .expect("symlink target file must still exist after refusal");
+    assert_eq!(
+        read_back,
+        guard.original_content.as_bytes(),
+        "refusal must not have written through the symlink to its target"
+    );
+
+    // guard goes out of scope here: Drop removes the symlink, the target
+    // file, and the temp project dir — even if any assertion above panicked.
+}
+
 fn assert_subscribe_reports_tree_changed(server: &HeadlessServer) {
     let mut child = Command::new(bin())
         .args(["--socket"])
@@ -353,4 +415,86 @@ fn unique_temp_dir(name: &str) -> PathBuf {
 
 fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_cmux-mux")
+}
+
+/// Fixture for the install-skill symlink-refusal test.
+///
+/// Owns a temp "project" dir acting as CWD for `cmux-mux claude install-skill`
+/// (whose non-global `skill_path` is `.claude/skills/cmux-orchestration/SKILL.md`,
+/// relative to CWD — see claude_hook.rs:427-432). Inside it we place:
+///   <project>/.claude/skills/cmux-orchestration/SKILL.md -> <project>/target.txt
+///
+/// On drop we remove the symlink, the target file, and the whole project dir,
+/// even if the test panicked — mirroring HeadlessServer::drop (tests/cli.rs:45-52).
+struct SymlinkSkillFixture {
+    /// Temp dir used as `current_dir` for the cmux-mux subprocess.
+    project_dir: PathBuf,
+    /// Absolute path of the symlink itself (the path install-skill targets).
+    symlink_path: PathBuf,
+    /// Absolute path of the regular file the symlink points at.
+    target_path: PathBuf,
+    /// Byte content written to `target_path` at construction, kept so the
+    /// test can compare against it after running install-skill.
+    original_content: String,
+}
+
+impl SymlinkSkillFixture {
+    fn new() -> Self {
+        const KNOWN_CONTENT: &str =
+            "#!/bin/sh\necho this is a precious file that must survive install-skill\n";
+
+        let project_dir = unique_temp_dir("install-skill-symlink");
+        fs::create_dir_all(&project_dir).expect("mkdir project_dir");
+
+        // The exact non-global path install-skill will write to.
+        let symlink_path: PathBuf = project_dir
+            .join(".claude")
+            .join("skills")
+            .join("cmux-orchestration")
+            .join("SKILL.md");
+        fs::create_dir_all(symlink_path.parent().expect("symlink_path has parent"))
+            .expect("mkdir .claude/skills/cmux-orchestration");
+
+        // The real file the symlink redirects to. Putting it inside the same
+        // temp project dir keeps cleanup to one remove_dir_all on drop.
+        let target_path: PathBuf = project_dir.join("target.txt");
+        fs::write(&target_path, KNOWN_CONTENT).expect("write target.txt");
+        let original_content = KNOWN_CONTENT.to_string();
+
+        // Reuse the existing precondition: install-skill calls create_dir_all
+        // on the parent (claude_hook.rs:460-462) — idempotent here.
+        symlink(&target_path, &symlink_path).expect("create symlink at skill path");
+
+        // Sanity: the symlink really resolves to a real file, so that without
+        // the check fs::write would follow it and clobber target_path. This
+        // guards against a misconfigured fixture silently making the test
+        // pass for the wrong reason (a missing symlink ⇒ error before check).
+        assert!(
+            symlink_path.exists(),
+            "fixture broken: symlink does not resolve to a real file"
+        );
+        let meta = fs::symlink_metadata(&symlink_path)
+            .expect("symlink_metadata on the freshly created symlink");
+        assert!(
+            meta.file_type().is_symlink(),
+            "fixture broken: SKILL.md is not a symlink"
+        );
+
+        Self {
+            project_dir,
+            symlink_path,
+            target_path,
+            original_content,
+        }
+    }
+}
+
+impl Drop for SymlinkSkillFixture {
+    fn drop(&mut self) {
+        // Order matters: remove the symlink before its target so we never
+        // leave a dangling symlink pointing at a removed file mid-cleanup.
+        let _ = fs::remove_file(&self.symlink_path);
+        let _ = fs::remove_file(&self.target_path);
+        let _ = fs::remove_dir_all(&self.project_dir);
+    }
 }
