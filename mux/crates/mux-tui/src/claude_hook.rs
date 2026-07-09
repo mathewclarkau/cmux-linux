@@ -6,7 +6,8 @@
 //! (found via `$CMUX_MUX_SOCKET`/`$CMUX_MUX_SURFACE`, set on every pty
 //! child — see `Surface::spawn` in mux-core) and records the session in a
 //! local store that `sessions`/`resume` read back. A hook must never block
-//! or fail Claude Code's own turn, so every path here exits 0.
+//! or fail Claude Code's own turn, so every path here exits 0, except a
+//! malformed stdin payload which is a hard error (exit 1).
 
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::io::AsRawFd;
@@ -53,7 +54,20 @@ struct HookPayload {
 fn run_hook() -> i32 {
     let mut input = String::new();
     let _ = std::io::stdin().read_to_string(&mut input);
-    let payload: HookPayload = serde_json::from_str(&input).unwrap_or_default();
+    run_hook_from(&input)
+}
+
+/// Parse the hook payload and report agent state / record the session.
+/// Extracted from `run_hook` so tests can feed malformed input without
+/// redirecting the process stdin.
+fn run_hook_from(input: &str) -> i32 {
+    let payload: HookPayload = match serde_json::from_str(input) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("cmux-mux: malformed hook payload from stdin: {e}");
+            return 1;
+        }
+    };
     let event = payload.hook_event_name.as_deref();
 
     if let Some(session_id) = &payload.session_id {
@@ -166,7 +180,29 @@ fn with_locked_store<T>(f: impl FnOnce(&mut Vec<SessionRecord>) -> T) -> Option<
     }
     let mut contents = String::new();
     let _ = file.read_to_string(&mut contents);
-    let mut records: Vec<SessionRecord> = serde_json::from_str(&contents).unwrap_or_default();
+
+    // Validate JSON before parsing into records. A corrupted sessions
+    // file must NOT be silently wiped to Default::default() and then
+    // overwritten with an empty array; bail out and leave it untouched.
+    if !contents.trim().is_empty() {
+        let _: serde_json::Value = match serde_json::from_str(&contents) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "cmux-mux: {} is not valid JSON ({e}); leaving it untouched",
+                    path.display()
+                );
+                unsafe {
+                    libc::flock(fd, libc::LOCK_UN);
+                }
+                return None;
+            }
+        };
+    }
+    let mut records: Vec<SessionRecord> = match serde_json::from_str(&contents) {
+        Ok(r) => r,
+        Err(_) => Vec::new(),
+    };
 
     let result = f(&mut records);
     records.truncate(MAX_SESSIONS);
@@ -540,5 +576,38 @@ mod tests {
 
         std::env::remove_var("HOME");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn run_hook_rejects_malformed_stdin() {
+        // Malformed JSON on stdin must cause run_hook to exit 1, not
+        // silently default the payload and proceed as if nothing happened.
+        let exit = run_hook_from("this is not valid json\n");
+        assert_eq!(exit, 1, "malformed hook payload must return exit code 1");
+    }
+
+    #[test]
+    fn with_locked_store_leaves_corrupted_file_untouched() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = temp_state_dir("corrupt");
+        std::env::set_var("XDG_STATE_HOME", &dir);
+        let path = dir.join("cmux-mux").join("claude-sessions.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let original = r#"{"session_id":"sess-1","cwd":"/proj","last_event":"SessionStart","updated_at_ms":1000}"#;
+        std::fs::write(&path, format!("{original}\nGARBAGE_TAIL")).unwrap();
+
+        // Trigger a read+write cycle via record_session. The corrupted
+        // file must be left untouched, not wiped to an empty array.
+        record_session("sess-2", Some("/proj/2"), Some("SessionStart"));
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        std::env::remove_var("XDG_STATE_HOME");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(
+            after.contains("GARBAGE_TAIL"),
+            "corrupted file must NOT be wiped; {} must be left untouched",
+            path.display()
+        );
     }
 }
