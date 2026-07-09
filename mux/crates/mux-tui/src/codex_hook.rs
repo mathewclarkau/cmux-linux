@@ -3,6 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
+use crate::hook_merge;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct CodexHook {
     pub command: String,
@@ -56,44 +58,44 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
     };
 
     if uninstall {
-        if hooks_path.exists() {
-            let content = match fs::read_to_string(&hooks_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("error reading {}: {e}", hooks_path.display());
-                    return 1;
-                }
-            };
-            // Fail-loud on malformed config: see install path above.
-            let mut config: CodexHooksConfig = match serde_json::from_str(&content) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!(
-                        "error: malformed Codex hooks config at {}: {e}",
-                        hooks_path.display()
-                    );
-                    return 1;
-                }
-            };
-            for hooks_list in config.hooks.values_mut() {
-                hooks_list.retain(|h| !h.command.contains("cmux-mux report-agent"));
+        let mut config: CodexHooksConfig = match hook_merge::load_json(&hooks_path) {
+            Ok(c) => c,
+            // Codex uninstall is silent on a missing hooks file (matches
+            // the original `if hooks_path.exists() { .. } 0` fall-through).
+            Err(hook_merge::LoadError::NotFound) => return 0,
+            // Fail-loud on malformed config: silent `unwrap_or_default()`
+            // would overwrite the user's real config on schema drift.
+            Err(hook_merge::LoadError::Parse(e)) => {
+                eprintln!(
+                    "error: malformed Codex hooks config at {}: {e}",
+                    hooks_path.display()
+                );
+                return 1;
             }
-            // Retain only events that still have hooks
-            config.hooks.retain(|_, v| !v.is_empty());
+            Err(hook_merge::LoadError::Io(e)) => {
+                eprintln!("error reading {}: {e}", hooks_path.display());
+                return 1;
+            }
+        };
+        for hooks_list in config.hooks.values_mut() {
+            hooks_list.retain(|h| !h.command.contains("cmux-mux report-agent"));
+        }
+        // Retain only events that still have hooks
+        config.hooks.retain(|_, v| !v.is_empty());
 
-            let new_content = match serde_json::to_string_pretty(&config) {
-                Ok(s) => s,
-                Err(e) => {
+        if let Err(e) = hook_merge::save_pretty(&hooks_path, &config) {
+            match e {
+                hook_merge::SaveError::Serialize(e) => {
                     eprintln!("error: failed to serialize config: {e}");
                     return 1;
                 }
-            };
-            if let Err(e) = fs::write(&hooks_path, new_content) {
-                eprintln!("error writing {}: {e}", hooks_path.display());
-                return 1;
+                hook_merge::SaveError::Io(e) => {
+                    eprintln!("error writing {}: {e}", hooks_path.display());
+                    return 1;
+                }
             }
-            println!("Successfully removed cmux hooks from {}", hooks_path.display());
         }
+        println!("Successfully removed cmux hooks from {}", hooks_path.display());
         0
     } else {
         if let Some(parent) = hooks_path.parent() {
@@ -146,26 +148,24 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
         }
 
         // 2. Setup hooks.json — fail-loud on malformed config.
-        let mut config = if hooks_path.exists() {
-            let content = match fs::read_to_string(&hooks_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("error reading {}: {e}", hooks_path.display());
-                    return 1;
-                }
-            };
-            match serde_json::from_str::<CodexHooksConfig>(&content) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!(
-                        "error: malformed Codex hooks config at {}: {e}",
-                        hooks_path.display()
-                    );
-                    return 1;
-                }
+        let mut config = match hook_merge::load_or_default::<CodexHooksConfig>(&hooks_path) {
+            Ok(c) => c,
+            // Fail-loud on malformed config: silent `unwrap_or_default()`
+            // would overwrite the user's real config on schema drift.
+            Err(hook_merge::LoadError::Parse(e)) => {
+                eprintln!(
+                    "error: malformed Codex hooks config at {}: {e}",
+                    hooks_path.display()
+                );
+                return 1;
             }
-        } else {
-            CodexHooksConfig::default()
+            Err(hook_merge::LoadError::Io(e)) => {
+                eprintln!("error reading {}: {e}", hooks_path.display());
+                return 1;
+            }
+            // load_or_default converts NotFound -> Ok(default) internally,
+            // so this arm is unreachable in practice; kept for exhaustiveness.
+            Err(hook_merge::LoadError::NotFound) => CodexHooksConfig::default(),
         };
 
         // Clear existing cmux hooks
@@ -186,16 +186,17 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             });
         }
 
-        let new_content = match serde_json::to_string_pretty(&config) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("error: failed to serialize config: {e}");
-                return 1;
+        if let Err(e) = hook_merge::save_pretty(&hooks_path, &config) {
+            match e {
+                hook_merge::SaveError::Serialize(e) => {
+                    eprintln!("error: failed to serialize config: {e}");
+                    return 1;
+                }
+                hook_merge::SaveError::Io(e) => {
+                    eprintln!("error writing {}: {e}", hooks_path.display());
+                    return 1;
+                }
             }
-        };
-        if let Err(e) = fs::write(&hooks_path, new_content) {
-            eprintln!("error writing {}: {e}", hooks_path.display());
-            return 1;
         }
         println!("Successfully installed cmux hooks into {}", hooks_path.display());
         0

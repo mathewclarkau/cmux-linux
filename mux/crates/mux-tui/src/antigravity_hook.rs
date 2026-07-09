@@ -2,6 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
+use crate::hook_merge;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct AntigravityHook {
     pub event: String,
@@ -51,42 +53,39 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
     };
 
     if uninstall {
-        if !path.exists() {
-            println!("No Antigravity hooks file found at {}", path.display());
-            return 0;
-        }
-        let content = match fs::read_to_string(&path) {
+        let mut config: AntigravityHooksConfig = match hook_merge::load_json(&path) {
             Ok(c) => c,
-            Err(e) => {
-                eprintln!("error reading {}: {e}", path.display());
-                return 1;
+            Err(hook_merge::LoadError::NotFound) => {
+                println!("No Antigravity hooks file found at {}", path.display());
+                return 0;
             }
-        };
-        // Fail-loud on malformed config: silent `unwrap_or_default()` would
-        // overwrite the user's real config on schema drift. If we can't
-        // parse it, we can't safely edit it.
-        let mut config: AntigravityHooksConfig = match serde_json::from_str(&content) {
-            Ok(c) => c,
-            Err(e) => {
+            // Fail-loud on malformed config: silent `unwrap_or_default()`
+            // would overwrite the user's real config on schema drift.
+            Err(hook_merge::LoadError::Parse(e)) => {
                 eprintln!(
                     "error: malformed Antigravity config at {}: {e}",
                     path.display()
                 );
                 return 1;
             }
-        };
-        config.hooks.retain(|h| !h.command.contains("cmux-mux report-agent"));
-
-        let new_content = match serde_json::to_string_pretty(&config) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("error: failed to serialize config: {e}");
+            Err(hook_merge::LoadError::Io(e)) => {
+                eprintln!("error reading {}: {e}", path.display());
                 return 1;
             }
         };
-        if let Err(e) = fs::write(&path, new_content) {
-            eprintln!("error writing {}: {e}", path.display());
-            return 1;
+        config.hooks.retain(|h| !h.command.contains("cmux-mux report-agent"));
+
+        if let Err(e) = hook_merge::save_pretty(&path, &config) {
+            match e {
+                hook_merge::SaveError::Serialize(e) => {
+                    eprintln!("error: failed to serialize config: {e}");
+                    return 1;
+                }
+                hook_merge::SaveError::Io(e) => {
+                    eprintln!("error writing {}: {e}", path.display());
+                    return 1;
+                }
+            }
         }
         println!("Successfully removed cmux hooks from {}", path.display());
         0
@@ -94,27 +93,24 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let mut config = if path.exists() {
-            let content = match fs::read_to_string(&path) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("error reading {}: {e}", path.display());
-                    return 1;
-                }
-            };
-            // Fail-loud on malformed config: see uninstall path above.
-            match serde_json::from_str::<AntigravityHooksConfig>(&content) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!(
-                        "error: malformed Antigravity config at {}: {e}",
-                        path.display()
-                    );
-                    return 1;
-                }
+        let mut config = match hook_merge::load_or_default::<AntigravityHooksConfig>(&path) {
+            Ok(c) => c,
+            // Fail-loud on malformed config: silent `unwrap_or_default()`
+            // would overwrite the user's real config on schema drift.
+            Err(hook_merge::LoadError::Parse(e)) => {
+                eprintln!(
+                    "error: malformed Antigravity config at {}: {e}",
+                    path.display()
+                );
+                return 1;
             }
-        } else {
-            AntigravityHooksConfig::default()
+            Err(hook_merge::LoadError::Io(e)) => {
+                eprintln!("error reading {}: {e}", path.display());
+                return 1;
+            }
+            // load_or_default converts NotFound -> Ok(default) internally,
+            // so this arm is unreachable in practice; kept for exhaustiveness.
+            Err(hook_merge::LoadError::NotFound) => AntigravityHooksConfig::default(),
         };
 
         // Remove any existing cmux hooks to avoid duplicates
@@ -134,16 +130,17 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             command: "cmux-mux report-agent --surface \"$CMUX_MUX_SURFACE\" --state done --source antigravity".to_string(),
         });
 
-        let new_content = match serde_json::to_string_pretty(&config) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("error: failed to serialize config: {e}");
-                return 1;
+        if let Err(e) = hook_merge::save_pretty(&path, &config) {
+            match e {
+                hook_merge::SaveError::Serialize(e) => {
+                    eprintln!("error: failed to serialize config: {e}");
+                    return 1;
+                }
+                hook_merge::SaveError::Io(e) => {
+                    eprintln!("error writing {}: {e}", path.display());
+                    return 1;
+                }
             }
-        };
-        if let Err(e) = fs::write(&path, new_content) {
-            eprintln!("error writing {}: {e}", path.display());
-            return 1;
         }
         println!("Successfully installed cmux hooks into {}", path.display());
         0
