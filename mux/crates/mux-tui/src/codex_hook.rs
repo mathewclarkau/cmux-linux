@@ -64,7 +64,17 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
                     return 1;
                 }
             };
-            let mut config: CodexHooksConfig = serde_json::from_str(&content).unwrap_or_default();
+            // Fail-loud on malformed config: see install path above.
+            let mut config: CodexHooksConfig = match serde_json::from_str(&content) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "error: malformed Codex hooks config at {}: {e}",
+                        hooks_path.display()
+                    );
+                    return 1;
+                }
+            };
             for hooks_list in config.hooks.values_mut() {
                 hooks_list.retain(|h| !h.command.contains("cmux-mux report-agent"));
             }
