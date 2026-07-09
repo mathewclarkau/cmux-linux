@@ -267,6 +267,13 @@ const VERBS: &[VerbSpec] = &[
         print: print_agents,
         stream: false,
     },
+    VerbSpec {
+        name: "browser-reload",
+        allowed: &["surface"],
+        build: build_surface,
+        print: print_empty,
+        stream: false,
+    },
 ];
 
 pub fn is_cli_invocation(args: &[String]) -> bool {
