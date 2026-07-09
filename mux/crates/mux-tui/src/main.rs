@@ -22,6 +22,7 @@ mod keys;
 mod session;
 mod ssh_bootstrap;
 mod ui;
+mod skill_content;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -99,6 +100,8 @@ CLAUDE CODE HOOK INTEGRATION
   cmux-mux claude install-hooks [--uninstall]
       Wires ~/.claude/settings.json's hooks to call `cmux-mux claude hook`
       on every lifecycle event, merged alongside any hooks already there.
+  cmux-mux claude install-skill [--uninstall] [--global]
+      Appends the orchestration skill to CLAUDE.md (or ~/CLAUDE.md if --global).
   cmux-mux claude sessions
       Lists recorded Claude Code sessions (session id, cwd, last event).
   cmux-mux claude resume <session-id>
@@ -111,16 +114,25 @@ ANTIGRAVITY CLI INTEGRATION
   cmux-mux antigravity install-hooks [--uninstall] [--global]
       Installs hooks into .agents/hooks.json (or ~/.gemini/config/hooks.json if --global)
       to automatically report state changes to cmux-mux.
+  cmux-mux antigravity install-skill [--uninstall] [--global]
+      Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
+      (or ~/.gemini/antigravity-cli/skills/cmux-orchestration/SKILL.md if --global).
 
 CODEX CLI INTEGRATION
   cmux-mux codex install-hooks [--uninstall] [--global]
       Installs hooks into .codex/hooks.json (or ~/.codex/hooks.json if --global) and
       enables hooks feature in config.toml to report state to cmux-mux.
+  cmux-mux codex install-skill [--uninstall] [--global]
+      Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
+      (or ~/.codex/skills/cmux-orchestration/SKILL.md if --global).
 
 PI AGENT INTEGRATION
   cmux-mux pi install-hooks [--uninstall] [--global]
       Installs TypeScript extensions into .pi/extensions/ (or ~/.pi/agent/extensions/
       if --global) to report state changes.
+  cmux-mux pi install-skill [--uninstall] [--global]
+      Appends the orchestration skill to .pi/APPEND_SYSTEM.md
+      (or ~/.pi/agent/APPEND_SYSTEM.md if --global).
 
 AIDER INTEGRATION
   cmux-mux aider install-hooks [--uninstall] [--global]

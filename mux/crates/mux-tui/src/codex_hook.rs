@@ -41,8 +41,9 @@ pub fn run(args: &[String]) -> i32 {
 
     match args.first().map(String::as_str) {
         Some("install-hooks") => run_install(uninstall, global),
+        Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("cmux-mux: usage: cmux-mux codex install-hooks [--uninstall] [--global]");
+            eprintln!("cmux-mux: usage: cmux-mux codex <install-hooks|install-skill> [--uninstall] [--global]");
             2
         }
     }
@@ -133,6 +134,50 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             return 1;
         }
         println!("Successfully installed cmux hooks into {}", hooks_path.display());
+        0
+    }
+}
+
+fn skill_path(global: bool) -> Option<PathBuf> {
+    if global {
+        mux_core::platform::home_dir().map(|h| h.join(".codex").join("skills").join("cmux-orchestration").join("SKILL.md"))
+    } else {
+        Some(PathBuf::from(".agents").join("skills").join("cmux-orchestration").join("SKILL.md"))
+    }
+}
+
+fn run_install_skill(uninstall: bool, global: bool) -> i32 {
+    let Some(path) = skill_path(global) else {
+        eprintln!("error: could not resolve home directory");
+        return 1;
+    };
+
+    if uninstall {
+        if path.exists() {
+            if let Err(e) = fs::remove_file(&path) {
+                eprintln!("error removing {}: {e}", path.display());
+                return 1;
+            }
+            if let Some(parent) = path.parent() {
+                let _ = fs::remove_dir(parent);
+                if let Some(grandparent) = parent.parent() {
+                    let _ = fs::remove_dir(grandparent);
+                }
+            }
+            println!("Successfully removed cmux skill from {}", path.display());
+        } else {
+            println!("No cmux skill found at {}", path.display());
+        }
+        0
+    } else {
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Err(e) = fs::write(&path, crate::skill_content::ORCHESTRATION_SKILL) {
+            eprintln!("error writing {}: {e}", path.display());
+            return 1;
+        }
+        println!("Successfully installed cmux skill into {}", path.display());
         0
     }
 }
