@@ -1000,14 +1000,8 @@ impl Mux {
     /// transient visual pulse (e.g. a manual "look here" signal). Doesn't
     /// mutate state, so no `TreeChanged` follows.
     pub fn trigger_flash(&self, workspace: WorkspaceId, surface: Option<SurfaceId>) -> bool {
-        let exists = {
-            let state = self.state.lock().unwrap();
-            state.workspaces.iter().any(|ws| ws.id == workspace)
-        };
-        if exists {
-            self.emit(MuxEvent::Flash { workspace, surface });
-        }
-        exists
+        self.emit(MuxEvent::Flash { workspace, surface });
+        true
     }
 
     /// Set a pane's user-visible name. An empty name clears it (the pane
