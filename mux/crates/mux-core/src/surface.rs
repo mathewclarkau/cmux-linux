@@ -578,7 +578,7 @@ impl Surface {
     ) -> Option<(AgentReport, bool)> {
         let pty = self.as_pty()?;
         let mut current = pty.agent.lock().unwrap();
-        let accept = current.as_ref().is_none_or(|existing| source >= existing.source);
+        let accept = current.as_ref().map_or(true, |existing| source >= existing.source);
         if accept {
             let report = AgentReport { state, source, session, updated_at_ms: now_ms() };
             *current = Some(report.clone());

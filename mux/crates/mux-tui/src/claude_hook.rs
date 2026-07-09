@@ -326,7 +326,7 @@ fn run_install_hooks(uninstall: bool) -> i32 {
                 }
             }
             entries.retain(|group| {
-                group.get("hooks").and_then(Value::as_array).is_none_or(|list| !list.is_empty())
+                group.get("hooks").and_then(Value::as_array).map_or(true, |list| !list.is_empty())
             });
             if entries.is_empty() {
                 hooks.remove(*event);

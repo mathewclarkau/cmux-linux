@@ -71,7 +71,7 @@ fn main() {
 
     // Generate bindings from the public C header.
     let include_dir = ghostty_dir.join("include");
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default()
         .header(include_dir.join("ghostty/vt.h").to_str().unwrap().to_string())
         .clang_arg(format!("-I{}", include_dir.display()))
         .allowlist_function("ghostty_.*")
@@ -79,7 +79,35 @@ fn main() {
         .allowlist_var("GHOSTTY_.*")
         .prepend_enum_name(false)
         .derive_default(true)
-        .layout_tests(false)
+        .layout_tests(false);
+
+    // Feed system include paths to clang to help find headers (like limits.h)
+    // when libclang doesn't have its own resource directory headers.
+    if let Ok(output) = Command::new("gcc")
+        .args(["-E", "-Wp,-v", "-"])
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut in_search_list = false;
+        for line in stderr.lines() {
+            if line.contains("#include <...>") {
+                in_search_list = true;
+                continue;
+            }
+            if line.contains("End of search list.") {
+                break;
+            }
+            if in_search_list {
+                let path = line.trim();
+                if !path.is_empty() && std::path::Path::new(path).exists() {
+                    builder = builder.clang_arg(format!("-isystem{path}"));
+                }
+            }
+        }
+    }
+
+    let bindings = builder
         .generate()
         .expect("bindgen failed for ghostty/vt.h");
     bindings.write_to_file(out_dir.join("bindings.rs")).expect("failed to write bindings.rs");

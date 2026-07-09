@@ -31,7 +31,7 @@ pub fn draw_prompt(app: &mut App, frame: &mut Frame) {
     let x = if shake <= 1 {
         base_x
     } else {
-        let offset = if shake.is_multiple_of(2) { 1 } else { -1 };
+        let offset = if shake % 2 == 0 { 1 } else { -1 };
         (base_x as i32 + offset).clamp(0, screen.width.saturating_sub(width) as i32) as u16
     };
     let y = (screen.height - height) / 2;

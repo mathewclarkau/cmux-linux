@@ -138,6 +138,6 @@ mod tests {
         let lock = Arc::new(Mutex::new(()));
         let mut writer = GraphicsWriter::spawn(lock).unwrap();
         writer.shutdown(Duration::from_secs(1));
-        assert!(writer.handle.as_ref().is_none_or(|handle| handle.is_finished()));
+        assert!(writer.handle.as_ref().map_or(true, |handle| handle.is_finished()));
     }
 }
