@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::hook_merge;
+
 fn extension_path(global: bool) -> Option<PathBuf> {
     if global {
         mux_core::platform::home_dir().map(|h| h.join(".pi").join("agent").join("extensions").join("cmux.ts"))
@@ -120,24 +122,12 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
             }
         };
 
-        let mut new_content = String::new();
-        let mut skipping = false;
-        for line in content.lines() {
-            if line.contains("<!-- CMUX-START -->") {
-                skipping = true;
-                continue;
-            }
-            if line.contains("<!-- CMUX-END -->") {
-                skipping = false;
-                continue;
-            }
-            if !skipping {
-                new_content.push_str(line);
-                new_content.push('\n');
-            }
-        }
-
-        let new_content = new_content.trim_end().to_string() + "\n";
+        // Strip the cmux-managed block (marker lines and inter-block
+        // content dropped, everything outside kept). strip_marked_block
+        // already trim_end()s, matching the old
+        // `new_content.trim_end().to_string() + "\n"` exactly.
+        let new_content =
+            hook_merge::strip_marked_block(&content, &hook_merge::CMUX_MARKERS) + "\n";
         if new_content == "\n" {
             let _ = fs::remove_file(&path);
             println!("Removed empty APPEND_SYSTEM.md at {}", path.display());
@@ -159,28 +149,18 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
             String::new()
         };
 
-        let mut cleaned = String::new();
-        let mut skipping = false;
-        for line in content.lines() {
-            if line.contains("<!-- CMUX-START -->") {
-                skipping = true;
-                continue;
-            }
-            if line.contains("<!-- CMUX-END -->") {
-                skipping = false;
-                continue;
-            }
-            if !skipping {
-                cleaned.push_str(line);
-                cleaned.push('\n');
-            }
-        }
-
-        let skill_block = format!(
-            "\n<!-- CMUX-START -->\n{}\n<!-- CMUX-END -->\n",
-            crate::skill_content::ORCHESTRATION_SKILL
+        // Strip any existing cmux block from anywhere in the file, then
+        // append a fresh block at the end (the original strip-then-append
+        // behavior, NOT replace-in-place). Trailing whitespace is trimmed
+        // before appending so there is a single newline before the block —
+        // the old install path left a blank line here (it did not trim,
+        // while the uninstall path did); this matches the uninstall path
+        // and avoids blank-line drift on repeated installs.
+        let cleaned = hook_merge::replace_marked_block(
+            &content,
+            &hook_merge::CMUX_MARKERS,
+            crate::skill_content::ORCHESTRATION_SKILL,
         );
-        cleaned.push_str(&skill_block);
 
         if let Err(e) = fs::write(&path, cleaned) {
             eprintln!("error writing {}: {e}", path.display());
