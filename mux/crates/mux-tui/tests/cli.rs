@@ -301,6 +301,76 @@ fn install_skill_refuses_symlinks() {
     // file, and the temp project dir — even if any assertion above panicked.
 }
 
+#[test]
+fn trigger_flash_returns_success() {
+    let server = HeadlessServer::start("trigger-flash");
+
+    // Create a workspace. `new-workspace` prints the *surface* id of the
+    // workspace's initial tab to stdout (a bare u64), not the workspace id.
+    let created = cli(&server, &["new-workspace", "--name", "flash-test"]);
+    assert_success(&created);
+    let surface: u64 = String::from_utf8(created.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .expect("new-workspace should print a surface id");
+
+    // Discover the workspace id via `list-workspaces --json` — this is the
+    // `WorkspaceId` that `trigger-flash --workspace` expects (the same two-step
+    // lookup the template `set_workspace_color_sets_and_clears` uses).
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let workspace_id = value["workspaces"][0]["id"].as_u64().unwrap();
+
+    // 1. Real workspace, no --surface -> success, quiet on stdout. Human mode
+    //    uses `print_empty`, which writes nothing on success (scout: cli.rs
+    //    lines 875–877, VerbSpec `print: print_empty` at lines 190–196).
+    let out = cli(&server, &["trigger-flash", "--workspace", &workspace_id.to_string()]);
+    assert_success(&out);
+    assert!(out.stdout.is_empty(), "trigger-flash should be quiet on success");
+
+    // 2. Real workspace, explicit --surface -> success, quiet on stdout.
+    //    `--surface` is advisory and NOT validated server-side (scout: server.rs
+    //    lines 265–272, mux.rs ~lines 1002–1013), so the real surface id printed
+    //    by new-workspace is fine.
+    let out = cli(
+        &server,
+        &["trigger-flash", "--workspace", &workspace_id.to_string(), "--surface", &surface.to_string()],
+    );
+    assert_success(&out);
+    assert!(out.stdout.is_empty(), "trigger-flash should be quiet on success");
+
+    // 3. Unknown workspace id -> server-side `anyhow::bail!("unknown workspace {workspace}")`
+    //    (server.rs line 863), surfaced by `print_response` (cli.rs lines 550–555)
+    //    as exit code 1 and a bare (no `cmux-mux:` prefix) stderr line
+    //    `unknown workspace 99999`.
+    let out = cli(&server, &["trigger-flash", "--workspace", "99999"]);
+    assert_eq!(out.status.code(), Some(1), "unknown workspace should fail with exit 1");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unknown workspace"),
+        "expected 'unknown workspace' in stderr, got: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(out.stdout.is_empty(), "no stdout on server error");
+
+    // 4. Missing --workspace flag entirely -> client-side usage error from
+    //    `build_trigger_flash` (cli.rs lines 696–701) -> `flags.required_u64("workspace")`
+    //    (cli.rs lines 798–804) -> `UsageError("--workspace is required")` (line 799),
+    //    which `run_command` prints as `cmux-mux: --workspace is required` (line 408)
+    //    and returns exit code 2. This is the same usage-error contract the
+    //    template asserts for `set-workspace-color`'s missing `--colour` case
+    //    (lines 377–378: `assert_eq!(missing.status.code(), Some(2));`).
+    let out = cli(&server, &["trigger-flash"]);
+    assert_eq!(out.status.code(), Some(2), "missing --workspace should be a usage error (exit 2)");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--workspace is required"),
+        "expected '--workspace is required' in stderr, got: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(out.stdout.is_empty(), "no stdout on usage error");
+}
+
 fn assert_subscribe_reports_tree_changed(server: &HeadlessServer) {
     let mut child = Command::new(bin())
         .args(["--socket"])
