@@ -70,6 +70,8 @@ The generated CLI requires one of `--index` or `--delta` for `select-tab`, `sele
 | `rename-surface` | implemented | `--surface <id> --name <name>` | none | none |
 | `rename-screen` | implemented | `--screen <id> --name <name>` | none | none |
 | `rename-workspace` | implemented | `--workspace <id> --name <name>` | none | none |
+| `set-workspace-color` | implemented | `--workspace <id> --colour <hex>` | none | none |
+| `trigger-flash` | implemented | `--workspace <id>` | `--surface <id>` | none |
 | `resize-surface` | implemented | `--surface <id> --cols <n> --rows <n>` | none | none |
 | `focus-pane` | implemented | `--pane <id>` | none | none |
 | `select-tab` | implemented | one of `--index`, `--delta` | `--pane <id>` | none |
