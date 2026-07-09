@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use crate::browser::{self, BrowserBootstrap, BrowserRuntime};
 use crate::model::{Node, Pane, Screen, State, Workspace};
 use crate::surface::{AgentReport, AgentState, AgentStateSource, DefaultColors, Surface, SurfaceOptions};
-use crate::{PaneId, ScreenId, SplitDir, SurfaceId, WorkspaceId};
+use crate::{PaneId, Rgb, ScreenId, SplitDir, SurfaceId, WorkspaceId};
 
 /// Events pushed to subscribed frontends.
 #[derive(Debug, Clone)]
@@ -48,6 +48,14 @@ pub enum MuxEvent {
         surface: SurfaceId,
         title: String,
         body: String,
+    },
+    /// A manual flash was triggered for a workspace (e.g. via the
+    /// `trigger-flash` command), for frontends to render a transient
+    /// visual pulse. `surface` is advisory context about which surface
+    /// triggered it, if any — not validated.
+    Flash {
+        workspace: WorkspaceId,
+        surface: Option<SurfaceId>,
     },
 }
 
@@ -311,6 +319,9 @@ impl Mux {
             None => self.new_workspace(Some(ws.name.to_string()), None)?,
         };
         let ws_id = self.with_state(|s| s.workspaces.last().unwrap().id);
+        if let Some(color) = ws.color {
+            self.set_workspace_color(ws_id, Some(color));
+        }
         let (screen_id, pane_id) = self.with_state(|s| {
             let pane_id = s.pane_of(first_surface.id).unwrap();
             let (wi, si) = s.screen_of(pane_id).unwrap();
@@ -553,6 +564,7 @@ impl Mux {
                     active_pane: pane_id,
                 }],
                 active_screen: 0,
+                color: None,
             });
             state.active_workspace = state.workspaces.len() - 1;
         }
@@ -715,6 +727,7 @@ impl Mux {
                         active_pane: pane_id,
                     }],
                     active_screen: 0,
+                    color: None,
                 });
                 state.active_workspace = state.workspaces.len() - 1;
             }
@@ -964,6 +977,37 @@ impl Mux {
             self.emit(MuxEvent::TreeChanged);
         }
         renamed
+    }
+
+    pub fn set_workspace_color(&self, target: WorkspaceId, color: Option<Rgb>) -> bool {
+        let changed = {
+            let mut state = self.state.lock().unwrap();
+            match state.workspaces.iter_mut().find(|ws| ws.id == target) {
+                Some(ws) => {
+                    ws.color = color;
+                    true
+                }
+                None => false,
+            }
+        };
+        if changed {
+            self.emit(MuxEvent::TreeChanged);
+        }
+        changed
+    }
+
+    /// Emits `MuxEvent::Flash` for a workspace, for frontends to render a
+    /// transient visual pulse (e.g. a manual "look here" signal). Doesn't
+    /// mutate state, so no `TreeChanged` follows.
+    pub fn trigger_flash(&self, workspace: WorkspaceId, surface: Option<SurfaceId>) -> bool {
+        let exists = {
+            let state = self.state.lock().unwrap();
+            state.workspaces.iter().any(|ws| ws.id == workspace)
+        };
+        if exists {
+            self.emit(MuxEvent::Flash { workspace, surface });
+        }
+        exists
     }
 
     /// Set a pane's user-visible name. An empty name clears it (the pane
@@ -1470,6 +1514,7 @@ mod tests {
                     active_pane: p3,
                 }],
                 active_screen: 0,
+                color: None,
             }],
             active_workspace: 0,
             panes: HashMap::from([

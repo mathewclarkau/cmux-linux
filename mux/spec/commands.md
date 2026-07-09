@@ -1,6 +1,6 @@
 # Command Contract
 
-This file specifies the JSON command contract for the cmux-mux protocol. Implemented commands match protocol v5 in `mux/crates/mux-core/src/server.rs`. Proposed commands are future protocol v6 design.
+This file specifies the JSON command contract for the cmux-mux protocol. Implemented commands match protocol v6 in `mux/crates/mux-core/src/server.rs`. Proposed commands are future protocol v7 design.
 
 ## Notation
 
@@ -40,6 +40,7 @@ object{
   workspaces: array<object{
     id: Id,
     name: string,
+    color: ColorHex|null,
     active: boolean,
     screens: array<object{
       id: Id,
@@ -164,7 +165,7 @@ Example:
 
 ```json
 {"id":2,"cmd":"list-workspaces"}
-{"id":2,"ok":true,"data":{"workspaces":[{"id":4,"name":"1","active":true,"screens":[{"id":3,"name":null,"active":true,"active_pane":2,"layout":{"type":"leaf","pane":2},"panes":[{"id":2,"name":null,"active_tab":0,"tabs":[{"surface":1,"kind":"pty","browser_source":null,"name":null,"title":"","size":{"cols":80,"rows":24},"dead":false}]}]}]}]}}
+{"id":2,"ok":true,"data":{"workspaces":[{"id":4,"name":"1","color":null,"active":true,"screens":[{"id":3,"name":null,"active":true,"active_pane":2,"layout":{"type":"leaf","pane":2},"panes":[{"id":2,"name":null,"active_tab":0,"tabs":[{"surface":1,"kind":"pty","browser_source":null,"name":null,"title":"","size":{"cols":80,"rows":24},"dead":false}]}]}]}]}}
 ```
 
 ### send
@@ -1035,6 +1036,110 @@ Example:
 ```json
 {"id":20,"cmd":"rename-workspace","workspace":4,"name":"prod"}
 {"id":20,"ok":true,"data":{}}
+```
+
+### set-workspace-color
+
+| Field | Value |
+| --- | --- |
+| name | `set-workspace-color` |
+| status | implemented |
+| since | protocol 6 |
+
+Sets or clears a workspace's rail color. An explicit `ColorHex` in `colour` sets the workspace color to that value. `colour: null` clears it back to no color; an absent `colour` key has the same effect as `null` at the protocol level (serde default), but the CLI always sends the key explicitly and requires `--colour` so an omitted flag is a usage error rather than a silent clear (see `cli.md`).
+
+Params:
+
+| Name | JSON type | Required/default | Constraints |
+| --- | --- | --- | --- |
+| `workspace` | `Id` | required | Must identify a live workspace |
+| `colour` | `ColorHex \| null` | optional (default: `null`) | Absent or `null` clears the color, a `ColorHex` string sets it. The CLI always sends the key explicitly (see CLI mapping below), but the wire protocol itself does not require it. |
+
+Result:
+
+```text
+object{}
+```
+
+Errors:
+
+| Error | Condition |
+| --- | --- |
+| `unknown workspace <id>` | Workspace id does not exist |
+| `bad color "<value>" (want "#rrggbb")` | `colour` is non-null and not exactly `#rrggbb` |
+| `bad request: ...` | Missing `workspace` or wrong JSON type |
+
+CLI mapping:
+
+| Item | Value |
+| --- | --- |
+| Verb | `set-workspace-color` |
+| Flags | `--workspace <id> --colour <hex-or-empty-string>` |
+| Plain stdout | no output |
+| JSON stdout | exact result object |
+| Exit codes | common |
+
+The CLI requires `--colour`; an empty string (`--colour ""`) sends `colour:null` to clear the color, and any non-empty value is sent through as-is for the server to validate.
+
+Example:
+
+```json
+{"id":29,"cmd":"set-workspace-color","workspace":4,"colour":"#ff8800"}
+{"id":29,"ok":true,"data":{}}
+```
+
+Clearing a color sends `colour:null` instead:
+
+```json
+{"id":30,"cmd":"set-workspace-color","workspace":4,"colour":null}
+{"id":30,"ok":true,"data":{}}
+```
+
+### trigger-flash
+
+| Field | Value |
+| --- | --- |
+| name | `trigger-flash` |
+| status | implemented |
+| since | protocol 6 |
+
+Emits a transient `flash` event to subscribers for a workspace, intended to draw attention to it (e.g. a sidebar pulse). `surface`, when present, is advisory only — it is passed straight through in the event and not validated against the workspace's own surfaces.
+
+Params:
+
+| Name | JSON type | Required/default | Constraints |
+| --- | --- | --- | --- |
+| `workspace` | `Id` | required | Must identify a live workspace |
+| `surface` | `Id` | default null | Advisory only; not validated against `workspace` |
+
+Result:
+
+```text
+object{}
+```
+
+Errors:
+
+| Error | Condition |
+| --- | --- |
+| `unknown workspace <id>` | Workspace id does not exist |
+| `bad request: ...` | Missing `workspace` or wrong JSON type |
+
+CLI mapping:
+
+| Item | Value |
+| --- | --- |
+| Verb | `trigger-flash` |
+| Flags | `--workspace <id> [--surface <id>]` |
+| Plain stdout | no output |
+| JSON stdout | exact result object |
+| Exit codes | common |
+
+Example:
+
+```json
+{"id":31,"cmd":"trigger-flash","workspace":4,"surface":1}
+{"id":31,"ok":true,"data":{}}
 ```
 
 ### resize-surface

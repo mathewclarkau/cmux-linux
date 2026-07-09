@@ -360,6 +360,13 @@ impl RemoteSession {
                     self.emit(MuxEvent::Bell(id));
                 }
             }
+            Some("flash") => {
+                let Some(workspace) = value.get("workspace").and_then(|v| v.as_u64()) else {
+                    return;
+                };
+                let surface = value.get("surface").and_then(|v| v.as_u64());
+                self.emit(MuxEvent::Flash { workspace, surface });
+            }
             Some("status") => {
                 if let Some(message) = value.get("message").and_then(|v| v.as_str()) {
                     self.emit(MuxEvent::Status(message.to_string()));

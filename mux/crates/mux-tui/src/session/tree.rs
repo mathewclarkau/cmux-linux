@@ -5,7 +5,10 @@ use mux_core::{
     assign_short_ids, AgentState, BrowserSource, Node, PaneId, ScreenId, SplitDir, State,
     SurfaceId, SurfaceKind, WorkspaceId,
 };
+use ratatui::style::Color;
 use serde_json::Value;
+
+use crate::config::parse_color;
 
 #[derive(Clone, Default)]
 pub struct TreeView {
@@ -18,6 +21,8 @@ pub struct WorkspaceView {
     pub id: WorkspaceId,
     pub short_id: String,
     pub name: String,
+    /// User-assigned sidebar rail color, if any.
+    pub color: Option<Color>,
     pub screens: Vec<ScreenView>,
     pub active_screen: usize,
 }
@@ -211,6 +216,7 @@ pub fn tree_from_state(state: &State) -> TreeView {
                 id: ws.id,
                 short_id: short_ids.get(&ws.id).cloned().unwrap_or_default(),
                 name: ws.name.clone(),
+                color: ws.color.map(|c| Color::Rgb(c.r, c.g, c.b)),
                 active_screen: ws.active_screen,
                 screens: ws
                     .screens
@@ -334,6 +340,7 @@ pub fn parse_tree(data: &Value) -> TreeView {
             id: ws.get("id").and_then(|v| v.as_u64()).unwrap_or(0),
             short_id: ws.get("short_id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
             name: ws.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            color: ws.get("color").and_then(|v| v.as_str()).and_then(parse_color),
             screens: Vec::new(),
             active_screen: 0,
         };
@@ -350,4 +357,34 @@ pub fn parse_tree(data: &Value) -> TreeView {
         tree.workspaces.push(view);
     }
     tree
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_tree_reads_workspace_color_as_rgb() {
+        let data = json!({
+            "workspaces": [
+                {"id": 1, "name": "red", "color": "#ff0000", "active": true, "screens": []},
+                {"id": 2, "name": "none", "color": null, "active": false, "screens": []},
+            ]
+        });
+        let tree = parse_tree(&data);
+        assert_eq!(tree.workspaces[0].color, Some(Color::Rgb(0xff, 0x00, 0x00)));
+        assert_eq!(tree.workspaces[1].color, None);
+    }
+
+    #[test]
+    fn parse_tree_treats_missing_color_key_as_none() {
+        let data = json!({
+            "workspaces": [
+                {"id": 1, "name": "no-color-key", "active": true, "screens": []},
+            ]
+        });
+        let tree = parse_tree(&data);
+        assert_eq!(tree.workspaces[0].color, None);
+    }
 }

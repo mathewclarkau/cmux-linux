@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{PaneId, ScreenId, SplitDir, Surface, SurfaceId, WorkspaceId};
+use crate::{PaneId, Rgb, ScreenId, SplitDir, Surface, SurfaceId, WorkspaceId};
 
 /// Binary split tree over panes for one screen.
 #[derive(Debug, Clone)]
@@ -137,6 +137,7 @@ pub struct Workspace {
     pub name: String,
     pub screens: Vec<Screen>,
     pub active_screen: usize,
+    pub color: Option<Rgb>,
 }
 
 impl Workspace {

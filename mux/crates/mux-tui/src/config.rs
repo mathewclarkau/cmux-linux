@@ -752,7 +752,7 @@ fn load_raw_config() -> RawConfig {
 }
 
 /// `#rrggbb`, `#rgb`, or an xterm-256 index in a string.
-fn parse_color(s: &str) -> Option<Color> {
+pub(crate) fn parse_color(s: &str) -> Option<Color> {
     let s = s.trim();
     if let Some(hex) = s.strip_prefix('#') {
         return match hex.len() {

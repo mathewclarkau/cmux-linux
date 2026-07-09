@@ -92,10 +92,10 @@ CLI VERBS
   new-browser-tab, new-workspace, new-screen, split, set-ratio,
   set-default-colors, close-surface, close-pane, close-screen,
   close-workspace, rename-pane, rename-surface, rename-screen,
-  rename-workspace, resize-surface, focus-pane, select-tab,
-  select-screen, select-workspace, move-tab, move-workspace,
-  scroll-surface, subscribe, attach-surface, report-agent, list-agents,
-  browser-reload
+  rename-workspace, set-workspace-color, trigger-flash, resize-surface,
+  focus-pane, select-tab, select-screen, select-workspace, move-tab,
+  move-workspace, scroll-surface, subscribe, attach-surface, report-agent,
+  list-agents, browser-reload
 
 CLAUDE CODE HOOK INTEGRATION
   cmux-mux claude install-hooks [--uninstall]

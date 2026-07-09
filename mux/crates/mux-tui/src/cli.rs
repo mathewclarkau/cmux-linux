@@ -181,6 +181,20 @@ const VERBS: &[VerbSpec] = &[
         stream: false,
     },
     VerbSpec {
+        name: "set-workspace-color",
+        allowed: &["workspace", "colour"],
+        build: build_set_workspace_color,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
+        name: "trigger-flash",
+        allowed: &["workspace", "surface"],
+        build: build_trigger_flash,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
         name: "resize-surface",
         allowed: &["surface", "cols", "rows"],
         build: build_resize_surface,
@@ -662,6 +676,24 @@ fn build_rename_workspace(flags: &FlagMap) -> Result<Value, UsageError> {
     Ok(json!({ "workspace": flags.required_u64("workspace")?, "name": flags.required("name")? }))
 }
 
+/// `--colour` is required so an omitted flag never silently clears the
+/// workspace color (the wire command treats an absent/`null` `colour` as
+/// "clear"). An explicit empty value (`--colour ""`) is how you clear it;
+/// any non-empty value must be a `#rrggbb` hex string (validated server-side).
+fn build_set_workspace_color(flags: &FlagMap) -> Result<Value, UsageError> {
+    let workspace = flags.required_u64("workspace")?;
+    let colour = flags.required("colour")?;
+    let colour = if colour.is_empty() { Value::Null } else { json!(colour) };
+    Ok(json!({ "workspace": workspace, "colour": colour }))
+}
+
+fn build_trigger_flash(flags: &FlagMap) -> Result<Value, UsageError> {
+    let workspace = flags.required_u64("workspace")?;
+    let mut value = json!({ "workspace": workspace });
+    flags.insert_optional_u64(&mut value, "surface")?;
+    Ok(value)
+}
+
 fn build_resize_surface(flags: &FlagMap) -> Result<Value, UsageError> {
     Ok(json!({
         "surface": flags.required_u64("surface")?,
@@ -880,9 +912,10 @@ fn print_tree(data: &Value, out: &mut dyn Write) -> io::Result<()> {
         let workspace_id = id_field(workspace, "id");
         writeln!(
             out,
-            "workspace id={} name={} active={}",
+            "workspace id={} name={} color={} active={}",
             workspace_id,
             atom(workspace.get("name")),
+            atom(workspace.get("color")),
             bool_field(workspace, "active")
         )?;
         let Some(screens) = workspace.get("screens").and_then(Value::as_array) else {

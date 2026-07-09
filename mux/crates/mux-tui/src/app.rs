@@ -273,6 +273,16 @@ pub struct OmnibarState {
     pub select_all: bool,
 }
 
+/// How long a manual flash pulse stays visible.
+pub(crate) const FLASH_DURATION: Duration = Duration::from_millis(500);
+
+/// Whether a flash that started `elapsed` ago is still within its visible
+/// window. Takes the elapsed duration explicitly (rather than calling
+/// `Instant::now()` itself) so it's unit-testable without real sleeps.
+pub(crate) fn flash_active(elapsed: Duration) -> bool {
+    elapsed < FLASH_DURATION
+}
+
 pub struct Toast {
     pub text: String,
     deadline: Instant,
@@ -412,6 +422,10 @@ pub struct App {
     pub omnibar: Option<OmnibarState>,
     pub toast: Option<Toast>,
     pub(crate) shake_frames: u8,
+    /// Workspaces with an active manual flash pulse, keyed by when it
+    /// started. Checked (and lazily expired) in the sidebar render and
+    /// the event-loop poll timeout so the pulse disappears on its own.
+    pub(crate) flashing: HashMap<WorkspaceId, Instant>,
     pub selection: Option<Selection>,
     pub status_message: Option<String>,
     pub cell_pixels: (u16, u16),
@@ -658,6 +672,7 @@ pub fn run(session: Session, session_label: String) -> anyhow::Result<()> {
         omnibar: None,
         toast: None,
         shake_frames: 0,
+        flashing: HashMap::new(),
         selection: None,
         status_message: None,
         cell_pixels,
@@ -710,6 +725,7 @@ impl App {
             let timeout = if self.shake_frames > 0
                 || self.selection_auto_scroll_active()
                 || self.toast.is_some()
+                || self.has_active_flash()
             {
                 Duration::from_millis(30)
             } else {
@@ -726,6 +742,9 @@ impl App {
                         action = action.merge(RenderAction::Draw);
                     }
                     if self.expire_toast() {
+                        action = action.merge(RenderAction::Draw);
+                    }
+                    if self.expire_flashes() {
                         action = action.merge(RenderAction::Draw);
                     }
                     None
@@ -745,6 +764,9 @@ impl App {
                 break;
             }
             if self.expire_toast() {
+                action = action.merge(RenderAction::Draw);
+            }
+            if self.expire_flashes() {
                 action = action.merge(RenderAction::Draw);
             }
             match action {
@@ -936,6 +958,10 @@ impl App {
             AppEvent::Mux(MuxEvent::OscNotification { surface, title, body }) => {
                 let label = self.tree.tab_label(surface).unwrap_or_else(|| "cmux-mux".to_string());
                 crate::desktop_notify::send(&label, &title, &body);
+                Ok(RenderAction::Draw)
+            }
+            AppEvent::Mux(MuxEvent::Flash { workspace, .. }) => {
+                self.flashing.insert(workspace, Instant::now());
                 Ok(RenderAction::Draw)
             }
             AppEvent::Mux(_) => Ok(RenderAction::Draw),
@@ -2305,6 +2331,23 @@ impl App {
         }
     }
 
+    /// Whether any workspace currently has a flash pulse within its
+    /// visible window — used to keep the event-loop poll timeout short
+    /// enough that the pulse reliably disappears on its own.
+    fn has_active_flash(&self) -> bool {
+        let now = Instant::now();
+        self.flashing.values().any(|start| flash_active(now.duration_since(*start)))
+    }
+
+    /// Drops flash entries whose window has elapsed. Returns true if any
+    /// were dropped (i.e. a redraw is needed to visually clear them).
+    fn expire_flashes(&mut self) -> bool {
+        let now = Instant::now();
+        let before = self.flashing.len();
+        self.flashing.retain(|_, start| flash_active(now.duration_since(*start)));
+        self.flashing.len() != before
+    }
+
     /// Shift a pane's tab bar left/right. The renderer clamps to the
     /// valid range next frame.
     fn scroll_tabs(&mut self, pane: PaneId, delta: isize) {
@@ -2660,8 +2703,11 @@ fn browser_key_mapping(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::{
-        browser_content_size_for_rect, browser_hover_forward_allowed, pane_parts_for_rect,
+        browser_content_size_for_rect, browser_hover_forward_allowed, flash_active,
+        pane_parts_for_rect,
     };
     use crate::config::ScrollbarPosition;
     use mux_core::{BrowserStatus, Rect};
@@ -2701,5 +2747,17 @@ mod tests {
             false
         ));
         assert!(!browser_hover_forward_allowed(None, false));
+    }
+
+    #[test]
+    fn flash_active_within_window() {
+        assert!(flash_active(Duration::from_millis(0)));
+        assert!(flash_active(Duration::from_millis(499)));
+    }
+
+    #[test]
+    fn flash_active_expired_at_or_after_duration() {
+        assert!(!flash_active(Duration::from_millis(500)));
+        assert!(!flash_active(Duration::from_secs(2)));
     }
 }

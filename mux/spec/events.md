@@ -6,7 +6,7 @@ Implemented event lines can appear on two stream types:
 
 | Stream | How to start | Event names |
 | --- | --- | --- |
-| Subscribe stream | `subscribe` command | `tree-changed`, `surface-output`, `surface-resized`, `surface-exited`, `title-changed`, `bell`, `empty` |
+| Subscribe stream | `subscribe` command | `tree-changed`, `surface-output`, `surface-resized`, `surface-exited`, `title-changed`, `bell`, `flash`, `empty` |
 | Attach stream v5 | `attach-surface` command | `vt-state`, `output`, `detached` |
 | Attach stream v6 | `attach-surface` command | `vt-state`, `resized`, `output`, `detached` |
 
@@ -160,6 +160,31 @@ Example:
 
 ```json
 {"event":"bell","surface":1}
+```
+
+### flash
+
+| Field | Value |
+| --- | --- |
+| event | `flash` |
+| status | implemented |
+| since | protocol 6 |
+
+Payload:
+
+```text
+object{event:"flash",workspace:WorkspaceId,surface:Id|null}
+```
+
+Meaning: A manual flash was triggered for a workspace via the
+`trigger-flash` command, for frontends to render a transient visual
+pulse. `surface` is advisory context about which surface triggered it,
+if any -- not validated against the workspace.
+
+Example:
+
+```json
+{"event":"flash","workspace":4,"surface":9}
 ```
 
 ### empty
