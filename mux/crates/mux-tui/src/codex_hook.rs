@@ -70,8 +70,14 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             }
             // Retain only events that still have hooks
             config.hooks.retain(|_, v| !v.is_empty());
-            
-            let new_content = serde_json::to_string_pretty(&config).unwrap();
+
+            let new_content = match serde_json::to_string_pretty(&config) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: failed to serialize config: {e}");
+                    return 1;
+                }
+            };
             if let Err(e) = fs::write(&hooks_path, new_content) {
                 eprintln!("error writing {}: {e}", hooks_path.display());
                 return 1;
@@ -84,28 +90,70 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             let _ = fs::create_dir_all(parent);
         }
 
-        // 1. Setup config.toml features
+        // 1. Setup config.toml features. Only add `codex_hooks = true` to
+        // an actual `[features]` section header — never to a substring
+        // match that might be inside a comment or a longer key like
+        // `docs.codex_hooks`. Done by walking lines.
         let mut config_content = if config_path.exists() {
-            fs::read_to_string(&config_path).unwrap_or_default()
+            match fs::read_to_string(&config_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("warning: could not read {}: {e}", config_path.display());
+                    String::new()
+                }
+            }
         } else {
             String::new()
         };
 
-        if !config_content.contains("codex_hooks = true") {
-            if !config_content.contains("[features]") {
-                config_content.push_str("\n[features]\ncodex_hooks = true\n");
+        let already_featured = config_content
+            .lines()
+            .any(|l| l.trim() == "codex_hooks = true");
+        if !already_featured {
+            if let Some(features_idx) = config_content
+                .lines()
+                .position(|l| l.trim() == "[features]")
+            {
+                // Find the next blank line or section header after [features],
+                // insert after that. Default to appending at the section.
+                let mut new_lines: Vec<String> = config_content.lines().map(String::from).collect();
+                let insert_at = features_idx + 1;
+                new_lines.insert(insert_at, "codex_hooks = true".to_string());
+                config_content = new_lines.join("\n");
+                if !config_content.ends_with('\n') {
+                    config_content.push('\n');
+                }
             } else {
-                config_content = config_content.replace("[features]", "[features]\ncodex_hooks = true");
+                if !config_content.ends_with('\n') && !config_content.is_empty() {
+                    config_content.push('\n');
+                }
+                config_content.push_str("\n[features]\ncodex_hooks = true\n");
             }
             if let Err(e) = fs::write(&config_path, &config_content) {
-                eprintln!("warning: could not update {}: {e}", config_path.display());
+                eprintln!("error: could not update {}: {e}", config_path.display());
+                return 1;
             }
         }
 
-        // 2. Setup hooks.json
+        // 2. Setup hooks.json — fail-loud on malformed config.
         let mut config = if hooks_path.exists() {
-            let content = fs::read_to_string(&hooks_path).unwrap_or_default();
-            serde_json::from_str::<CodexHooksConfig>(&content).unwrap_or_default()
+            let content = match fs::read_to_string(&hooks_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error reading {}: {e}", hooks_path.display());
+                    return 1;
+                }
+            };
+            match serde_json::from_str::<CodexHooksConfig>(&content) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "error: malformed Codex hooks config at {}: {e}",
+                        hooks_path.display()
+                    );
+                    return 1;
+                }
+            }
         } else {
             CodexHooksConfig::default()
         };
@@ -128,7 +176,13 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             });
         }
 
-        let new_content = serde_json::to_string_pretty(&config).unwrap();
+        let new_content = match serde_json::to_string_pretty(&config) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: failed to serialize config: {e}");
+                return 1;
+            }
+        };
         if let Err(e) = fs::write(&hooks_path, new_content) {
             eprintln!("error writing {}: {e}", hooks_path.display());
             return 1;

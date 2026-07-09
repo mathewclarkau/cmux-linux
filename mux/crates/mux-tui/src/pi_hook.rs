@@ -54,15 +54,23 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
         }
 
         let code = r#"import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 
 export default function cmuxExtension(pi: ExtensionAPI) {
   const report = (state: string) => {
     const surface = process.env.CMUX_MUX_SURFACE;
     if (surface) {
-      exec(`cmux-mux report-agent --surface ${surface} --state ${state} --source pi`, (err) => {
-        // Silent error
-      });
+      // Use execFile (arg array) instead of exec (shell string) so the
+      // surface id is never passed through a shell parser. Defends
+      // against future callers that may set CMUX_MUX_SURFACE from
+      // untrusted input.
+      execFile(
+        "cmux-mux",
+        ["report-agent", "--surface", surface, "--state", state, "--source", "pi"],
+        (err) => {
+          // Silent error
+        }
+      );
     }
   };
 

@@ -62,10 +62,28 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
                 return 1;
             }
         };
-        let mut config: AntigravityHooksConfig = serde_json::from_str(&content).unwrap_or_default();
+        // Fail-loud on malformed config: silent `unwrap_or_default()` would
+        // overwrite the user's real config on schema drift. If we can't
+        // parse it, we can't safely edit it.
+        let mut config: AntigravityHooksConfig = match serde_json::from_str(&content) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!(
+                    "error: malformed Antigravity config at {}: {e}",
+                    path.display()
+                );
+                return 1;
+            }
+        };
         config.hooks.retain(|h| !h.command.contains("cmux-mux report-agent"));
-        
-        let new_content = serde_json::to_string_pretty(&config).unwrap();
+
+        let new_content = match serde_json::to_string_pretty(&config) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: failed to serialize config: {e}");
+                return 1;
+            }
+        };
         if let Err(e) = fs::write(&path, new_content) {
             eprintln!("error writing {}: {e}", path.display());
             return 1;
@@ -77,8 +95,24 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             let _ = fs::create_dir_all(parent);
         }
         let mut config = if path.exists() {
-            let content = fs::read_to_string(&path).unwrap_or_default();
-            serde_json::from_str::<AntigravityHooksConfig>(&content).unwrap_or_default()
+            let content = match fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error reading {}: {e}", path.display());
+                    return 1;
+                }
+            };
+            // Fail-loud on malformed config: see uninstall path above.
+            match serde_json::from_str::<AntigravityHooksConfig>(&content) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "error: malformed Antigravity config at {}: {e}",
+                        path.display()
+                    );
+                    return 1;
+                }
+            }
         } else {
             AntigravityHooksConfig::default()
         };
@@ -100,7 +134,13 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             command: "cmux-mux report-agent --surface \"$CMUX_MUX_SURFACE\" --state done --source antigravity".to_string(),
         });
 
-        let new_content = serde_json::to_string_pretty(&config).unwrap();
+        let new_content = match serde_json::to_string_pretty(&config) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: failed to serialize config: {e}");
+                return 1;
+            }
+        };
         if let Err(e) = fs::write(&path, new_content) {
             eprintln!("error writing {}: {e}", path.display());
             return 1;
