@@ -1,6 +1,6 @@
 # Command Contract
 
-This file specifies the JSON command contract for the cmux-mux protocol. Implemented commands match protocol v5 in `mux/crates/mux-core/src/server.rs`. Proposed commands are future protocol v6 design.
+This file specifies the JSON command contract for the cmux-mux protocol. Implemented commands match protocol v6 in `mux/crates/mux-core/src/server.rs`. Proposed commands are future protocol v7 design.
 
 ## Notation
 
