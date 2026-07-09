@@ -55,4 +55,4 @@ The four binary subcommands `antigravity`, `codex`, `pi`, `aider` (and the exist
 
 - The hook-file duplication noted above is the highest-priority refactor.
 - The `claude_hook.rs` `map_or(true, ...)` rewrite (PR #1) will trip `clippy::unnecessary_map_or` and `clippy::manual_is_multiple_of` under Rust 1.96+ — the `// allow(clippy::unnecessary_map_or)` workaround is fine for now, but a cleaner alternative is `.is_some_and(|list| !list.is_empty())` which works on Rust 1.75.
-- The release workflow at `.github/workflows/release.yml` only triggers on `v*` tag pushes. There is no PR CI.
+- PRs are now auto-gated by `.github/workflows/pr-build.yml` (pinned to Rust 1.75.0 + zig 0.15.2; runs `cargo check -p mux-tui` and `cargo test -p mux-tui` on `ubuntu-latest`/x86_64 and `ubuntu-24.04-arm`/aarch64). Tag-push releases remain owned by `.github/workflows/release.yml`.

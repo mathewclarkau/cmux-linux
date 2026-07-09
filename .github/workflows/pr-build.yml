@@ -1,0 +1,44 @@
+name: PR Build
+
+on:
+  pull_request:
+    branches:
+      - main
+      - "feat/**"
+      - "fix/**"
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.75.0
+
+      - name: Bootstrap (fetch zig 0.15.2)
+        run: ./scripts/bootstrap.sh
+
+      - name: Cargo check (mux-tui)
+        working-directory: mux
+        run: cargo check -p mux-tui
+
+      - name: Cargo test (mux-tui)
+        working-directory: mux
+        run: cargo test -p mux-tui
