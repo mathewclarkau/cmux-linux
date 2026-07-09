@@ -382,90 +382,66 @@ fn run_install_hooks(uninstall: bool) -> i32 {
     0
 }
 
-fn run_install_skill(uninstall: bool, global: bool) -> i32 {
-    let path = if global {
-        let Some(home) = mux_core::platform::home_dir() else {
-            eprintln!("error: could not resolve home directory");
-            return 1;
-        };
-        home.join("CLAUDE.md")
+fn skill_path(global: bool) -> Option<PathBuf> {
+    if global {
+        mux_core::platform::home_dir().map(|h| {
+            h.join(".claude")
+                .join("skills")
+                .join("cmux-orchestration")
+                .join("SKILL.md")
+        })
     } else {
-        std::path::PathBuf::from("CLAUDE.md")
+        Some(
+            PathBuf::from(".claude")
+                .join("skills")
+                .join("cmux-orchestration")
+                .join("SKILL.md"),
+        )
+    }
+}
+
+fn run_install_skill(uninstall: bool, global: bool) -> i32 {
+    let Some(path) = skill_path(global) else {
+        eprintln!("error: could not resolve home directory");
+        return 1;
     };
 
     if uninstall {
-        if !path.exists() {
-            println!("No CLAUDE.md found at {}", path.display());
-            return 0;
-        }
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("error reading {}: {e}", path.display());
+        if path.exists() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                eprintln!("error removing {}: {e}", path.display());
                 return 1;
             }
-        };
-
-        let mut new_content = String::new();
-        let mut skipping = false;
-        for line in content.lines() {
-            if line.contains("<!-- CMUX-START -->") {
-                skipping = true;
-                continue;
-            }
-            if line.contains("<!-- CMUX-END -->") {
-                skipping = false;
-                continue;
-            }
-            if !skipping {
-                new_content.push_str(line);
-                new_content.push('\n');
-            }
-        }
-
-        let new_content = new_content.trim_end().to_string() + "\n";
-        if new_content == "\n" {
-            let _ = std::fs::remove_file(&path);
-            println!("Removed empty CLAUDE.md at {}", path.display());
-        } else {
-            if let Err(e) = std::fs::write(&path, new_content) {
-                eprintln!("error writing {}: {e}", path.display());
-                return 1;
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::remove_dir(parent);
+                if let Some(grandparent) = parent.parent() {
+                    let _ = std::fs::remove_dir(grandparent);
+                }
             }
             println!("Successfully removed cmux skill from {}", path.display());
+        } else {
+            println!("No cmux skill found at {}", path.display());
         }
         0
     } else {
-        let content = if path.exists() {
-            std::fs::read_to_string(&path).unwrap_or_default()
-        } else {
-            String::new()
-        };
-
-        let mut cleaned = String::new();
-        let mut skipping = false;
-        for line in content.lines() {
-            if line.contains("<!-- CMUX-START -->") {
-                skipping = true;
-                continue;
-            }
-            if line.contains("<!-- CMUX-END -->") {
-                skipping = false;
-                continue;
-            }
-            if !skipping {
-                cleaned.push_str(line);
-                cleaned.push('\n');
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Refuse to overwrite a symlink: same rationale as aider_hook.rs
+        // (PR #3 hardening) — fs::write on a symlink path overwrites the
+        // symlink target, not the symlink itself. An attacker-placed symlink
+        // in a user-writable target path could redirect the write to an
+        // arbitrary file.
+        if let Ok(meta) = std::fs::symlink_metadata(&path) {
+            if meta.file_type().is_symlink() {
+                eprintln!(
+                    "error: refusing to overwrite symlink at {}.                      Remove it manually if you want to install the skill.",
+                    path.display()
+                );
+                return 1;
             }
         }
-
-        let skill_block = format!(
-            "\n<!-- CMUX-START -->\n{}\n<!-- CMUX-END -->\n",
-            crate::skill_content::ORCHESTRATION_SKILL
-        );
-        cleaned.push_str(&skill_block);
-
-        if let Err(e) = std::fs::write(&path, cleaned) {
+        if let Err(e) = std::fs::write(&path, crate::skill_content::ORCHESTRATION_SKILL) {
             eprintln!("error writing {}: {e}", path.display());
             return 1;
         }

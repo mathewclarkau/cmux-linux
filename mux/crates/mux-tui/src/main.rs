@@ -102,7 +102,8 @@ CLAUDE CODE HOOK INTEGRATION
       Wires ~/.claude/settings.json's hooks to call `cmux-mux claude hook`
       on every lifecycle event, merged alongside any hooks already there.
   cmux-mux claude install-skill [--uninstall] [--global]
-      Appends the orchestration skill to CLAUDE.md (or ~/CLAUDE.md if --global).
+      Installs the orchestration skill to .claude/skills/cmux-orchestration/SKILL.md
+      (or ~/.claude/skills/cmux-orchestration/SKILL.md if --global).
   cmux-mux claude sessions
       Lists recorded Claude Code sessions (session id, cwd, last event).
   cmux-mux claude resume <session-id>
