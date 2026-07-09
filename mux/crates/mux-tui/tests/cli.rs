@@ -177,6 +177,18 @@ fn report_agent_and_list_agents_round_trip() {
 fn set_workspace_color_sets_and_clears() {
     let server = HeadlessServer::start("workspace-color");
 
+    // Create a workspace first -- HeadlessServer::start doesn't auto-create
+    // one, and `list-workspaces` returns an empty array otherwise (panicking
+    // the `[0]` index below). Caught by pr-build.yml in CI run 29032172606
+    // (2026-07-10, issue #16).
+    let created = cli(&server, &["new-workspace", "--name", "color-test"]);
+    assert_success(&created);
+    let created_id: u64 = String::from_utf8(created.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .expect("new-workspace should print a surface id");
+
     let list = cli(&server, &["--json", "list-workspaces"]);
     assert_success(&list);
     let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
