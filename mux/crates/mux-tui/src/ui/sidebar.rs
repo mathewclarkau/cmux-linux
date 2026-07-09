@@ -26,6 +26,14 @@ fn agent_glyph_color(state: AgentState) -> Color {
     }
 }
 
+/// The sidebar rail glyph's color for a workspace, if it should be drawn
+/// at all. A user-assigned workspace color always wins (shown whether or
+/// not the workspace is active); otherwise the rail only shows, in the
+/// theme's color, when the workspace is active.
+fn rail_color(workspace_color: Option<Color>, active: bool, theme_rail: Color) -> Option<Color> {
+    workspace_color.or(if active { Some(theme_rail) } else { None })
+}
+
 pub fn draw(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
     let width = app.sidebar_width;
@@ -77,14 +85,17 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
         if workspace_drag.is_some_and(|(id, _)| id == ws.id) {
             style = style.add_modifier(Modifier::DIM);
         }
-        // The active highlight paints the full rows, and the rail marks
-        // BOTH lines of the entry in the configured color.
+        // The active highlight paints the full rows. The rail marks BOTH
+        // lines of the entry: in the workspace's own color if it has one
+        // set (active or not), else in the theme color while active.
         if active {
             for x in 0..width - 1 {
                 buf[(x, y)].set_style(active_style);
                 buf[(x, y + 1)].set_style(active_style);
             }
-            let rail_style = active_style.fg(rail);
+        }
+        if let Some(color) = rail_color(ws.color, active, rail) {
+            let rail_style = (if active { active_style } else { base }).fg(color);
             buf[(0, y)].set_symbol("▎").set_style(rail_style);
             buf[(0, y + 1)].set_symbol("▎").set_style(rail_style);
         }
@@ -134,4 +145,27 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
     }
     hits.push((Rect { x: width - 1, y: 0, width: 1, height }, Hit::SidebarResize));
     app.hits.extend(hits);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const THEME_RAIL: Color = Color::Indexed(1);
+
+    #[test]
+    fn rail_color_prefers_workspace_color_whether_active_or_not() {
+        assert_eq!(rail_color(Some(Color::Red), false, THEME_RAIL), Some(Color::Red));
+        assert_eq!(rail_color(Some(Color::Red), true, THEME_RAIL), Some(Color::Red));
+    }
+
+    #[test]
+    fn rail_color_falls_back_to_theme_color_when_active_without_workspace_color() {
+        assert_eq!(rail_color(None, true, THEME_RAIL), Some(THEME_RAIL));
+    }
+
+    #[test]
+    fn rail_color_hidden_when_inactive_without_workspace_color() {
+        assert_eq!(rail_color(None, false, THEME_RAIL), None);
+    }
 }

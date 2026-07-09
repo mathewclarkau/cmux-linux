@@ -173,6 +173,60 @@ fn report_agent_and_list_agents_round_trip() {
     assert_eq!(bad.status.code(), Some(1));
 }
 
+#[test]
+fn set_workspace_color_sets_and_clears() {
+    let server = HeadlessServer::start("workspace-color");
+
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let workspace_id = value["workspaces"][0]["id"].as_u64().unwrap();
+    assert_eq!(value["workspaces"][0]["color"], serde_json::Value::Null);
+
+    let set = cli(
+        &server,
+        &["set-workspace-color", "--workspace", &workspace_id.to_string(), "--colour", "#ff8800"],
+    );
+    assert_success(&set);
+    assert!(set.stdout.is_empty(), "set-workspace-color should be quiet on success");
+
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(value["workspaces"][0]["color"].as_str(), Some("#ff8800"));
+
+    // Plain (non-JSON) output surfaces the color too.
+    let plain = cli(&server, &["list-workspaces"]);
+    assert_success(&plain);
+    let text = String::from_utf8(plain.stdout).unwrap();
+    assert!(
+        text.lines().next().unwrap().contains("color=\"#ff8800\""),
+        "expected color in plain output, got: {text}"
+    );
+
+    // An explicit empty value clears it.
+    let clear = cli(
+        &server,
+        &["set-workspace-color", "--workspace", &workspace_id.to_string(), "--colour", ""],
+    );
+    assert_success(&clear);
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(value["workspaces"][0]["color"], serde_json::Value::Null);
+
+    // Omitting --colour entirely is a usage error, not a silent clear.
+    let missing = cli(&server, &["set-workspace-color", "--workspace", &workspace_id.to_string()]);
+    assert_eq!(missing.status.code(), Some(2));
+
+    // A malformed hex value is rejected by the server.
+    let bad = cli(
+        &server,
+        &["set-workspace-color", "--workspace", &workspace_id.to_string(), "--colour", "nope"],
+    );
+    assert_eq!(bad.status.code(), Some(1));
+}
+
 fn assert_subscribe_reports_tree_changed(server: &HeadlessServer) {
     let mut child = Command::new(bin())
         .args(["--socket"])
