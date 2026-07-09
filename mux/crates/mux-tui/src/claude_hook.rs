@@ -53,7 +53,13 @@ struct HookPayload {
 fn run_hook() -> i32 {
     let mut input = String::new();
     let _ = std::io::stdin().read_to_string(&mut input);
-    let payload: HookPayload = serde_json::from_str(&input).unwrap_or_default();
+    let payload: HookPayload = match serde_json::from_str(&input) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("cmux-mux: malformed hook payload from stdin: {e}");
+            return 1;
+        }
+    };
     let event = payload.hook_event_name.as_deref();
 
     if let Some(session_id) = &payload.session_id {
@@ -151,6 +157,10 @@ fn now_ms() -> u64 {
 
 /// Locks the store file for the duration of `f`, which reads the current
 /// records, mutates them, and returns whatever the caller wants back.
+///
+/// Returns `None` if the store file is corrupted JSON — the existing
+/// records are left untouched on disk (no silent wipe, no schema-drift
+/// data loss). Callers handle the None as "treat as no records".
 fn with_locked_store<T>(f: impl FnOnce(&mut Vec<SessionRecord>) -> T) -> Option<T> {
     let path = store_path();
     if let Some(dir) = path.parent() {
@@ -166,6 +176,29 @@ fn with_locked_store<T>(f: impl FnOnce(&mut Vec<SessionRecord>) -> T) -> Option<
     }
     let mut contents = String::new();
     let _ = file.read_to_string(&mut contents);
+    // Fail loud on a corrupted sessions file: silently wiping it with
+    // `unwrap_or_default()` would let a partial write (or a manual
+    // user edit gone wrong, or a schema drift from a future version)
+    // delete the user's recorded session history on the next write.
+    // The file is left untouched on disk; the caller treats None as
+    // "no records this run".
+    if contents.trim().is_empty() {
+        // Treat empty file as the no-records-yet case rather than an error.
+    } else {
+        let _: serde_json::Value = match serde_json::from_str(&contents) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "cmux-mux: {} is not valid JSON ({e}); leaving it untouched",
+                    path.display()
+                );
+                unsafe {
+                    libc::flock(fd, libc::LOCK_UN);
+                }
+                return None;
+            }
+        };
+    }
     let mut records: Vec<SessionRecord> = serde_json::from_str(&contents).unwrap_or_default();
 
     let result = f(&mut records);

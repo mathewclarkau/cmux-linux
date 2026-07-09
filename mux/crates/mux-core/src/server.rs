@@ -60,6 +60,16 @@ enum Command {
         /// Base64-encoded raw bytes, written verbatim to the pty.
         #[serde(default)]
         bytes: Option<String>,
+        /// If true, append a literal CR (0x0D) to the written bytes — used to
+        /// submit a fish REPL buffer when dispatching into a cmux-mux pane from
+        /// a non-interactive context (e.g. another agent via `cmux-mux send`).
+        /// Without this, fish's multi-line mode holds the text in its input
+        /// buffer and waits for a real CR keystroke that cmux-mux's regular
+        /// `send` does not deliver. Added 2026-07-09 to support the
+        /// pifactory-fleet interactive-pi worker dispatch pattern
+        /// (`scripts/cmux-panel-lib.sh`'s `cmux_dispatch_worker_pane_interactive`).
+        #[serde(default)]
+        send_cr: Option<bool>,
     },
     ReadScreen {
         surface: SurfaceId,
@@ -589,14 +599,21 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             "pid": std::process::id(),
         })),
         Command::ListWorkspaces => Ok(mux.with_state(workspaces_json)),
-        Command::Send { surface, text, bytes } => {
+        Command::Send { surface, text, bytes, send_cr } => {
             let surface = get_surface(mux, surface)?;
             require_pty(&surface)?;
             if let Some(text) = text {
-                surface.write_bytes(text.as_bytes())?;
+                let mut bytes_buf = text.into_bytes();
+                if send_cr.unwrap_or(false) {
+                    bytes_buf.push(b'\r');
+                }
+                surface.write_bytes(&bytes_buf)?;
             }
             if let Some(b64) = bytes {
-                let raw = base64::engine::general_purpose::STANDARD.decode(b64)?;
+                let mut raw = base64::engine::general_purpose::STANDARD.decode(b64)?;
+                if send_cr.unwrap_or(false) {
+                    raw.push(b'\r');
+                }
                 surface.write_bytes(&raw)?;
             }
             Ok(json!({}))

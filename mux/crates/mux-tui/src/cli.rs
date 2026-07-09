@@ -56,7 +56,7 @@ const VERBS: &[VerbSpec] = &[
     },
     VerbSpec {
         name: "send",
-        allowed: &["surface", "text", "bytes"],
+        allowed: &["surface", "text", "bytes", "send-cr"],
         build: build_send,
         print: print_empty,
         stream: false,
@@ -600,6 +600,12 @@ fn build_send(flags: &FlagMap) -> Result<Value, UsageError> {
     if let Some(bytes) = flags.optional("bytes") {
         value["bytes"] = json!(bytes);
     }
+    // `--send-cr` (boolean flag) appends a literal CR (0x0D) to the written bytes
+    // so that fish (and other line-edited REPLs) submit their input buffer.
+    // Default false. See `Command::Send::send_cr` in mux-core/src/server.rs.
+    if let Some(send_cr) = flags.optional_bool("send-cr") {
+        value["send_cr"] = json!(send_cr);
+    }
     if value.get("text").is_none() && value.get("bytes").is_none() {
         let mut text = String::new();
         io::stdin()
@@ -776,6 +782,17 @@ impl FlagMap {
 
     fn optional(&self, name: &str) -> Option<String> {
         self.values.get(name).cloned()
+    }
+
+    /// Boolean-flag reader. The flag may be passed as `--flag` (true),
+    /// `--flag=1` (true), `--flag=0` (false), `--flag=true`, `--flag=false`.
+    /// Returns None if the flag wasn't passed at all.
+    fn optional_bool(&self, name: &str) -> Option<bool> {
+        self.values.get(name).map(|v| {
+            // Treat any non-"0"/"false"/"no" value as true; explicit
+            // "0" / "false" / "no" as false. Matches the common CLI convention.
+            !matches!(v.as_str(), "0" | "false" | "no" | "False" | "No" | "FALSE" | "NO")
+        })
     }
 
     fn required(&self, name: &str) -> Result<String, UsageError> {
