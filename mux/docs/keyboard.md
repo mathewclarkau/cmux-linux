@@ -6,6 +6,22 @@
 
 Unknown prefixed keys are swallowed. Unprefixed non-Alt keys go to the active surface. Alt chords that are bound in the key table are modeless commands by default.
 
+### Running tmux inside cmux
+
+cmux's default prefix is `Ctrl-b` - the same as tmux's own default. If you run tmux
+inside a cmux pane, cmux's outer prefix always wins: `Ctrl-b d`, for example, detaches
+(or, in a local non-attached session, quits) the *cmux* session, not the inner tmux
+one, since cmux consumes the prefix before tmux ever sees it. Two ways to avoid this:
+
+- **Rebind one side's prefix.** Either give cmux a different prefix in `mux.json`
+  (`{"keys": {"prefix": "ctrl+a"}}`, see [Configuration](configuration.md)), or rebind
+  the *inner* tmux's prefix instead (tmux's own classic advice for nested sessions) -
+  either way, the two prefixes stop colliding.
+- **Use cmux's existing double-prefix passthrough** for one-off keystrokes without
+  reconfiguring anything: pressing the prefix twice sends a single literal prefix
+  keystroke through to the active surface, so `Ctrl-b Ctrl-b d` reaches the inner
+  tmux's `d` binding instead of cmux's.
+
 ## Default Bindings
 
 These defaults come from `Keys::default`.
