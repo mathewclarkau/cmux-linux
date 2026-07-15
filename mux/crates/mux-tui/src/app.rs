@@ -1684,6 +1684,21 @@ impl App {
             return;
         }
         let Some((surface_id, surface)) = self.active_surface_with_handle() else { return };
+        // A headless/CDP-launched Chrome has no OS clipboard access, so
+        // forwarding a literal Ctrl+V keystroke (the fallthrough below)
+        // is a silent no-op - Chrome tries its own native paste and finds
+        // nothing. Read the clipboard ourselves and insert it instead.
+        if matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.kind == KeyEventKind::Press
+        {
+            self.browser_input.enqueue(BrowserInputEvent {
+                surface_id,
+                surface,
+                kind: BrowserInputKind::PasteFromSystemClipboard,
+            });
+            return;
+        }
         if let KeyCode::Char(c) = key.code {
             if !key
                 .modifiers
