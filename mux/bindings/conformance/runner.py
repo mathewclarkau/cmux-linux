@@ -58,7 +58,7 @@ def main() -> int:
 
 
 def start_server() -> Dict[str, Any]:
-    binary = MUX_DIR / "target" / "debug" / "cmux-mux"
+    binary = MUX_DIR / "target" / "debug" / "cmux"
     if not binary.exists():
         raise SystemExit(f"missing server binary: {binary}; run cargo build -p mux-tui from mux/")
     session = f"binding-conf-{os.getpid()}"

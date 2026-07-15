@@ -1,7 +1,7 @@
 //! Control socket: a JSON-lines protocol over the platform transport.
 //!
 //! This is the attach surface for external frontends (the cmux app, the
-//! bundled `cmux-mux attach` client, scripts). One JSON request per line;
+//! bundled `cmux attach` client, scripts). One JSON request per line;
 //! every request gets one JSON response line. Two commands additionally
 //! turn the connection full-duplex:
 //!
@@ -15,7 +15,7 @@
 //!
 //! ```text
 //! {"id":1,"cmd":"identify"}
-//! {"id":1,"ok":true,"data":{"app":"cmux-mux","session":"main",...}}
+//! {"id":1,"ok":true,"data":{"app":"cmux","session":"main",...}}
 //! ```
 
 use std::collections::HashMap;
@@ -61,10 +61,10 @@ enum Command {
         #[serde(default)]
         bytes: Option<String>,
         /// If true, append a literal CR (0x0D) to the written bytes — used to
-        /// submit a fish REPL buffer when dispatching into a cmux-mux pane from
-        /// a non-interactive context (e.g. another agent via `cmux-mux send`).
+        /// submit a fish REPL buffer when dispatching into a cmux pane from
+        /// a non-interactive context (e.g. another agent via `cmux send`).
         /// Without this, fish's multi-line mode holds the text in its input
-        /// buffer and waits for a real CR keystroke that cmux-mux's regular
+        /// buffer and waits for a real CR keystroke that cmux's regular
         /// `send` does not deliver. Added 2026-07-09 to support the
         /// pifactory-fleet interactive-pi worker dispatch pattern
         /// (`scripts/cmux-panel-lib.sh`'s `cmux_dispatch_worker_pane_interactive`).
@@ -169,7 +169,7 @@ enum Command {
     /// New workspace whose tab is a `cmuxd-remote` session over SSH
     /// instead of a local shell (see `remote_pty.rs`). Building/caching
     /// the daemon binary for the remote's OS/arch is the caller's job
-    /// (typically `cmux-mux ssh <host>`, not this socket API directly);
+    /// (typically `cmux ssh <host>`, not this socket API directly);
     /// `local_binary_path` must already point at one.
     NewRemoteWorkspace {
         host: String,
@@ -592,7 +592,7 @@ fn browser_state_json(
 fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::Result<Value> {
     match cmd {
         Command::Identify => Ok(json!({
-            "app": "cmux-mux",
+            "app": "cmux",
             "version": env!("CARGO_PKG_VERSION"),
             "protocol": PROTOCOL_VERSION,
             "session": mux.session,

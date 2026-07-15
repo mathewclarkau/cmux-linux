@@ -41,4 +41,4 @@ echo "==> building mux-tui (release)"
 cd "$ROOT/mux"
 ZIG="$ZIG_DIR/zig" cargo build --release -p mux-tui
 
-echo "==> built: $ROOT/mux/target/release/cmux-mux"
+echo "==> built: $ROOT/mux/target/release/cmux"

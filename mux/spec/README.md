@@ -1,6 +1,6 @@
-# cmux-mux Programmability Contract
+# cmux Programmability Contract
 
-This directory is the source of truth for the cmux-mux control protocol, the generated `cmux-mux` command surface, and future generated language bindings. The implemented protocol described here is protocol version 5, as defined by `mux-core/src/server.rs`.
+This directory is the source of truth for the cmux control protocol, the generated `cmux` command surface, and future generated language bindings. The implemented protocol described here is protocol version 5, as defined by `mux-core/src/server.rs`.
 
 The spec is intentionally stricter than prose docs. Implemented commands and events describe the current server behavior exactly, including awkward result shapes and no-op cases. Proposed commands, events, transports, and config are marked `proposed` and are not part of protocol v5.
 
@@ -33,7 +33,7 @@ The generator must preserve the wire command names, parameter names, result shap
 | `commands.md` | Command contract, CLI mapping for each command, examples, and compatibility notes |
 | `events.md` | Subscribe and attach event payloads, ordering guarantees, and proposed filters |
 | `transports.md` | Implemented Unix socket transport and proposed HTTP, SSE, and WebSocket transports |
-| `cli.md` | Generated `cmux-mux <verb>` conventions, exit codes, stdin rules, verb table, and examples |
+| `cli.md` | Generated `cmux <verb>` conventions, exit codes, stdin rules, verb table, and examples |
 | `bindings.md` | Language binding style sheets and conformance suite contract |
 
 ## Implemented Inventory

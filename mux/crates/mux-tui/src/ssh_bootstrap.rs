@@ -1,10 +1,10 @@
-//! `cmux-mux ssh <host>` — creates a workspace backed by a `cmuxd-remote`
+//! `cmux ssh <host>` — creates a workspace backed by a `cmuxd-remote`
 //! session over SSH (see `mux_core::remote_pty`).
 //!
 //! This is where the Go-toolchain-and-repo-layout knowledge lives, kept
 //! out of `mux-core` on purpose: cross-compile `daemon/remote/` for the
 //! remote's OS/arch, cache the result locally, then ask the *running*
-//! `cmux-mux` session (over the control socket, like every other verb) to
+//! `cmux` session (over the control socket, like every other verb) to
 //! open a remote workspace with that binary. Uploading it to the remote
 //! host and speaking `cmuxd-remote`'s wire protocol both happen
 //! server-side in `mux_core::remote_pty` — this module only gets a local
@@ -19,7 +19,7 @@ use mux_core::platform::transport;
 use serde_json::{json, Value};
 
 const USAGE: &str =
-    "usage: cmux-mux ssh <host> [--name <workspace-name>] [--session <mux-session>] [--socket <path>]";
+    "usage: cmux ssh <host> [--name <workspace-name>] [--session <mux-session>] [--socket <path>]";
 
 pub fn run(args: &[String]) -> i32 {
     let mut host = None;
@@ -42,7 +42,7 @@ pub fn run(args: &[String]) -> i32 {
                 i += 2;
             }
             "-h" | "--help" => {
-                eprintln!("cmux-mux: {USAGE}");
+                eprintln!("cmux: {USAGE}");
                 return 0;
             }
             other if host.is_none() && !other.starts_with("--") => {
@@ -50,13 +50,13 @@ pub fn run(args: &[String]) -> i32 {
                 i += 1;
             }
             other => {
-                eprintln!("cmux-mux: unknown argument {other:?}\n{USAGE}");
+                eprintln!("cmux: unknown argument {other:?}\n{USAGE}");
                 return 2;
             }
         }
     }
     let Some(host) = host else {
-        eprintln!("cmux-mux: {USAGE}");
+        eprintln!("cmux: {USAGE}");
         return 2;
     };
 
@@ -66,7 +66,7 @@ pub fn run(args: &[String]) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("cmux-mux: {e}");
+            eprintln!("cmux: {e}");
             1
         }
     }
@@ -81,7 +81,7 @@ fn connect(
     let local_binary_path = ensure_remote_binary(host)?;
     let mut params = json!({
         "host": host,
-        "slot": "cmux-mux",
+        "slot": "cmux",
         "session_id": mux_core::remote_pty::generate_session_id(),
         "local_binary_path": local_binary_path.to_string_lossy(),
     });
@@ -101,7 +101,7 @@ fn ensure_remote_binary(host: &str) -> anyhow::Result<PathBuf> {
     let (os, arch) = detect_remote_platform(host)?;
     let cache_path = cache_dir()?.join(format!("cmuxd-remote-{os}-{arch}"));
     if !cache_path.exists() {
-        eprintln!("cmux-mux: building cmuxd-remote for {os}/{arch}...");
+        eprintln!("cmux: building cmuxd-remote for {os}/{arch}...");
         build_cmuxd_remote(&os, &arch, &cache_path)?;
     }
     Ok(cache_path)

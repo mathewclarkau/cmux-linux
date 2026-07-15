@@ -288,7 +288,7 @@ impl Surface {
         cmd.args(&argv[1..]);
         cmd.env("TERM", &opts.term);
         // Lets a hook script (e.g. a Claude Code hook) invoked from inside
-        // this pty call back into `cmux-mux report-agent --surface
+        // this pty call back into `cmux report-agent --surface
         // $CMUX_MUX_SURFACE ...` without needing to know its own surface id.
         cmd.env("CMUX_MUX_SURFACE", id.to_string());
         for (k, v) in &opts.extra_env {

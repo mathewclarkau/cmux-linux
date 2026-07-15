@@ -94,7 +94,7 @@ there, or `kill` its `cmuxd-remote serve --persistent-server` process).
 
 ## Platforms and XDG
 
-cmux-mux supports macOS and Linux; Windows support via ConPTY is planned for phase 2. The TUI config path resolves `CMUX_MUX_CONFIG`, then `$XDG_CONFIG_HOME/cmux/mux.json`, then `~/.config/cmux/mux.json`.
+cmux supports macOS and Linux; Windows support via ConPTY is planned for phase 2. The TUI config path resolves `CMUX_MUX_CONFIG`, then `$XDG_CONFIG_HOME/cmux/mux.json`, then `~/.config/cmux/mux.json`.
 
 Launched Chrome profile paths are platform-specific. On macOS the default is `~/Library/Application Support/cmux-mux/chrome-profile`. On Linux and other non-macOS targets, `XDG_DATA_HOME` is used when set, then `~/.local/share/cmux-mux/chrome-profile`.
 

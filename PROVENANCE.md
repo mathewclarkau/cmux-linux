@@ -7,7 +7,7 @@ included here. What's included:
 - `mux/` — vendored verbatim (build artifacts excluded) from
   `manaflow-ai/cmux@adc48877acd03a000da1660006713ac9f81ed611`, subdirectory `mux/`.
   This is the project's own cross-platform Rust + Zig terminal-multiplexer backend
-  (`cmux-mux` / `mux-tui`), already OS-agnostic upstream. It is not a git submodule
+  (`cmux` / `mux-tui`), already OS-agnostic upstream. It is not a git submodule
   here because we intend to actively modify it (session persistence, notifications,
   agent hooks, remote transport) rather than track upstream.
 - `ghostty/` — git submodule tracking `manaflow-ai/ghostty` (Manaflow's Ghostty fork),

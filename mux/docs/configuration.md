@@ -1,6 +1,6 @@
 # Configuration
 
-`cmux-mux` reads `~/.config/cmux/mux.json`, or `$XDG_CONFIG_HOME/cmux/mux.json` when `XDG_CONFIG_HOME` is set. Set `CMUX_MUX_CONFIG` to use another file; it takes precedence over both. Every documented key is optional. Unknown keys in the typed sections make the raw config invalid, so the TUI logs an error and falls back to defaults.
+`cmux` reads `~/.config/cmux/mux.json`, or `$XDG_CONFIG_HOME/cmux/mux.json` when `XDG_CONFIG_HOME` is set. Set `CMUX_MUX_CONFIG` to use another file; it takes precedence over both. Every documented key is optional. Unknown keys in the typed sections make the raw config invalid, so the TUI logs an error and falls back to defaults.
 
 Colors accept `#rrggbb`, `#rgb`, an xterm-256 number, or a numeric string.
 

@@ -1,4 +1,4 @@
-//! Synchronous Chrome DevTools Protocol support for cmux-mux.
+//! Synchronous Chrome DevTools Protocol support for cmux.
 //!
 //! This crate intentionally stays on `std::thread`, `std::sync::mpsc`,
 //! and blocking sockets. The mux runtime is synchronous, and browser

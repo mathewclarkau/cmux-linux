@@ -58,12 +58,12 @@ fn cli_verbs_cover_command_output_errors_and_streams() {
 
     let identify = cli(&server, &["identify"]);
     assert_success(&identify);
-    assert!(String::from_utf8_lossy(&identify.stdout).starts_with("cmux-mux session="));
+    assert!(String::from_utf8_lossy(&identify.stdout).starts_with("cmux session="));
 
     let identify_json = cli(&server, &["--json", "identify"]);
     assert_success(&identify_json);
     let value: serde_json::Value = serde_json::from_slice(&identify_json.stdout).unwrap();
-    assert_eq!(value.get("app").and_then(|v| v.as_str()), Some("cmux-mux"));
+    assert_eq!(value.get("app").and_then(|v| v.as_str()), Some("cmux"));
     assert!(value.get("protocol").and_then(|v| v.as_u64()).unwrap_or(0) >= 5);
 
     let workspace = cli(&server, &["new-workspace", "--name", "cli-test"]);
@@ -496,7 +496,7 @@ fn unique_temp_dir(name: &str) -> PathBuf {
 }
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_cmux-mux")
+    env!("CARGO_BIN_EXE_cmux")
 }
 
 /// Fixture for the install-skill symlink-refusal test.

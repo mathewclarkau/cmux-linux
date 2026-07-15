@@ -18,6 +18,7 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -31,7 +32,38 @@ jobs:
           submodules: recursive
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+        # ports.ubuntu.com (the arm64 mirror) has been fully unreachable
+        # from GitHub's ARM runners (every IPv4/IPv6 address, every
+        # retry) across multiple separate CI runs - not a one-off blip,
+        # so retrying against the same mirror doesn't help. Falls back to
+        # apt.llvm.org (LLVM's own repo, different infra/CDN entirely)
+        # after a couple of quick attempts against the default mirror.
+        # llvm.sh's own default package set (clang/lldb/lld/clangd) pulls
+        # in lldb's gRPC/protobuf deps from the *still-broken* Ubuntu repo
+        # - confirmed live, llvm.sh itself exits non-zero over exactly
+        # that, even though every apt.llvm.org package fetched fine.
+        # bindgen only needs libclang.so discoverable + a resource-dir
+        # (see ghostty-vt-sys/build.rs), so run llvm.sh just for its repo
+        # setup (ignore its own install/exit code) and then install only
+        # clang-18/libclang-18-dev ourselves - both live entirely on
+        # apt.llvm.org, no ports.ubuntu.com dependency at all.
+        run: |
+          for i in 1 2; do
+            if sudo apt-get update && sudo apt-get install -y clang libclang-dev; then
+              exit 0
+            fi
+            echo "attempt $i against the default mirror failed, retrying in 10s..." >&2
+            sleep 10
+          done
+          echo "default mirror unreachable after 2 attempts; falling back to apt.llvm.org" >&2
+          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 18 || true
+          sudo apt-get install -y clang-18 libclang-18-dev
+          # ghostty-vt-sys/build.rs falls back to a plain `clang` on PATH
+          # for resource-dir detection; llvm.sh doesn't register that
+          # unversioned alternative by default.
+          sudo ln -sf "$(command -v clang-18)" /usr/bin/clang
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.75.0

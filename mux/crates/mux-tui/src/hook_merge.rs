@@ -366,7 +366,7 @@ mod tests {
         // on-disk JSON uses 2-space pretty indentation.
         let dir = scratch_dir("save_roundtrip");
         let path = dir.join("hooks.json");
-        let cfg = Cfg { hooks: vec!["cmux-mux report-agent".to_string(), "other".to_string()] };
+        let cfg = Cfg { hooks: vec!["cmux report-agent".to_string(), "other".to_string()] };
         save_pretty(&path, &cfg).expect("save should succeed");
         let on_disk = std::fs::read_to_string(&path).unwrap();
         assert!(

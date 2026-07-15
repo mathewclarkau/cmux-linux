@@ -124,7 +124,7 @@ impl Drop for Chrome {
 fn make_profile_dir() -> anyhow::Result<PathBuf> {
     let seq = PROFILE_SEQ.fetch_add(1, Ordering::Relaxed);
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
-    let mut name = OsString::from("cmux-mux-cdp-");
+    let mut name = OsString::from("cmux-cdp-");
     name.push(std::process::id().to_string());
     name.push("-");
     name.push(now.to_string());
@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn ephemeral_profile_ignores_configured_user_data_dir() {
         let explicit_dir =
-            std::env::temp_dir().join(format!("cmux-mux-cdp-explicit-{}", std::process::id()));
+            std::env::temp_dir().join(format!("cmux-cdp-explicit-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&explicit_dir);
         std::fs::create_dir_all(&explicit_dir).unwrap();
         let sentinel = explicit_dir.join("keep");
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn explicit_profile_dir_is_used_verbatim() {
         let explicit_dir =
-            std::env::temp_dir().join(format!("cmux-mux-cdp-verbatim-{}", std::process::id()));
+            std::env::temp_dir().join(format!("cmux-cdp-verbatim-{}", std::process::id()));
         let options = ChromeLaunchOptions {
             binary: PathBuf::from("chrome"),
             user_data_dir: Some(explicit_dir.clone()),

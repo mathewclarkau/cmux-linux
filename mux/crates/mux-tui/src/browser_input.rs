@@ -59,6 +59,39 @@ pub enum BrowserInputKind {
         text: Option<&'static str>,
     },
     InsertText(String),
+    /// Ctrl+V on a browser pane: read the *system* clipboard on this
+    /// worker thread (never the render loop - see the module doc) and
+    /// insert it, instead of forwarding a literal Ctrl+V keystroke to
+    /// Chrome. A headless/CDP-launched Chrome instance has no OS
+    /// clipboard access of its own, so forwarding the raw keystroke is a
+    /// silent no-op from the user's perspective - see
+    /// `read_system_clipboard` for why this needs its own path.
+    PasteFromSystemClipboard,
+}
+
+/// Reads the desktop clipboard by shelling out to whichever clipboard tool
+/// is available, since cmux-mux (unlike the outer terminal) has no direct
+/// clipboard API of its own - it only ever *writes* the clipboard, via
+/// OSC52. Tries Wayland's `wl-paste` first, then X11's `xclip`; returns
+/// `None` (not an error) if neither is installed or the clipboard is
+/// empty/unreadable, so callers can no-op cleanly.
+fn read_system_clipboard() -> Option<String> {
+    let from_wl_paste = std::process::Command::new("wl-paste")
+        .arg("--no-newline")
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| out.stdout);
+    let from_xclip = from_wl_paste.or_else(|| {
+        std::process::Command::new("xclip")
+            .args(["-selection", "clipboard", "-o"])
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| out.stdout)
+    });
+    let text = String::from_utf8(from_xclip?).ok()?;
+    (!text.is_empty()).then_some(text)
 }
 
 impl BrowserInputKind {
@@ -142,6 +175,10 @@ fn dispatch(event: &BrowserInputEvent) {
             *text,
         ),
         BrowserInputKind::InsertText(text) => surface.browser_insert_text(text),
+        BrowserInputKind::PasteFromSystemClipboard => match read_system_clipboard() {
+            Some(text) => surface.browser_insert_text(&text),
+            None => Ok(()),
+        },
     };
 }
 

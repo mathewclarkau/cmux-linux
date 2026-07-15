@@ -1,32 +1,32 @@
 ---
 name: cmux-orchestration
-description: Orchestrate cmux-mux panes, agents, and browser tabs from a natural-language layout request
+description: Orchestrate cmux panes, agents, and browser tabs from a natural-language layout request
 argument-hint: <describe the panes, agents, and browser tabs you want, in plain English>
 ---
 
-You are orchestrating **cmux-mux**, the terminal multiplexer this Claude Code session
+You are orchestrating **cmux**, the terminal multiplexer this Claude Code session
 is (probably) running inside of. The user's request is:
 
 $ARGUMENTS
 
-Turn that request into real panes/tabs by driving the `cmux-mux` CLI with the `bash`
+Turn that request into real panes/tabs by driving the `cmux` CLI with the `bash`
 tool. Do not just describe a plan — actually create the layout, launch the agent(s),
 and report back what you built (pane/surface ids, what's running where).
 
 ## 0. Preconditions
 
 Run `env | grep '^CMUX_MUX_'`. You need both `CMUX_MUX_SOCKET` and `CMUX_MUX_SURFACE`
-set — every pane spawned by a running `cmux-mux` session gets these automatically.
+set — every pane spawned by a running `cmux` session gets these automatically.
 If either is missing, stop and tell the user this only works from inside a pane of a
-live `cmux-mux` session (`cmux-mux` to start one, or `cmux-mux attach --session <name>`
+live `cmux` session (`cmux` to start one, or `cmux attach --session <name>`
 to join one already running) — there's nothing to orchestrate otherwise.
 
-`cmux-mux <verb> ...` reads `CMUX_MUX_SOCKET` itself, so you don't need `--socket` on
+`cmux <verb> ...` reads `CMUX_MUX_SOCKET` itself, so you don't need `--socket` on
 any command below.
 
 ## 1. Find out where you are
 
-Run `cmux-mux list-workspaces`. It prints the whole tree: workspaces → screens →
+Run `cmux list-workspaces`. It prints the whole tree: workspaces → screens →
 panes → tabs (surfaces), one line each, e.g.:
 
 ```
@@ -41,35 +41,35 @@ pane" in the user's request; other panes are laid out relative to it with `split
 ## 2. CLI cheat sheet (exact flags — nothing else is accepted)
 
 ```
-cmux-mux split --pane <pane> --dir right|down [--cols N --rows N]
+cmux split --pane <pane> --dir right|down [--cols N --rows N]
     → creates a new pane (splitting the given one) with a fresh shell tab.
       Prints the new surface id. There is no --cwd; cd inside it via `send`.
 
-cmux-mux new-tab --pane <pane> [--cwd <dir>] [--cols N --rows N]
+cmux new-tab --pane <pane> [--cwd <dir>] [--cols N --rows N]
     → new shell tab in an existing pane (not a new pane/split). Prints surface id.
 
-cmux-mux new-browser-tab --url <url> --pane <pane> [--cols N --rows N]
+cmux new-browser-tab --url <url> --pane <pane> [--cols N --rows N]
     → new browser tab in a pane. Prints surface id.
 
-cmux-mux send --surface <id> --text "<text>"
+cmux send --surface <id> --text "<text>"
     → types literal text into a pty surface. Include your own trailing \n to
       submit a shell command, e.g.: --text $'cd /some/dir && claude "do the thing"\n'
       Does NOT work on browser surfaces (see below).
 
-cmux-mux read-screen --surface <id>
+cmux read-screen --surface <id>
     → dumps a pty surface's visible screen text. Browser surfaces reject this
       with "browser surface does not support PTY/VT socket commands" — don't
       try to introspect a browser tab's content this way, it's expected to fail.
 
-cmux-mux browser-reload --surface <id>
+cmux browser-reload --surface <id>
     → reloads/refreshes a browser tab.
 
-cmux-mux close-surface --surface <id>
+cmux close-surface --surface <id>
     → closes one tab/surface (pane/screen/workspace stay if other tabs remain).
 
-cmux-mux list-agents [--state working|blocked|idle|done]
+cmux list-agents [--state working|blocked|idle|done]
     → shows Claude Code hook-reported agent state per surface, if the hook is
-      installed (`cmux-mux claude install-hooks`). Useful to check whether an
+      installed (`cmux claude install-hooks`). Useful to check whether an
       agent you launched is still working vs. waiting on you.
 ```
 
@@ -92,7 +92,7 @@ cmux-mux list-agents [--state working|blocked|idle|done]
 
 You can reload/refresh a browser tab in-place using:
 
-    cmux-mux browser-reload --surface <browser-surface-id>
+    cmux browser-reload --surface <browser-surface-id>
 
 For watching the agent's working directory for changes, prefer:
 

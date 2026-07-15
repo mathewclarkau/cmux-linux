@@ -1,6 +1,6 @@
 # Python Binding Style
 
-Generate a zero-dependency synchronous Python package under `mux/bindings/python/cmux_mux_client/`.
+Generate a zero-dependency synchronous Python package under `mux/bindings/python/cmux_client/`.
 
 Requirements:
 
@@ -32,5 +32,5 @@ Public API shape:
 The package must be importable with:
 
 ```python
-from cmux_mux_client import MuxClient
+from cmux_client import MuxClient
 ```
