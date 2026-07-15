@@ -12,7 +12,7 @@ use std::process::{Command, Stdio};
 pub fn send(pane_label: &str, title: &str, body: &str) {
     let summary = if title.is_empty() { pane_label.to_string() } else { format!("{pane_label}: {title}") };
     let _ = Command::new("notify-send")
-        .arg("--app-name=cmux-mux")
+        .arg("--app-name=cmux")
         .arg(&summary)
         .arg(body)
         .stdin(Stdio::null())

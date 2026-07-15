@@ -27,7 +27,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("cmux-mux: usage: cmux-mux pi <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!("cmux: usage: cmux pi <install-hooks|install-skill> [--uninstall] [--global]");
             2
         }
     }
@@ -67,7 +67,7 @@ export default function cmuxExtension(pi: ExtensionAPI) {
       // against future callers that may set CMUX_MUX_SURFACE from
       // untrusted input.
       execFile(
-        "cmux-mux",
+        "cmux",
         ["report-agent", "--surface", surface, "--state", state, "--source", "pi"],
         (err) => {
           // Silent error

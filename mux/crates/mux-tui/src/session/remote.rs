@@ -215,13 +215,13 @@ impl RemoteSession {
 
         // Identify (validates the endpoint) and subscribe to events.
         let ident = session.request(json!({"cmd": "identify"}))?;
-        if ident.get("app").and_then(|v| v.as_str()) != Some("cmux-mux") {
-            anyhow::bail!("socket endpoint is not a cmux-mux session");
+        if ident.get("app").and_then(|v| v.as_str()) != Some("cmux") {
+            anyhow::bail!("socket endpoint is not a cmux session");
         }
         let protocol = ident.get("protocol").and_then(|v| v.as_u64()).unwrap_or(0);
         if protocol != SUPPORTED_PROTOCOL_VERSION {
             anyhow::bail!(
-                "unsupported cmux-mux protocol {protocol}; this client requires protocol 6 because attach-stream resize markers are authoritative; restart the cmux-mux server"
+                "unsupported cmux protocol {protocol}; this client requires protocol 6 because attach-stream resize markers are authoritative; restart the cmux server"
             );
         }
         session.request(json!({"cmd": "subscribe"}))?;

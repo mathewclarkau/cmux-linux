@@ -1,6 +1,6 @@
 import os, pty, select, socket, json, time, sys, signal, subprocess, re
 
-BIN = os.environ.get("CMUX_MUX_BIN", "target/debug/cmux-mux")
+BIN = os.environ.get("CMUX_MUX_BIN", "target/debug/cmux")
 SESSION = f"smoke-{os.getpid()}"
 SOCK = None
 CONTROL_SOCKET_RE = re.compile(r"control socket at (.+)$")
@@ -317,7 +317,7 @@ drain(1.0)
 assert probe_answers[10] > 0 and probe_answers[11] > 0, probe_answers
 
 ident = rpc({"id": 1, "cmd": "identify"})
-assert ident["ok"] and ident["data"]["app"] == "cmux-mux", ident
+assert ident["ok"] and ident["data"]["app"] == "cmux", ident
 assert ident["data"]["protocol"] == 6, ident
 print("identify ok:", ident["data"])
 

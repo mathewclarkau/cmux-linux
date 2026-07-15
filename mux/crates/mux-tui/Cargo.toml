@@ -4,10 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "cmux-mux: tmux-like terminal multiplexer TUI backed by libghostty-vt"
+description = "cmux: tmux-like terminal multiplexer TUI backed by libghostty-vt"
 
 [[bin]]
-name = "cmux-mux"
+name = "cmux"
 path = "src/main.rs"
 
 [dependencies]

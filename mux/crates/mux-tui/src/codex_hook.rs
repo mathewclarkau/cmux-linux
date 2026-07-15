@@ -45,7 +45,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("cmux-mux: usage: cmux-mux codex <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!("cmux: usage: cmux codex <install-hooks|install-skill> [--uninstall] [--global]");
             2
         }
     }
@@ -78,7 +78,7 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             }
         };
         for hooks_list in config.hooks.values_mut() {
-            hooks_list.retain(|h| !h.command.contains("cmux-mux report-agent"));
+            hooks_list.retain(|h| !h.command.contains("cmux report-agent"));
         }
         // Retain only events that still have hooks
         config.hooks.retain(|_, v| !v.is_empty());
@@ -170,13 +170,13 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
 
         // Clear existing cmux hooks
         for hooks_list in config.hooks.values_mut() {
-            hooks_list.retain(|h| !h.command.contains("cmux-mux report-agent"));
+            hooks_list.retain(|h| !h.command.contains("cmux report-agent"));
         }
 
         let new_hooks = vec![
-            ("PreToolUse", "cmux-mux report-agent --surface \"$CMUX_MUX_SURFACE\" --state working --source codex"),
-            ("PostToolUse", "cmux-mux report-agent --surface \"$CMUX_MUX_SURFACE\" --state idle --source codex"),
-            ("Stop", "cmux-mux report-agent --surface \"$CMUX_MUX_SURFACE\" --state done --source codex"),
+            ("PreToolUse", "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state working --source codex"),
+            ("PostToolUse", "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state idle --source codex"),
+            ("Stop", "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state done --source codex"),
         ];
 
         for (event, command) in new_hooks {

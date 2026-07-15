@@ -471,11 +471,11 @@ impl Keys {
             }
             if name == "prefix" {
                 let Some(value) = value.as_str() else {
-                    eprintln!("cmux-mux: ignoring non-string prefix binding {value:?}");
+                    eprintln!("cmux: ignoring non-string prefix binding {value:?}");
                     continue;
                 };
                 let Some(chord) = parse_chord(value) else {
-                    eprintln!("cmux-mux: ignoring unparseable key binding prefix = {value:?}");
+                    eprintln!("cmux: ignoring unparseable key binding prefix = {value:?}");
                     continue;
                 };
                 self.prefix = chord;
@@ -494,7 +494,7 @@ impl Keys {
                         }
                         let Some(chord) = parse_chord(raw_chord) else {
                             eprintln!(
-                                "cmux-mux: ignoring unparseable key binding {name} = {raw_chord:?}"
+                                "cmux: ignoring unparseable key binding {name} = {raw_chord:?}"
                             );
                             continue;
                         };
@@ -502,7 +502,7 @@ impl Keys {
                         self.bindings.push((chord, *action));
                     }
                 }
-                None => eprintln!("cmux-mux: ignoring unknown key action {name:?}"),
+                None => eprintln!("cmux: ignoring unknown key action {name:?}"),
             }
         }
     }
@@ -688,7 +688,7 @@ pub fn load() -> Config {
             config.browser.max_capture_megapixels = megapixels;
         } else {
             eprintln!(
-                "cmux-mux: ignoring browser.max_capture_megapixels={megapixels:?}; expected > 0"
+                "cmux: ignoring browser.max_capture_megapixels={megapixels:?}; expected > 0"
             );
         }
     }
@@ -697,7 +697,7 @@ pub fn load() -> Config {
             config.browser.capture_scale = Some(scale);
         } else {
             eprintln!(
-                "cmux-mux: ignoring browser.capture_scale={scale:?}; expected 0 < scale <= 1"
+                "cmux: ignoring browser.capture_scale={scale:?}; expected 0 < scale <= 1"
             );
         }
     }
@@ -745,7 +745,7 @@ fn load_raw_config() -> RawConfig {
         Err(e) => {
             // A broken config should not take the TUI down; complain on
             // stderr (visible pre-alternate-screen and in logs).
-            eprintln!("cmux-mux: ignoring invalid config {}: {e}", path.display());
+            eprintln!("cmux: ignoring invalid config {}: {e}", path.display());
             RawConfig::default()
         }
     }

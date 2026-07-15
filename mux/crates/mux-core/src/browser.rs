@@ -634,7 +634,7 @@ impl BrowserSurface {
 
     pub fn resize(&self, cols: u16, rows: u16) {
         if let Err(e) = self.try_resize(cols, rows) {
-            eprintln!("cmux-mux: browser resize failed for surface {}: {e}", self.meta.id);
+            eprintln!("cmux: browser resize failed for surface {}: {e}", self.meta.id);
         }
     }
 

@@ -40,7 +40,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("cmux-mux: usage: cmux-mux antigravity <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!("cmux: usage: cmux antigravity <install-hooks|install-skill> [--uninstall] [--global]");
             2
         }
     }
@@ -73,7 +73,7 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
                 return 1;
             }
         };
-        config.hooks.retain(|h| !h.command.contains("cmux-mux report-agent"));
+        config.hooks.retain(|h| !h.command.contains("cmux report-agent"));
 
         if let Err(e) = hook_merge::save_pretty(&path, &config) {
             match e {
@@ -114,20 +114,20 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
         };
 
         // Remove any existing cmux hooks to avoid duplicates
-        config.hooks.retain(|h| !h.command.contains("cmux-mux report-agent"));
+        config.hooks.retain(|h| !h.command.contains("cmux report-agent"));
 
         // Add fresh ones
         config.hooks.push(AntigravityHook {
             event: "PreToolUse".to_string(),
-            command: "cmux-mux report-agent --surface \"$CMUX_MUX_SURFACE\" --state working --source antigravity".to_string(),
+            command: "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state working --source antigravity".to_string(),
         });
         config.hooks.push(AntigravityHook {
             event: "PostToolUse".to_string(),
-            command: "cmux-mux report-agent --surface \"$CMUX_MUX_SURFACE\" --state idle --source antigravity".to_string(),
+            command: "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state idle --source antigravity".to_string(),
         });
         config.hooks.push(AntigravityHook {
             event: "Stop".to_string(),
-            command: "cmux-mux report-agent --surface \"$CMUX_MUX_SURFACE\" --state done --source antigravity".to_string(),
+            command: "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state done --source antigravity".to_string(),
         });
 
         if let Err(e) = hook_merge::save_pretty(&path, &config) {

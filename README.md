@@ -6,7 +6,7 @@ in parallel with git-worktree-style workspace isolation.
 
 The upstream `cmux` app is a macOS-only Swift/AppKit application and isn't portable.
 This repo instead builds on `mux/`, upstream's own cross-platform Rust + Zig backend
-(`cmux-mux` / `mux-tui`), which already reimplements the same session → workspace →
+(`cmux` / `mux-tui`), which already reimplements the same session → workspace →
 screen → pane → surface model over a JSON-Lines Unix-socket control protocol. See
 [`PROVENANCE.md`](./PROVENANCE.md) for exactly what was vendored from where, and
 under what license.
@@ -21,9 +21,9 @@ carries forward the GPL-3.0-or-later grant — see [`LICENSE`](./LICENSE).
 ### Prebuilt binary
 
 ```bash
-curl -fsSL -o ~/.local/bin/cmux-mux \
-  "https://github.com/mathewclarkau/cmux-linux/releases/latest/download/cmux-mux-linux-$(uname -m)"
-chmod +x ~/.local/bin/cmux-mux
+curl -fsSL -o ~/.local/bin/cmux \
+  "https://github.com/mathewclarkau/cmux-linux/releases/latest/download/cmux-linux-$(uname -m)"
+chmod +x ~/.local/bin/cmux
 ```
 
 Covers `x86_64` and `aarch64`, no Rust/clang toolchain needed — skip straight to [Run it](#run-it) below.
@@ -43,7 +43,7 @@ Built by [`.github/workflows/release.yml`](./.github/workflows/release.yml) from
   0.16 breaks this build with at least two unrelated stdlib signature changes (`Dir.readFileAlloc`'s new
   `Io`-threaded signature, `std.process.EnvMap` moving) within the first few seconds of the build graph —
   confirmed by patching around both and hitting more.
-- **Go** is only needed for [remote/SSH workspaces](./mux/docs/getting-started.md#remote-ssh-workspaces) — `cmux-mux
+- **Go** is only needed for [remote/SSH workspaces](./mux/docs/getting-started.md#remote-ssh-workspaces) — `cmux
   ssh <host>` shells out to `go build` on first connection to a given host, to cross-compile the vendored
   `cmuxd-remote` daemon for that host's OS/arch. Everything else builds and runs without Go installed.
 
@@ -53,7 +53,7 @@ Built by [`.github/workflows/release.yml`](./.github/workflows/release.yml) from
 git clone --recurse-submodules https://github.com/mathewclarkau/cmux-linux.git
 cd cmux-linux
 ./scripts/bootstrap.sh                                          # fetches zig, builds mux-tui in release mode
-ln -sf "$(pwd)/mux/target/release/cmux-mux" ~/.local/bin/cmux-mux  # requires ~/.local/bin on PATH
+ln -sf "$(pwd)/mux/target/release/cmux" ~/.local/bin/cmux  # requires ~/.local/bin on PATH
 ```
 
 Forgot `--recurse-submodules`? `bootstrap.sh` initializes the `ghostty` submodule itself if it's missing, so a
@@ -65,9 +65,9 @@ commit; local changes are layered on top so a fresh clone can always fetch it), 
 ### Run it
 
 ```bash
-cmux-mux                          # start a session named "main" (TUI + control socket)
-cmux-mux --session agents         # start (or attach to) a differently-named session
-cmux-mux attach --session agents  # attach a second TUI to an already-running session
+cmux                          # start a session named "main" (TUI + control socket)
+cmux --session agents         # start (or attach to) a differently-named session
+cmux attach --session agents  # attach a second TUI to an already-running session
 ```
 
 See [`mux/docs/getting-started.md`](./mux/docs/getting-started.md) for headless mode, socket paths, and session
@@ -83,13 +83,13 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
    see `Surface::cwd()` in `mux-core`), and the sidebar shows the git branch for
    it (`crates/mux-tui/src/git_info.rs`). PR status is not included — it needs
    `gh`/GitHub API access and felt like a separate, heavier addition.
-2. ~~Claude Code hook layer (session tracking, restore)~~ — done. `cmux-mux claude
-   install-hooks` wires `~/.claude/settings.json` to call `cmux-mux claude hook` on
+2. ~~Claude Code hook layer (session tracking, restore)~~ — done. `cmux claude
+   install-hooks` wires `~/.claude/settings.json` to call `cmux claude hook` on
    every lifecycle event (merged alongside any hooks already there, safely
    idempotent). It reports agent state over `report-agent`/`list-agents`
    (`crates/mux-tui/src/claude_hook.rs`) and records sessions to
-   `$XDG_STATE_HOME/cmux-mux/claude-sessions.json` for `cmux-mux claude sessions`
-   / `cmux-mux claude resume <session-id>`.
+   `$XDG_STATE_HOME/cmux-mux/claude-sessions.json` for `cmux claude sessions`
+   / `cmux claude resume <session-id>`.
 3. ~~Agent-state notifications (OSC 9/99/777 → desktop notification)~~ — done.
    Every pane's raw output is watched for an OSC 9, OSC 777, or kitty-protocol
    desktop notification (`crates/mux-core/src/notify.rs`); each one sets
@@ -109,26 +109,26 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
    recorded directory; something you had running there needs relaunching.
    Verified via a real kill-and-restart of the compiled binary, not just
    library tests — see `mux/docs/getting-started.md`'s "Session persistence".
-5. ~~Remote/SSH workspaces~~ — done. `cmux-mux ssh <host>` opens a workspace
+5. ~~Remote/SSH workspaces~~ — done. `cmux ssh <host>` opens a workspace
    backed by upstream's existing Go `cmuxd-remote` daemon (vendored unmodified
    in `daemon/remote/`, already cross-compiles for `linux/{amd64,arm64}`) instead
    of a local shell. `mux-core/src/remote_pty.rs` implements `portable_pty`'s
    `MasterPty`/`SlavePty`/`Child` traits against an SSH-exec'd NDJSON RPC pipe —
    no real local pty involved. The first connection to a host builds/uploads/
    starts `cmuxd-remote` in persistent mode, so it survives both the SSH
-   connection and the local `cmux-mux` process dying; closing the tab detaches
+   connection and the local `cmux` process dying; closing the tab detaches
    rather than kills, and restarting the session daemon reattaches
    automatically for a workspace's first tab (same mechanism as #4). Verified
    against a real sshd (localhost), including a kill-and-restart of the
    compiled binary that reattached to the still-running remote shell — see
    `mux/docs/getting-started.md`'s "Remote (SSH) workspaces".
 
-### Known environment quirk (not a cmux-mux bug)
+### Known environment quirk (not a cmux bug)
 
 Every new pane spawns your login shell (`$SHELL`) fresh. If you use zsh with
 Powerlevel10k and haven't completed its setup wizard yet (no `~/.p10k.zsh`),
 that wizard launches in every new pane and blocks on an interactive prompt.
-Run `p10k configure` once in a normal terminal (outside cmux-mux) to fix it
+Run `p10k configure` once in a normal terminal (outside cmux) to fix it
 for good.
 
 ## Usage
@@ -148,40 +148,40 @@ takes priority over this passive detection.
 
 #### 1. Claude Code
 ```bash
-cmux-mux claude install-hooks        # wire up ~/.claude/settings.json
-cmux-mux claude install-hooks --uninstall
-cmux-mux claude sessions             # recorded sessions: id, cwd, last event
-cmux-mux claude resume <session-id>  # new pane in the recorded cwd, runs claude --resume
+cmux claude install-hooks        # wire up ~/.claude/settings.json
+cmux claude install-hooks --uninstall
+cmux claude sessions             # recorded sessions: id, cwd, last event
+cmux claude resume <session-id>  # new pane in the recorded cwd, runs claude --resume
 ```
 Once installed, panes running Claude Code show status dots next to the git branch (amber while working, red when blocked, green when done).
 
 #### 2. Antigravity CLI (`agy`)
 ```bash
-cmux-mux antigravity install-hooks            # installs workspace-level hooks in .agents/hooks.json
-cmux-mux antigravity install-hooks --global   # installs global hooks in ~/.gemini/config/hooks.json
-cmux-mux antigravity install-hooks --uninstall
+cmux antigravity install-hooks            # installs workspace-level hooks in .agents/hooks.json
+cmux antigravity install-hooks --global   # installs global hooks in ~/.gemini/config/hooks.json
+cmux antigravity install-hooks --uninstall
 ```
 Triggers state updates automatically during tool execution phases (`PreToolUse`, `PostToolUse`, `Stop`).
 
 #### 3. Codex CLI
 ```bash
-cmux-mux codex install-hooks            # installs hooks in .codex/hooks.json and enables in config.toml
-cmux-mux codex install-hooks --global   # installs hooks in ~/.codex/hooks.json and enables globally
-cmux-mux codex install-hooks --uninstall
+cmux codex install-hooks            # installs hooks in .codex/hooks.json and enables in config.toml
+cmux codex install-hooks --global   # installs hooks in ~/.codex/hooks.json and enables globally
+cmux codex install-hooks --uninstall
 ```
 
 #### 4. Pi Coding Agent (`pi`)
 ```bash
-cmux-mux pi install-hooks            # installs TypeScript extensions into .pi/extensions/cmux.ts
-cmux-mux pi install-hooks --global   # installs extensions globally in ~/.pi/agent/extensions/cmux.ts
-cmux-mux pi install-hooks --uninstall
+cmux pi install-hooks            # installs TypeScript extensions into .pi/extensions/cmux.ts
+cmux pi install-hooks --global   # installs extensions globally in ~/.pi/agent/extensions/cmux.ts
+cmux pi install-hooks --uninstall
 ```
 
 #### 5. Aider
 ```bash
-cmux-mux aider install-hooks            # creates a wrapper executable at .bin/aider
-cmux-mux aider install-hooks --global   # creates a wrapper globally at ~/.local/bin/aider
-cmux-mux aider install-hooks --uninstall
+cmux aider install-hooks            # creates a wrapper executable at .bin/aider
+cmux aider install-hooks --global   # creates a wrapper globally at ~/.local/bin/aider
+cmux aider install-hooks --uninstall
 ```
 *Note: For the local wrapper, ensure `.bin/` is prepended to your `$PATH` or call `./.bin/aider` directly.*
 

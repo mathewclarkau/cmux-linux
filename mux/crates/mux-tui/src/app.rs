@@ -956,7 +956,7 @@ impl App {
                 }
             }
             AppEvent::Mux(MuxEvent::OscNotification { surface, title, body }) => {
-                let label = self.tree.tab_label(surface).unwrap_or_else(|| "cmux-mux".to_string());
+                let label = self.tree.tab_label(surface).unwrap_or_else(|| "cmux".to_string());
                 crate::desktop_notify::send(&label, &title, &body);
                 Ok(RenderAction::Draw)
             }

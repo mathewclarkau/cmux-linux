@@ -302,7 +302,7 @@ pub fn run(args: &[String], usage: &str) -> i32 {
         }
         Ok(Parsed::Command(args)) => run_command(args),
         Err(err) => {
-            eprintln!("cmux-mux: {}", err.0);
+            eprintln!("cmux: {}", err.0);
             2
         }
     }
@@ -405,7 +405,7 @@ fn run_command(args: CliArgs) -> i32 {
             value
         }
         Err(err) => {
-            eprintln!("cmux-mux: {}", err.0);
+            eprintln!("cmux: {}", err.0);
             return 2;
         }
     };
@@ -896,7 +896,7 @@ fn print_agents(data: &Value, out: &mut dyn Write) -> io::Result<()> {
 fn print_identify(data: &Value, out: &mut dyn Write) -> io::Result<()> {
     writeln!(
         out,
-        "cmux-mux session={} protocol={} pid={}",
+        "cmux session={} protocol={} pid={}",
         data.get("session").and_then(Value::as_str).unwrap_or(""),
         data.get("protocol").and_then(Value::as_u64).unwrap_or(0),
         data.get("pid").and_then(Value::as_u64).unwrap_or(0)

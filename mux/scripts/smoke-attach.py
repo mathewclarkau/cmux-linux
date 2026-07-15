@@ -20,7 +20,7 @@ import subprocess
 import termios
 import time
 
-BIN = os.environ.get("CMUX_MUX_BIN", "target/debug/cmux-mux")
+BIN = os.environ.get("CMUX_MUX_BIN", "target/debug/cmux")
 SESSION = f"smoke-attach-{os.getpid()}"
 SOCK = None
 CONTROL_SOCKET_RE = re.compile(r"control socket at (.+)$")

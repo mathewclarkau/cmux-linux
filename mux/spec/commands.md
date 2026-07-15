@@ -1,6 +1,6 @@
 # Command Contract
 
-This file specifies the JSON command contract for the cmux-mux protocol. Implemented commands match protocol v6 in `mux/crates/mux-core/src/server.rs`. Proposed commands are future protocol v7 design.
+This file specifies the JSON command contract for the cmux protocol. Implemented commands match protocol v6 in `mux/crates/mux-core/src/server.rs`. Proposed commands are future protocol v7 design.
 
 ## Notation
 
@@ -94,14 +94,14 @@ The `dead` pane variant is serialized by the v5 server only if the tree referenc
 | status | implemented |
 | since | protocol 5 |
 
-Returns process and protocol metadata for the connected mux server. Clients use this command to verify that the socket endpoint is cmux-mux and to check feature compatibility.
+Returns process and protocol metadata for the connected mux server. Clients use this command to verify that the socket endpoint is cmux and to check feature compatibility.
 
 Params: none.
 
 Result:
 
 ```text
-object{app:"cmux-mux",version:string,protocol:uint32,session:string,pid:uint32}
+object{app:"cmux",version:string,protocol:uint32,session:string,pid:uint32}
 ```
 
 Errors:
@@ -116,7 +116,7 @@ CLI mapping:
 | --- | --- |
 | Verb | `identify` |
 | Flags | none |
-| Plain stdout | `cmux-mux session=<session> protocol=<protocol> pid=<pid>` |
+| Plain stdout | `cmux session=<session> protocol=<protocol> pid=<pid>` |
 | JSON stdout | exact result object |
 | Exit codes | common |
 
@@ -124,7 +124,7 @@ Example:
 
 ```json
 {"id":1,"cmd":"identify"}
-{"id":1,"ok":true,"data":{"app":"cmux-mux","version":"0.1.0","protocol":5,"session":"main","pid":12345}}
+{"id":1,"ok":true,"data":{"app":"cmux","version":"0.1.0","protocol":5,"session":"main","pid":12345}}
 ```
 
 ### list-workspaces
@@ -2056,7 +2056,7 @@ Example:
 | status | implemented |
 | since | protocol 6 |
 
-Creates a workspace whose single tab is a remote shell reached through `cmuxd-remote` over SSH (see `docs/protocol.md`'s "Remote Workspaces" section and `mux-core/src/remote_pty.rs`) instead of a local pty. The caller is responsible for having already built/uploaded a `cmuxd-remote` binary for the target's OS/arch and passing its local path; the bundled `cmux-mux ssh <host>` CLI does this and is the intended entry point, not this command directly.
+Creates a workspace whose single tab is a remote shell reached through `cmuxd-remote` over SSH (see `docs/protocol.md`'s "Remote Workspaces" section and `mux-core/src/remote_pty.rs`) instead of a local pty. The caller is responsible for having already built/uploaded a `cmuxd-remote` binary for the target's OS/arch and passing its local path; the bundled `cmux ssh <host>` CLI does this and is the intended entry point, not this command directly.
 
 Params:
 
@@ -2096,7 +2096,7 @@ CLI mapping:
 Example:
 
 ```json
-{"id":60,"cmd":"new-remote-workspace","host":"myhost","slot":"cmux-mux","session_id":"cmux-mux-...","local_binary_path":"/home/me/.cache/cmux-mux/cmuxd-remote-linux-amd64","name":"work"}
+{"id":60,"cmd":"new-remote-workspace","host":"myhost","slot":"cmux","session_id":"cmux-...","local_binary_path":"/home/me/.cache/cmux-mux/cmuxd-remote-linux-amd64","name":"work"}
 {"id":60,"ok":true,"data":{"surface":7}}
 ```
 

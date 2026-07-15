@@ -1,9 +1,9 @@
-//! cmux-mux: a tmux-like terminal multiplexer TUI.
+//! cmux: a tmux-like terminal multiplexer TUI.
 //!
 //! Runs the mux core (workspaces → split panes → tabs on real PTYs,
 //! terminal state from libghostty-vt) with a Ratatui frontend, and always
 //! exposes the JSON control socket so external frontends can attach.
-//! `cmux-mux attach` connects the same TUI to an existing (usually
+//! `cmux attach` connects the same TUI to an existing (usually
 //! headless) session over that socket, which is how detach/reattach works.
 
 mod app;
@@ -51,18 +51,18 @@ fn install_signal_handlers() {
 }
 
 const USAGE: &str = "\
-cmux-mux - terminal multiplexer backed by libghostty-vt
+cmux - terminal multiplexer backed by libghostty-vt
 
 USAGE:
-  cmux-mux [OPTIONS]           Start a session (TUI + control socket)
-  cmux-mux attach [OPTIONS]    Attach to an existing session's socket
-  cmux-mux <verb> [OPTIONS]    Run one control-socket command
-  cmux-mux claude <subcommand> Claude Code hook integration (see below)
-  cmux-mux antigravity install-hooks  Antigravity CLI hook integration (see below)
-  cmux-mux codex install-hooks        Codex CLI hook integration (see below)
-  cmux-mux pi install-hooks           Pi agent extension integration (see below)
-  cmux-mux aider install-hooks        Aider wrapper integration (see below)
-  cmux-mux ssh <host> [OPTS]   Open a remote workspace over SSH (see below)
+  cmux [OPTIONS]           Start a session (TUI + control socket)
+  cmux attach [OPTIONS]    Attach to an existing session's socket
+  cmux <verb> [OPTIONS]    Run one control-socket command
+  cmux claude <subcommand> Claude Code hook integration (see below)
+  cmux antigravity install-hooks  Antigravity CLI hook integration (see below)
+  cmux codex install-hooks        Codex CLI hook integration (see below)
+  cmux pi install-hooks           Pi agent extension integration (see below)
+  cmux aider install-hooks        Aider wrapper integration (see below)
+  cmux ssh <host> [OPTS]   Open a remote workspace over SSH (see below)
 
 OPTIONS:
   --session <name>   Session name (default: main). Determines the socket path.
@@ -99,51 +99,51 @@ CLI VERBS
   list-agents, browser-reload
 
 CLAUDE CODE HOOK INTEGRATION
-  cmux-mux claude install-hooks [--uninstall]
-      Wires ~/.claude/settings.json's hooks to call `cmux-mux claude hook`
+  cmux claude install-hooks [--uninstall]
+      Wires ~/.claude/settings.json's hooks to call `cmux claude hook`
       on every lifecycle event, merged alongside any hooks already there.
-  cmux-mux claude install-skill [--uninstall] [--global]
+  cmux claude install-skill [--uninstall] [--global]
       Installs the orchestration skill to .claude/skills/cmux-orchestration/SKILL.md
       (or ~/.claude/skills/cmux-orchestration/SKILL.md if --global).
-  cmux-mux claude sessions
+  cmux claude sessions
       Lists recorded Claude Code sessions (session id, cwd, last event).
-  cmux-mux claude resume <session-id>
+  cmux claude resume <session-id>
       Opens a new pane in the recorded cwd and runs `claude --resume`.
-  cmux-mux claude hook
+  cmux claude hook
       Not for interactive use — this is what install-hooks points Claude
       Code's own hook config at.
 
 ANTIGRAVITY CLI INTEGRATION
-  cmux-mux antigravity install-hooks [--uninstall] [--global]
+  cmux antigravity install-hooks [--uninstall] [--global]
       Installs hooks into .agents/hooks.json (or ~/.gemini/config/hooks.json if --global)
-      to automatically report state changes to cmux-mux.
-  cmux-mux antigravity install-skill [--uninstall] [--global]
+      to automatically report state changes to cmux.
+  cmux antigravity install-skill [--uninstall] [--global]
       Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
       (or ~/.gemini/antigravity-cli/skills/cmux-orchestration/SKILL.md if --global).
 
 CODEX CLI INTEGRATION
-  cmux-mux codex install-hooks [--uninstall] [--global]
+  cmux codex install-hooks [--uninstall] [--global]
       Installs hooks into .codex/hooks.json (or ~/.codex/hooks.json if --global) and
-      enables hooks feature in config.toml to report state to cmux-mux.
-  cmux-mux codex install-skill [--uninstall] [--global]
+      enables hooks feature in config.toml to report state to cmux.
+  cmux codex install-skill [--uninstall] [--global]
       Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
       (or ~/.codex/skills/cmux-orchestration/SKILL.md if --global).
 
 PI AGENT INTEGRATION
-  cmux-mux pi install-hooks [--uninstall] [--global]
+  cmux pi install-hooks [--uninstall] [--global]
       Installs TypeScript extensions into .pi/extensions/ (or ~/.pi/agent/extensions/
       if --global) to report state changes.
-  cmux-mux pi install-skill [--uninstall] [--global]
+  cmux pi install-skill [--uninstall] [--global]
       Appends the orchestration skill to .pi/APPEND_SYSTEM.md
       (or ~/.pi/agent/APPEND_SYSTEM.md if --global).
 
 AIDER INTEGRATION
-  cmux-mux aider install-hooks [--uninstall] [--global]
+  cmux aider install-hooks [--uninstall] [--global]
       Creates a wrapper script at .bin/aider (or ~/.local/bin/aider if --global)
       that wraps the real aider binary to report working/done state.
 
 REMOTE (SSH) WORKSPACES
-  cmux-mux ssh <host> [--name <workspace-name>] [--session <mux-session>]
+  cmux ssh <host> [--name <workspace-name>] [--session <mux-session>]
       Opens a workspace whose tab is a shell on <host> instead of local.
       Builds and caches a cmuxd-remote binary for the remote's OS/arch
       the first time (needs Go on PATH), uploads it, and starts it in
@@ -227,7 +227,7 @@ fn main() {
     let args = parse_args(raw_args);
     let result = if args.attach { run_attach(args) } else { run_server(args) };
     if let Err(e) = result {
-        eprintln!("cmux-mux: {e}");
+        eprintln!("cmux: {e}");
         std::process::exit(1);
     }
 }
@@ -279,14 +279,14 @@ fn run_tui(session: Session, session_label: String) -> anyhow::Result<()> {
     let color_result = session.set_default_colors(colors);
     let raw_result = crossterm::terminal::disable_raw_mode();
     if let Err(err) = color_result {
-        eprintln!("cmux-mux: failed to set default colors: {err}");
+        eprintln!("cmux: failed to set default colors: {err}");
     }
     raw_result?;
     app::run(session, session_label)
 }
 
 fn run_headless(mux: &Arc<Mux>, socket_path: &std::path::Path) -> anyhow::Result<()> {
-    eprintln!("cmux-mux: headless, control socket at {}", socket_path.display());
+    eprintln!("cmux: headless, control socket at {}", socket_path.display());
     // Keep the process alive; the control socket drives everything and
     // the mux reaps exited surfaces itself.
     let events = mux.subscribe();
@@ -305,6 +305,6 @@ fn run_headless(mux: &Arc<Mux>, socket_path: &std::path::Path) -> anyhow::Result
 }
 
 fn usage_exit(msg: &str) -> ! {
-    eprintln!("cmux-mux: {msg}\n\n{USAGE}");
+    eprintln!("cmux: {msg}\n\n{USAGE}");
     std::process::exit(2);
 }

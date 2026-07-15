@@ -62,7 +62,7 @@ enum LayoutSnapshot {
 /// restore happens inside `mux-core`, with no Go toolchain access of its
 /// own, so reusing the same cached path is the only option; if that file
 /// is gone or stale, `open_remote_pty`'s upload step fails cleanly and
-/// the user reconnects manually via `cmux-mux ssh <host>`.
+/// the user reconnects manually via `cmux ssh <host>`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RemoteTabSnapshot {
     host: String,

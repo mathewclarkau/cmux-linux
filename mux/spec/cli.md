@@ -1,6 +1,6 @@
 # CLI Surface
 
-The generated CLI is `cmux-mux <verb> ...`. The current checked-in binary also has TUI server modes; this file specifies the future generated command verbs that map 1:1 to `commands.md`.
+The generated CLI is `cmux <verb> ...`. The current checked-in binary also has TUI server modes; this file specifies the future generated command verbs that map 1:1 to `commands.md`.
 
 ## Global Conventions
 
@@ -96,39 +96,39 @@ The generated CLI requires one of `--index` or `--delta` for `select-tab`, `sele
 1. Identify a session:
 
 ```bash
-cmux-mux --session main identify
+cmux --session main identify
 ```
 
 2. Create a workspace and capture the surface id:
 
 ```bash
-surface=$(cmux-mux new-workspace --name build)
+surface=$(cmux new-workspace --name build)
 ```
 
 3. Send text from an argument:
 
 ```bash
-cmux-mux send --surface "$surface" --text "cargo test"$'\r'
+cmux send --surface "$surface" --text "cargo test"$'\r'
 ```
 
 4. Send a script from stdin:
 
 ```bash
-printf 'printf "ready\\n"\r' | cmux-mux send --surface "$surface"
+printf 'printf "ready\\n"\r' | cmux send --surface "$surface"
 ```
 
 5. Wait for a prompt, then send a command:
 
 ```bash
-cmux-mux wait-for --surface "$surface" --pattern 'ready' --timeout-ms 5000
-cmux-mux send --surface "$surface" --text "echo ok"$'\r'
+cmux wait-for --surface "$surface" --pattern 'ready' --timeout-ms 5000
+cmux send --surface "$surface" --text "echo ok"$'\r'
 ```
 
 6. Run a tool in a new tab and poll the screen:
 
 ```bash
-surface=$(cmux-mux run --name server -- python3 -m http.server)
-until cmux-mux read-screen --surface "$surface" | rg -q 'Serving HTTP'; do
+surface=$(cmux run --name server -- python3 -m http.server)
+until cmux read-screen --surface "$surface" | rg -q 'Serving HTTP'; do
   sleep 0.2
 done
 ```
@@ -136,34 +136,34 @@ done
 7. Split a pane and resize the split:
 
 ```bash
-new_surface=$(cmux-mux split --pane 2 --dir right)
-cmux-mux set-ratio --pane 2 --dir right --ratio 0.65
+new_surface=$(cmux split --pane 2 --dir right)
+cmux set-ratio --pane 2 --dir right --ratio 0.65
 ```
 
 8. Subscribe to events and react to bells:
 
 ```bash
-cmux-mux subscribe |
+cmux subscribe |
   jq -rc 'select(.event == "bell") | .surface' |
   while read -r surface; do
-    cmux-mux notify --title "Bell" --body "Surface $surface rang" --surface "$surface"
+    cmux notify --title "Bell" --body "Surface $surface rang" --surface "$surface"
   done
 ```
 
 9. Watch agent states from a shell script:
 
 ```bash
-cmux-mux subscribe |
+cmux subscribe |
   jq -rc 'select(.event == "agent-state-changed") | select(.state == "blocked")' |
   while read -r event; do
     surface=$(jq -r '.surface' <<<"$event")
-    cmux-mux notify --title "Agent blocked" --body "Surface $surface needs attention" --level warning --surface "$surface"
+    cmux notify --title "Agent blocked" --body "Surface $surface needs attention" --level warning --surface "$surface"
   done
 ```
 
 10. Use short ids when protocol v6 is available:
 
 ```bash
-sid=$(cmux-mux ids --kind surface | awk 'NR == 1 {print $3}')
-cmux-mux send-key --surface "$sid" enter
+sid=$(cmux ids --kind surface | awk 'NR == 1 {print $3}')
+cmux send-key --surface "$sid" enter
 ```

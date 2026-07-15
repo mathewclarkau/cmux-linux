@@ -36,13 +36,13 @@ jobs:
       - name: Package binary
         run: |
           mkdir -p dist
-          cp mux/target/release/cmux-mux "dist/cmux-mux-linux-${{ matrix.arch }}"
-          chmod +x "dist/cmux-mux-linux-${{ matrix.arch }}"
+          cp mux/target/release/cmux "dist/cmux-linux-${{ matrix.arch }}"
+          chmod +x "dist/cmux-linux-${{ matrix.arch }}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cmux-mux-linux-${{ matrix.arch }}
-          path: dist/cmux-mux-linux-${{ matrix.arch }}
+          name: cmux-linux-${{ matrix.arch }}
+          path: dist/cmux-linux-${{ matrix.arch }}
 
   release:
     needs: build

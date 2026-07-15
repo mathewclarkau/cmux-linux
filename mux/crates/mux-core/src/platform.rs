@@ -1,4 +1,4 @@
-//! Platform decisions for cmux-mux.
+//! Platform decisions for cmux.
 
 use std::path::{Path, PathBuf};
 
@@ -110,6 +110,14 @@ pub mod transport {
 }
 
 /// Runtime socket/pidfile directory for the current user.
+///
+/// Kept as `cmux-mux-<uid>` (not renamed to match the `cmux` binary) so an
+/// already-running daemon's socket path doesn't move out from under any
+/// client that computes it independently. Same reasoning applies to every
+/// other path literal below (session snapshots, chrome-profile dirs) and to
+/// `claude_hook.rs`'s `claude-sessions.json` path and `remote_pty.rs`'s
+/// remote-side cache path — these are on-disk paths with existing data,
+/// not CLI-visible text, so the binary rename doesn't touch them.
 pub fn runtime_dir() -> PathBuf {
     runtime_base_dir().join(format!("cmux-mux-{}", user_id_component()))
 }

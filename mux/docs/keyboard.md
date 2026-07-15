@@ -2,7 +2,7 @@
 
 ## Prefix Model
 
-`cmux-mux` uses a tmux-style prefix. The default prefix is `Ctrl-b`. After the prefix, the next key is interpreted as a mux command. Pressing the prefix twice sends a literal `Ctrl-b` to the active surface.
+`cmux` uses a tmux-style prefix. The default prefix is `Ctrl-b`. After the prefix, the next key is interpreted as a mux command. Pressing the prefix twice sends a literal `Ctrl-b` to the active surface.
 
 Unknown prefixed keys are swallowed. Unprefixed non-Alt keys go to the active surface. Alt chords that are bound in the key table are modeless commands by default.
 

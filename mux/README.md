@@ -1,6 +1,6 @@
-# cmux-mux
+# cmux
 
-`cmux-mux` is the Rust TUI multiplexer in this repository. It keeps a tmux-style tree of workspaces, screens, split panes, and tabs, uses Ghostty's VT engine for PTY state, and exposes the same state over a JSON-lines control socket for attach clients and other frontends.
+`cmux` is the Rust TUI multiplexer in this repository. It keeps a tmux-style tree of workspaces, screens, split panes, and tabs, uses Ghostty's VT engine for PTY state, and exposes the same state over a JSON-lines control socket for attach clients and other frontends.
 
 ## Documentation
 
@@ -32,7 +32,7 @@ cargo run -p mux-tui -- --headless --session agents
 cargo run -p mux-tui -- attach --session agents
 ```
 
-The default session is `main`. Default sockets live at `$TMPDIR/cmux-mux-<uid>/<session>.sock`; use `--socket <path>` for an explicit path. Detach from an attached TUI with prefix `d`, which is `Ctrl-b d` by default.
+The default session is `main`. Default sockets live at `$TMPDIR/cmux-<uid>/<session>.sock`; use `--socket <path>` for an explicit path. Detach from an attached TUI with prefix `d`, which is `Ctrl-b d` by default.
 
 Use `--term <value>` to set `TERM` for child PTYs. Without it, children get `xterm-256color`; `CMUX_MUX_TERM` can override the process default in the surface layer.
 
@@ -43,7 +43,7 @@ cd mux
 cargo test
 ```
 
-The smoke scripts expect a built `cmux-mux` binary unless `CMUX_MUX_BIN` is set.
+The smoke scripts expect a built `cmux` binary unless `CMUX_MUX_BIN` is set.
 
 ```bash
 cd mux

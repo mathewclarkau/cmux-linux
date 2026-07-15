@@ -1,6 +1,6 @@
-//! `cmux-mux claude ...` — Claude Code hook integration.
+//! `cmux claude ...` — Claude Code hook integration.
 //!
-//! `install-hooks` points Claude Code's own hook config at `cmux-mux claude
+//! `install-hooks` points Claude Code's own hook config at `cmux claude
 //! hook`. Claude invokes that on every lifecycle event with a JSON payload
 //! on stdin; `hook` reports agent state over the pane's own control socket
 //! (found via `$CMUX_MUX_SOCKET`/`$CMUX_MUX_SURFACE`, set on every pty
@@ -34,7 +34,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("resume") => run_resume(args.get(1).map(String::as_str)),
         _ => {
             eprintln!(
-                "cmux-mux: usage: cmux-mux claude <hook|install-hooks [--uninstall]|install-skill [--uninstall] [--global]|sessions|resume [session-id]>"
+                "cmux: usage: cmux claude <hook|install-hooks [--uninstall]|install-skill [--uninstall] [--global]|sessions|resume [session-id]>"
             );
             2
         }
@@ -56,7 +56,7 @@ fn run_hook() -> i32 {
     let payload: HookPayload = match serde_json::from_str(&input) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("cmux-mux: malformed hook payload from stdin: {e}");
+            eprintln!("cmux: malformed hook payload from stdin: {e}");
             return 1;
         }
     };
@@ -189,7 +189,7 @@ fn with_locked_store<T>(f: impl FnOnce(&mut Vec<SessionRecord>) -> T) -> Option<
             Ok(v) => v,
             Err(e) => {
                 eprintln!(
-                    "cmux-mux: {} is not valid JSON ({e}); leaving it untouched",
+                    "cmux: {} is not valid JSON ({e}); leaving it untouched",
                     path.display()
                 );
                 unsafe {
@@ -256,7 +256,7 @@ fn run_sessions() -> i32 {
 fn run_resume(session_id: Option<&str>) -> i32 {
     let records = load_sessions();
     let Some(session_id) = session_id else {
-        eprintln!("cmux-mux: usage: cmux-mux claude resume <session-id>");
+        eprintln!("cmux: usage: cmux claude resume <session-id>");
         if !records.is_empty() {
             eprintln!("recorded sessions:");
             for record in &records {
@@ -266,7 +266,7 @@ fn run_resume(session_id: Option<&str>) -> i32 {
         return 2;
     };
     let Some(record) = records.iter().find(|r| r.session_id.starts_with(session_id)) else {
-        eprintln!("cmux-mux: no recorded session matching {session_id:?}");
+        eprintln!("cmux: no recorded session matching {session_id:?}");
         return 1;
     };
 
@@ -275,18 +275,18 @@ fn run_resume(session_id: Option<&str>) -> i32 {
         new_tab_params["cwd"] = json!(cwd);
     }
     let Some(data) = send_request("new-tab", new_tab_params) else {
-        eprintln!("cmux-mux: failed to create a pane (is a session running?)");
+        eprintln!("cmux: failed to create a pane (is a session running?)");
         return 1;
     };
     let Some(surface) = data.get("surface").and_then(Value::as_u64) else {
-        eprintln!("cmux-mux: new-tab did not return a surface id");
+        eprintln!("cmux: new-tab did not return a surface id");
         return 1;
     };
 
     let resume_command = format!("claude --resume {}\n", record.session_id);
     let send_params = json!({ "surface": surface, "text": resume_command });
     if send_request("send", send_params).is_none() {
-        eprintln!("cmux-mux: created pane {surface} but failed to launch claude --resume");
+        eprintln!("cmux: created pane {surface} but failed to launch claude --resume");
         return 1;
     }
     println!("{surface}");
@@ -318,20 +318,20 @@ fn claude_settings_path() -> Option<PathBuf> {
 fn hook_command() -> String {
     let bin = std::env::current_exe()
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "cmux-mux".to_string());
+        .unwrap_or_else(|_| "cmux".to_string());
     format!("{bin} claude hook")
 }
 
 fn run_install_hooks(uninstall: bool) -> i32 {
     let Some(path) = claude_settings_path() else {
-        eprintln!("cmux-mux: could not resolve $HOME to find ~/.claude/settings.json");
+        eprintln!("cmux: could not resolve $HOME to find ~/.claude/settings.json");
         return 1;
     };
     let mut settings: Value = if path.exists() {
         match std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()) {
             Some(value) => value,
             None => {
-                eprintln!("cmux-mux: {} exists but is not valid JSON; not touching it", path.display());
+                eprintln!("cmux: {} exists but is not valid JSON; not touching it", path.display());
                 return 1;
             }
         }
@@ -339,17 +339,27 @@ fn run_install_hooks(uninstall: bool) -> i32 {
         json!({})
     };
     if !settings.is_object() {
-        eprintln!("cmux-mux: {} does not contain a JSON object at the top level", path.display());
+        eprintln!("cmux: {} does not contain a JSON object at the top level", path.display());
         return 1;
     }
 
     let command = hook_command();
     let hooks = settings.as_object_mut().unwrap().entry("hooks").or_insert_with(|| json!({}));
     if !hooks.is_object() {
-        eprintln!("cmux-mux: {}'s \"hooks\" key is not an object; not touching it", path.display());
+        eprintln!("cmux: {}'s \"hooks\" key is not an object; not touching it", path.display());
         return 1;
     }
     let hooks = hooks.as_object_mut().unwrap();
+
+    // Match by this suffix, not the full `command` string, so a rebuilt or
+    // renamed binary (different absolute path, same `claude hook` verb)
+    // still recognizes and replaces its own previously-installed entry
+    // instead of accumulating a duplicate that points at a since-deleted
+    // path. `antigravity_hook.rs`/`codex_hook.rs`/`pi_hook.rs` already use
+    // an equivalent substring match (`contains("cmux report-agent")`) for
+    // the same reason.
+    const HOOK_MARKER: &str = "claude hook";
+    let is_our_hook = |cmd: &str| cmd.ends_with(HOOK_MARKER);
 
     for event in HOOK_EVENTS {
         if uninstall {
@@ -360,7 +370,9 @@ fn run_install_hooks(uninstall: bool) -> i32 {
             };
             for group in entries.iter_mut() {
                 if let Some(list) = group.get_mut("hooks").and_then(Value::as_array_mut) {
-                    list.retain(|h| h.get("command").and_then(Value::as_str) != Some(&command));
+                    list.retain(|h| {
+                        !h.get("command").and_then(Value::as_str).is_some_and(is_our_hook)
+                    });
                 }
             }
             entries.retain(|group| {
@@ -373,37 +385,41 @@ fn run_install_hooks(uninstall: bool) -> i32 {
             let entries = hooks.entry(event.to_string()).or_insert_with(|| json!([]));
             let Some(entries) = entries.as_array_mut() else {
                 eprintln!(
-                    "cmux-mux: {}'s hooks.{event} is not an array; leaving it alone",
+                    "cmux: {}'s hooks.{event} is not an array; leaving it alone",
                     path.display()
                 );
                 continue;
             };
-            let already_installed = entries.iter().any(|group| {
-                group
-                    .get("hooks")
-                    .and_then(Value::as_array)
-                    .is_some_and(|list| {
-                        list.iter().any(|h| h.get("command").and_then(Value::as_str) == Some(&command))
-                    })
-            });
-            if !already_installed {
-                entries.push(json!({ "hooks": [{ "type": "command", "command": command }] }));
+            // Drop any prior installation of this hook (however it got its
+            // absolute path) before adding the current one, so re-running
+            // install-hooks after a rebuild/rename replaces in place instead
+            // of accumulating a stale, now-broken duplicate.
+            for group in entries.iter_mut() {
+                if let Some(list) = group.get_mut("hooks").and_then(Value::as_array_mut) {
+                    list.retain(|h| {
+                        !h.get("command").and_then(Value::as_str).is_some_and(is_our_hook)
+                    });
+                }
             }
+            entries.retain(|group| {
+                group.get("hooks").and_then(Value::as_array).map_or(true, |list| !list.is_empty())
+            });
+            entries.push(json!({ "hooks": [{ "type": "command", "command": command }] }));
         }
     }
 
     if let Some(dir) = path.parent() {
         if let Err(err) = std::fs::create_dir_all(dir) {
-            eprintln!("cmux-mux: failed to create {}: {err}", dir.display());
+            eprintln!("cmux: failed to create {}: {err}", dir.display());
             return 1;
         }
     }
     let Ok(pretty) = serde_json::to_string_pretty(&settings) else {
-        eprintln!("cmux-mux: failed to serialize {}", path.display());
+        eprintln!("cmux: failed to serialize {}", path.display());
         return 1;
     };
     if let Err(err) = std::fs::write(&path, pretty + "\n") {
-        eprintln!("cmux-mux: failed to write {}: {err}", path.display());
+        eprintln!("cmux: failed to write {}: {err}", path.display());
         return 1;
     }
 
@@ -569,6 +585,45 @@ mod tests {
         assert!(
             settings["hooks"].get("Notification").is_none(),
             "events left with no hooks after uninstall should be pruned, not left as []"
+        );
+
+        std::env::remove_var("HOME");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_hooks_replaces_a_stale_entry_from_a_different_binary_path() {
+        // Regression test: reinstalling after the binary moved/was renamed
+        // (a different absolute path, same `claude hook` command) must
+        // replace the stale entry, not add a second one alongside it - this
+        // is exactly what happened live when cmux-mux was renamed to cmux
+        // and the old absolute path stopped existing.
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = temp_state_dir("install-stale-path");
+        let claude_dir = dir.join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/old/deleted/path/cmux-mux claude hook"}]}]}}"#,
+        )
+        .unwrap();
+        std::env::set_var("HOME", &dir);
+
+        assert_eq!(run_install_hooks(false), 0);
+
+        let settings: Value =
+            serde_json::from_str(&std::fs::read_to_string(claude_dir.join("settings.json")).unwrap())
+                .unwrap();
+        let stop_entries = settings["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(
+            stop_entries.len(),
+            1,
+            "the stale entry must be replaced in place, not left alongside a new one"
+        );
+        let command = stop_entries[0]["hooks"][0]["command"].as_str().unwrap();
+        assert!(
+            !command.contains("/old/deleted/path/"),
+            "the surviving command must be the current binary's path, not the stale one: {command}"
         );
 
         std::env::remove_var("HOME");

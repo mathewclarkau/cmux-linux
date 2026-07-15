@@ -298,7 +298,7 @@ impl Mux {
                 // listening, so no subscriber could possibly see this
                 // Status event live - eprintln! is the only way a headless
                 // daemon's restore failures are visible anywhere.
-                eprintln!("cmux-mux: {message}");
+                eprintln!("cmux: {message}");
                 self.emit(MuxEvent::Status(message));
             }
         }
