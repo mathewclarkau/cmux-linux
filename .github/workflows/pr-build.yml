@@ -32,20 +32,28 @@ jobs:
           submodules: recursive
 
       - name: Install build dependencies
-        # ports.ubuntu.com (the arm64 mirror) is flaky enough on GitHub's
-        # ARM runners to warrant a retry loop, not just a single attempt -
-        # seen live: consecutive "Network is unreachable" failures on this
-        # exact step, on two separate CI runs.
+        # ports.ubuntu.com (the arm64 mirror) has been fully unreachable
+        # from GitHub's ARM runners (every IPv4/IPv6 address, every
+        # retry) across multiple separate CI runs - not a one-off blip,
+        # so retrying against the same mirror doesn't help. Falls back to
+        # apt.llvm.org (LLVM's own repo, different infra/CDN entirely)
+        # after a couple of quick attempts against the default mirror.
+        # bindgen only needs libclang.so discoverable + a resource-dir
+        # (see ghostty-vt-sys/build.rs) - a versioned clang-18/
+        # libclang-18-dev from apt.llvm.org satisfies that exactly like
+        # the unversioned Ubuntu packages do.
         run: |
-          for i in 1 2 3 4 5; do
+          for i in 1 2; do
             if sudo apt-get update && sudo apt-get install -y clang libclang-dev; then
               exit 0
             fi
-            echo "attempt $i failed, retrying in 15s..." >&2
-            sleep 15
+            echo "attempt $i against the default mirror failed, retrying in 10s..." >&2
+            sleep 10
           done
-          echo "all 5 attempts failed" >&2
-          exit 1
+          echo "default mirror unreachable after 2 attempts; falling back to apt.llvm.org" >&2
+          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 18
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.75.0
