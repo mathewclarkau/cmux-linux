@@ -13,6 +13,7 @@ mod antigravity_hook;
 mod codex_hook;
 mod pi_hook;
 mod aider_hook;
+mod grok_hook;
 mod hook_merge;
 mod cli;
 mod config;
@@ -62,6 +63,7 @@ USAGE:
   cmux codex install-hooks        Codex CLI hook integration (see below)
   cmux pi install-hooks           Pi agent extension integration (see below)
   cmux aider install-hooks        Aider wrapper integration (see below)
+  cmux grok install-hooks         Grok CLI hook integration (see below)
   cmux ssh <host> [OPTS]   Open a remote workspace over SSH (see below)
 
 OPTIONS:
@@ -142,6 +144,14 @@ AIDER INTEGRATION
       Creates a wrapper script at .bin/aider (or ~/.local/bin/aider if --global)
       that wraps the real aider binary to report working/done state.
 
+GROK CLI INTEGRATION
+  cmux grok install-hooks [--uninstall] [--global]
+      Installs hooks into .grok/hooks.json (or ~/.grok/hooks.json if --global)
+      to automatically report state changes to cmux.
+  cmux grok install-skill [--uninstall] [--global]
+      Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
+      (or ~/.grok/skills/cmux-orchestration/SKILL.md if --global).
+
 REMOTE (SSH) WORKSPACES
   cmux ssh <host> [--name <workspace-name>] [--session <mux-session>]
       Opens a workspace whose tab is a shell on <host> instead of local.
@@ -217,6 +227,9 @@ fn main() {
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("aider") {
         std::process::exit(aider_hook::run(&raw_args[1..]));
+    }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("grok") {
+        std::process::exit(grok_hook::run(&raw_args[1..]));
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("ssh") {
         std::process::exit(ssh_bootstrap::run(&raw_args[1..]));

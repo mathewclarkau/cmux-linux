@@ -185,6 +185,13 @@ cmux aider install-hooks --uninstall
 ```
 *Note: For the local wrapper, ensure `.bin/` is prepended to your `$PATH` or call `./.bin/aider` directly.*
 
+#### 6. Grok CLI
+```bash
+cmux grok install-hooks            # installs workspace-level hooks in .grok/hooks.json
+cmux grok install-hooks --global   # installs global hooks in ~/.grok/hooks.json
+cmux grok install-hooks --uninstall
+```
+
 ## Documentation
 
 The full multiplexer docs live in [`mux/docs/`](./mux/docs/) — still accurate here since `mux/` was vendored

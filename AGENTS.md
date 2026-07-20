@@ -33,7 +33,7 @@ cargo build                      # builds everything via the zig-cc shim
 
 ## LLM harness hooks (under `mux/crates/mux-tui/src/`)
 
-The four binary subcommands `antigravity`, `codex`, `pi`, `aider` (and the existing `claude` on main) all install hooks by reading a config file (or writing a wrapper/extension), merging in our entries, and writing it back. They share parsing/writing helpers and a `--uninstall`/`--global` flag pair.
+The binary subcommands `antigravity`, `codex`, `grok`, `pi`, `aider` (and the existing `claude` on main) all install hooks by reading a config file (or writing a wrapper/extension), merging in our entries, and writing it back. They share parsing/writing helpers and a `--uninstall`/`--global` flag pair.
 
 **Editing one of these files?** Consider a refactor PR first — there's substantial duplication across them (load-or-default JSON, write-pretty, `--uninstall`/`--global` parse, the `CMUX-START`/`CMUX-END` block rewriter). A `hook_merge` module with `load_or_default<T>`, `save_pretty<T>`, `parse_flags(&[String]) -> (bool, bool)`, and `replace_marked_block(path, start, end, content)` would collapse ~200 lines of duplication.
 

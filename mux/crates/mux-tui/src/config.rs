@@ -19,7 +19,7 @@
 //!     "min_width": 7,
 //!     "solid_background": true,
 //!     "show_titles": false,
-//!     "agents": ["claude", "codex", "opencode", "pi"]
+//!     "agents": ["claude", "codex", "grok", "opencode", "pi"]
 //!   },
 //!   "sidebar": {
 //!     "width": 22,
@@ -236,7 +236,7 @@ impl Default for Tabs {
             min_width: 7,
             solid_background: true,
             show_titles: false,
-            agents: ["claude", "codex", "opencode", "pi"].map(String::from).to_vec(),
+            agents: ["claude", "codex", "grok", "opencode", "pi"].map(String::from).to_vec(),
         }
     }
 }

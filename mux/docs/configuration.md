@@ -27,7 +27,7 @@ Selection colors are resolved in this order: explicit `mux.json`, Ghostty config
 | `tabs.min_width` | integer | `7` | Minimum tab label width, clamped to 3 through 40 |
 | `tabs.solid_background` | boolean | `true` | Renders tab chips with solid backgrounds |
 | `tabs.show_titles` | boolean | `false` | Shows full process titles after tab numbers |
-| `tabs.agents` | string array | `["claude","codex","opencode","pi"]` | Agent names surfaced in tab labels when `show_titles` is false |
+| `tabs.agents` | string array | `["claude","codex","grok","opencode","pi"]` | Agent names surfaced in tab labels when `show_titles` is false |
 
 Tabs are numbered by default. A recognized agent program can appear after the number. A user-assigned tab name replaces the generated label.
 
@@ -120,7 +120,7 @@ Chord strings can be single characters or a key name with optional `ctrl`, `cont
     "min_width": 9,
     "solid_background": true,
     "show_titles": false,
-    "agents": ["claude", "codex", "opencode", "pi"]
+    "agents": ["claude", "codex", "grok", "opencode", "pi"]
   },
   "sidebar": {
     "width": 24,
