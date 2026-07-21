@@ -46,14 +46,14 @@ Detach from an attached TUI with prefix `d`. With default keys, that is `Ctrl-b 
 The default socket path is:
 
 ```text
-$TMPDIR/cmux-mux-<uid>/<session>.sock
+$TMPDIR/cmux-<uid>/<session>.sock
 ```
 
-The usual default is `$XDG_RUNTIME_DIR/cmux-mux-<uid>/main.sock` when `XDG_RUNTIME_DIR` is set, then `$TMPDIR/cmux-mux-<uid>/main.sock`, then `/tmp/cmux-mux-<uid>/main.sock`. `--session <name>` changes the final file name. `--socket <path>` bypasses the session-derived path. Server-started child processes receive `CMUX_MUX_SOCKET` with the socket path.
+The usual default is `$XDG_RUNTIME_DIR/cmux-<uid>/main.sock` when `XDG_RUNTIME_DIR` is set, then `$TMPDIR/cmux-<uid>/main.sock`, then `/tmp/cmux-<uid>/main.sock`. `--session <name>` changes the final file name. `--socket <path>` bypasses the session-derived path. Server-started child processes receive `CMUX_MUX_SOCKET` with the socket path.
 
 ## Session persistence
 
-Every session (headless or local TUI) writes a snapshot of its workspace/screen/pane layout — split shape and ratios, names, and each tab's cwd — to `$XDG_STATE_HOME/cmux-mux/sessions/<session>.json` (falling back to `~/.local/state/...`), debounced a few hundred ms after each structural change and again on clean shutdown. Starting a session with the same `--session` name again (a real daemon restart, or just restarting the local TUI) replays that snapshot: same panes, same directories. Closing every workspace deletes the file rather than leaving a stale one to resurrect later.
+Every session (headless or local TUI) writes a snapshot of its workspace/screen/pane layout — split shape and ratios, names, and each tab's cwd — to `$XDG_STATE_HOME/cmux/sessions/<session>.json` (falling back to `~/.local/state/...`), debounced a few hundred ms after each structural change and again on clean shutdown. Starting a session with the same `--session` name again (a real daemon restart, or just restarting the local TUI) replays that snapshot: same panes, same directories. Closing every workspace deletes the file rather than leaving a stale one to resurrect later.
 
 Not restored: a tab's *command*. Every restored tab is the default shell, `cd`'d into its recorded directory (visibly, briefly, before a `clear`) — if something specific was running there (a dev server, `claude --resume ...`), you'll need to relaunch it. See `mux-core/src/persist.rs` for why, and `Mux::restore_session`/`Mux::enable_persistence` for the implementation.
 
@@ -89,14 +89,14 @@ Two consequences:
   ordinary local tab on restore, with a status message noting it.
 
 There's no verb to actually end a remote session (only detach it) — a stale one
-needs manual cleanup on the remote host (`rm -rf ~/.cmux/daemon ~/.cache/cmux-mux`
+needs manual cleanup on the remote host (`rm -rf ~/.cmux/daemon ~/.cache/cmux`
 there, or `kill` its `cmuxd-remote serve --persistent-server` process).
 
 ## Platforms and XDG
 
 cmux supports macOS and Linux; Windows support via ConPTY is planned for phase 2. The TUI config path resolves `CMUX_MUX_CONFIG`, then `$XDG_CONFIG_HOME/cmux/mux.json`, then `~/.config/cmux/mux.json`.
 
-Launched Chrome profile paths are platform-specific. On macOS the default is `~/Library/Application Support/cmux-mux/chrome-profile`. On Linux and other non-macOS targets, `XDG_DATA_HOME` is used when set, then `~/.local/share/cmux-mux/chrome-profile`.
+Launched Chrome profile paths are platform-specific. On macOS the default is `~/Library/Application Support/cmux/chrome-profile`. On Linux and other non-macOS targets, `XDG_DATA_HOME` is used when set, then `~/.local/share/cmux/chrome-profile`.
 
 ## Development flow
 

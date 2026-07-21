@@ -249,7 +249,7 @@ fn install_skill_refuses_symlinks() {
     // is a symlink to a temp file with known content. Drop guard removes both.
     let guard = SymlinkSkillFixture::new();
 
-    // Invoke the REAL cmux-mux binary (integration test, not a unit call into
+    // Invoke the REAL cmux binary (integration test, not a unit call into
     // run_install_skill), so AC3's "remove the check and the test fails" holds.
     // `claude` MUST be arg[0] (main.rs dispatches it before --socket parsing),
     // so we cannot use the cli() helper; install-skill never used the socket
@@ -259,7 +259,7 @@ fn install_skill_refuses_symlinks() {
         .current_dir(&guard.project_dir)
         .env_remove("CMUX_MUX_SOCKET")
         .output()
-        .expect("failed to spawn cmux-mux claude install-skill");
+        .expect("failed to spawn cmux claude install-skill");
 
     // Assertion 1 — exit code is non-zero (the refusal path returns 1;
     // claude_hook.rs:474).
@@ -343,7 +343,7 @@ fn trigger_flash_returns_success() {
 
     // 3. Unknown workspace id -> server-side `anyhow::bail!("unknown workspace {workspace}")`
     //    (server.rs line 863), surfaced by `print_response` (cli.rs lines 550–555)
-    //    as exit code 1 and a bare (no `cmux-mux:` prefix) stderr line
+    //    as exit code 1 and a bare (no `cmux:` prefix) stderr line
     //    `unknown workspace 99999`.
     let out = cli(&server, &["trigger-flash", "--workspace", "99999"]);
     assert_eq!(out.status.code(), Some(1), "unknown workspace should fail with exit 1");
@@ -357,7 +357,7 @@ fn trigger_flash_returns_success() {
     // 4. Missing --workspace flag entirely -> client-side usage error from
     //    `build_trigger_flash` (cli.rs lines 696–701) -> `flags.required_u64("workspace")`
     //    (cli.rs lines 798–804) -> `UsageError("--workspace is required")` (line 799),
-    //    which `run_command` prints as `cmux-mux: --workspace is required` (line 408)
+    //    which `run_command` prints as `cmux: --workspace is required` (line 408)
     //    and returns exit code 2. This is the same usage-error contract the
     //    template asserts for `set-workspace-color`'s missing `--colour` case
     //    (lines 377–378: `assert_eq!(missing.status.code(), Some(2));`).
@@ -501,7 +501,7 @@ fn bin() -> &'static str {
 
 /// Fixture for the install-skill symlink-refusal test.
 ///
-/// Owns a temp "project" dir acting as CWD for `cmux-mux claude install-skill`
+/// Owns a temp "project" dir acting as CWD for `cmux claude install-skill`
 /// (whose non-global `skill_path` is `.claude/skills/cmux-orchestration/SKILL.md`,
 /// relative to CWD — see claude_hook.rs:427-432). Inside it we place:
 ///   <project>/.claude/skills/cmux-orchestration/SKILL.md -> <project>/target.txt
@@ -509,7 +509,7 @@ fn bin() -> &'static str {
 /// On drop we remove the symlink, the target file, and the whole project dir,
 /// even if the test panicked — mirroring HeadlessServer::drop (tests/cli.rs:45-52).
 struct SymlinkSkillFixture {
-    /// Temp dir used as `current_dir` for the cmux-mux subprocess.
+    /// Temp dir used as `current_dir` for the cmux subprocess.
     project_dir: PathBuf,
     /// Absolute path of the symlink itself (the path install-skill targets).
     symlink_path: PathBuf,

@@ -53,7 +53,7 @@ Live sidebar dragging also leaves at least 40 columns for pane content.
 
 When `browser.ephemeral` is true, it takes precedence over `browser.user_data_dir`: launched Chrome uses a fresh temporary profile, and the configured directory is not deleted.
 
-The default launched profile is `~/Library/Application Support/cmux-mux/chrome-profile` on macOS. On non-macOS targets it is `$XDG_DATA_HOME/cmux-mux/chrome-profile` when `XDG_DATA_HOME` is set, then `~/.local/share/cmux-mux/chrome-profile`.
+The default launched profile is `~/Library/Application Support/cmux/chrome-profile` on macOS. On non-macOS targets it is `$XDG_DATA_HOME/cmux/chrome-profile` when `XDG_DATA_HOME` is set, then `~/.local/share/cmux/chrome-profile`.
 
 ## Scrollbar
 
@@ -131,7 +131,7 @@ Chord strings can be single characters or a key name with optional `ctrl`, `cont
     "cdp_url": "http://127.0.0.1:9222",
     "discover": true,
     "discover_ports": [9222, 9223],
-    "user_data_dir": "/Users/me/Library/Application Support/cmux-mux/chrome-profile",
+    "user_data_dir": "/Users/me/Library/Application Support/cmux/chrome-profile",
     "ephemeral": false
   },
   "scrollbar": {

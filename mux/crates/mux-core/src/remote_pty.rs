@@ -24,7 +24,7 @@
 //! is that closing it locally doesn't kill the remote session), and
 //! `pty.close` (actually kills it — not currently exposed by any verb; a
 //! stale remote session needs manual cleanup, e.g. deleting
-//! `~/.cache/cmux-mux/cmuxd-remote` and `~/.cmux/daemon/` on the remote).
+//! `~/.cache/cmux/cmuxd-remote` and `~/.cmux/daemon/` on the remote).
 //!
 //! `cmuxd-remote serve --stdio --persistent --slot <slot>` is what makes
 //! the remote shell outlive both an SSH disconnect and this local process
@@ -63,7 +63,7 @@ pub struct RemoteSpec {
     pub session_id: String,
     /// Local path to a `cmuxd-remote` binary built for the *remote*
     /// host's OS/arch. Uploaded (once, hash-checked) to
-    /// `~/.cache/cmux-mux/cmuxd-remote` on the remote if missing or
+    /// `~/.cache/cmux/cmuxd-remote` on the remote if missing or
     /// stale. Building this is deliberately not this module's job — it
     /// needs a Go toolchain and knowledge of where the vendored source
     /// lives, both of which belong to the frontend, not this library.
@@ -71,7 +71,7 @@ pub struct RemoteSpec {
 }
 
 pub fn generate_session_id() -> String {
-    format!("cmux-mux-{}", random_token())
+    format!("cmux-{}", random_token())
 }
 
 fn random_token() -> String {
@@ -110,9 +110,9 @@ pub fn open_remote_pty(spec: &RemoteSpec, size: PtySize) -> anyhow::Result<PtyPa
 /// unquoted, and every use of this path in an exec'd command string goes
 /// through [`shell_quote`] for safety against paths/slots with spaces or
 /// quotes, which would otherwise silently defeat tilde expansion.
-const REMOTE_BIN_PATH: &str = ".cache/cmux-mux/cmuxd-remote";
+const REMOTE_BIN_PATH: &str = ".cache/cmux/cmuxd-remote";
 
-/// Uploads `local_binary_path` to `$HOME/.cache/cmux-mux/cmuxd-remote` on
+/// Uploads `local_binary_path` to `$HOME/.cache/cmux/cmuxd-remote` on
 /// `host` unless a copy with the same SHA-256 is already there. Returns
 /// the remote path (relative to `$HOME`).
 fn ensure_uploaded(host: &str, local_binary_path: &std::path::Path) -> anyhow::Result<String> {

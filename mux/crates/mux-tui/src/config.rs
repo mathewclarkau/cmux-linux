@@ -30,7 +30,7 @@
 //!     "cdp_url": "http://127.0.0.1:9222",
 //!     "discover": false,
 //!     "discover_ports": [9222],
-//!     "user_data_dir": "/Users/me/Library/Application Support/cmux-mux/chrome-profile",
+//!     "user_data_dir": "/Users/me/Library/Application Support/cmux/chrome-profile",
 //!     "ephemeral": false,
 //!     "max_capture_megapixels": 2.0,
 //!     "capture_scale": null

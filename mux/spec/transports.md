@@ -14,10 +14,10 @@ The command schema is transport-independent. Protocol v5 implements a Unix domai
 The default socket path for a session is:
 
 ```text
-$TMPDIR/cmux-mux-<uid>/<session>.sock
+$TMPDIR/cmux-<uid>/<session>.sock
 ```
 
-The implementation uses Rust `std::env::temp_dir()` for `$TMPDIR`, appends `cmux-mux-<uid>`, and then appends `<session>.sock`. The TUI exports the resolved path to child surfaces as `CMUX_MUX_SOCKET`.
+The implementation uses Rust `std::env::temp_dir()` for `$TMPDIR`, appends `cmux-<uid>`, and then appends `<session>.sock`. The TUI exports the resolved path to child surfaces as `CMUX_MUX_SOCKET`.
 
 The `cmux` process accepts `--session <name>` to select the default socket name and `--socket <path>` to override the path.
 

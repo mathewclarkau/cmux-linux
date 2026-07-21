@@ -70,7 +70,7 @@ pub enum BrowserInputKind {
 }
 
 /// Reads the desktop clipboard by shelling out to whichever clipboard tool
-/// is available, since cmux-mux (unlike the outer terminal) has no direct
+/// is available, since cmux (unlike the outer terminal) has no direct
 /// clipboard API of its own - it only ever *writes* the clipboard, via
 /// OSC52. Tries Wayland's `wl-paste` first, then X11's `xclip`; returns
 /// `None` (not an error) if neither is installed or the clipboard is
