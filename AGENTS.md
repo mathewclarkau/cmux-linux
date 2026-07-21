@@ -6,18 +6,29 @@ This file is for AI coding agents (Claude Code, Codex, Pi, Aider, Antigravity) *
 
 | Tool | Version | Why |
 |------|---------|-----|
-| **zig** | **0.15.2** | Enforced at compile time by `mux/crates/ghostty-vt-sys/build.zig` via `@compileError`. System zig 0.16.0 (Ubuntu 24.04, current Arch, current Nix `zigPackages.latest`) will fail with "version mismatch" errors. Do **not** `apt install zig` and assume you're done — use `scripts/bootstrap.sh`, which fetches the right zig into `.tools/zig-0.15.2/`. |
-| **rust** | **1.75.0** | The CI-tested version in `release.yml`. Anything newer (Rust 1.82+ `is_none_or`, 1.87+ `is_multiple_of`, 1.88+ `let-chains`, 1.85+ format-capture syntax) will fail to compile if introduced by accident. The CI matrix is intentionally pinned to a stable old release; do not bump without a corresponding toolchain bump PR. |
+| **zig** | **0.15.2** | Enforced at compile time by `mux/crates/ghostty-vt-sys/build.zig` via `@compileError`. **Zig is NOT on the system PATH** — the repo vendors it under `.tools/zig-<arch>-linux-0.15.2/zig` (where `<arch>` is `x86_64` or `aarch64`). System zig 0.16.0 (Ubuntu 24.04, current Arch, current Nix `zigPackages.latest`) will fail with "version mismatch" errors. Do **not** `apt install zig` and assume you're done. Instead: (1) run `scripts/bootstrap.sh` first (it fetches the right zig into `.tools/`), then (2) export `ZIG=$REPO/.tools/zig-$(uname -m | sed 's/x86_64/x86_64/;s/aarch64/aarch64/')-linux-0.15.2/zig` before running cargo, OR (3) just run cargo from within `scripts/bootstrap.sh` (which sets `ZIG` for you). The GitHub Actions pr-build.yml workflow does (1)+(2) and is the canonical example. |
+| **rust** | **1.75.0** | The CI-tested version in `release.yml`. Anything newer (Rust 1.82+ `is_none_or`, 1.87+ `is_multiple_of`, 1.88+ `let-chains`, 1.85+ format-capture syntax) will fail to compile if introduced by accident. The CI matrix is intentionally pinned to a stable old release; do not bump without a corresponding toolchain bump PR. Use `dtolnay/rust-toolchain@1.75.0` (or `rustup toolchain install 1.75.0 && cargo +1.75.0 …`). |
 | **bindgen** | **0.70.1** | Pinned in `mux/crates/ghostty-vt-sys/Cargo.toml` and `mux/Cargo.lock`. 0.71+ requires bindgen APIs not available in Rust 1.75. Do not bump for a security advisory without re-verifying 1.75 builds clean. |
 
 ## First build
 
 ```bash
-./scripts/bootstrap.sh           # fetches zig 0.15.2, ensures rust 1.75.0
-cargo build                      # builds everything via the zig-cc shim
+# Option A: all-in-one (recommended) — bootstrap.sh does rust + zig + cargo build
+./scripts/bootstrap.sh
+# → sets ZIG=$REPO/.tools/zig-<arch>-linux-0.15.2/zig and runs `cargo build --release -p mux-tui`
+
+# Option B: two-step — bootstrap.sh downloads zig, then you run cargo with ZIG exported
+./scripts/bootstrap.sh
+export ZIG="$PWD/.tools/zig-$(uname -m | sed 's/x86_64/x86_64/;s/aarch64/aarch64/')-linux-0.15.2/zig"
+cd mux && cargo build                       # build.rs reads $ZIG
+
+# Option C: just cargo (assumes someone else exported ZIG)
+cd mux && cargo build                       # build.rs falls back to `zig` (PATH) — DO NOT rely on this on a fresh system
 ```
 
 `bootstrap.sh` is idempotent; re-run any time you blow away `.tools/`.
+
+**If `cargo build` fails with "version mismatch" on the zig @compileError**: you forgot to export `ZIG`. The build.rs falls back to `zig` on PATH, which on most systems is 0.16.x and rejected.
 
 ## Build / build.rs gotchas
 
