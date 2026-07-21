@@ -45,7 +45,7 @@ Browser panes share one browser runtime per mux session. Closing a browser tab c
 
 Launched Chrome uses a persistent cmux profile unless `browser.ephemeral` is true. `browser.user_data_dir` overrides the persistent profile path. When ephemeral mode is true, Chrome uses a temporary profile that is deleted on shutdown and ignores `browser.user_data_dir`.
 
-The default launched profile is `~/Library/Application Support/cmux-mux/chrome-profile` on macOS. On non-macOS targets it is `$XDG_DATA_HOME/cmux-mux/chrome-profile` when `XDG_DATA_HOME` is set, then `~/.local/share/cmux-mux/chrome-profile`.
+The default launched profile is `~/Library/Application Support/cmux/chrome-profile` on macOS. On non-macOS targets it is `$XDG_DATA_HOME/cmux/chrome-profile` when `XDG_DATA_HOME` is set, then `~/.local/share/cmux/chrome-profile`.
 
 ## Limitations
 

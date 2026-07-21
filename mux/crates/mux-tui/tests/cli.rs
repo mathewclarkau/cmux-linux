@@ -249,7 +249,7 @@ fn install_skill_refuses_symlinks() {
     // is a symlink to a temp file with known content. Drop guard removes both.
     let guard = SymlinkSkillFixture::new();
 
-    // Invoke the REAL cmux-mux binary (integration test, not a unit call into
+    // Invoke the REAL cmux binary (integration test, not a unit call into
     // run_install_skill), so AC3's "remove the check and the test fails" holds.
     // `claude` MUST be arg[0] (main.rs dispatches it before --socket parsing),
     // so we cannot use the cli() helper; install-skill never used the socket
@@ -259,7 +259,7 @@ fn install_skill_refuses_symlinks() {
         .current_dir(&guard.project_dir)
         .env_remove("CMUX_MUX_SOCKET")
         .output()
-        .expect("failed to spawn cmux-mux claude install-skill");
+        .expect("failed to spawn cmux claude install-skill");
 
     // Assertion 1 — exit code is non-zero (the refusal path returns 1;
     // claude_hook.rs:474).
@@ -289,6 +289,72 @@ fn install_skill_refuses_symlinks() {
     // Assertion 2 — the symlink target file is byte-for-byte unchanged,
     // proving the refusal happened *before* fs::write (which would otherwise
     // follow the symlink and clobber the target — the exact attack vector).
+    let read_back = fs::read(&guard.target_path)
+        .expect("symlink target file must still exist after refusal");
+    assert_eq!(
+        read_back,
+        guard.original_content.as_bytes(),
+        "refusal must not have written through the symlink to its target"
+    );
+
+    // guard goes out of scope here: Drop removes the symlink, the target
+    // file, and the temp project dir — even if any assertion above panicked.
+}
+
+// Regression test for the symlink_metadata guard added to
+// grok_hook::run_install_skill (PR #24 follow-up). Sibling to the Claude
+// test above (PR #18 / issue #10) — the grok non-global skill path is
+// `.agents/skills/cmux-orchestration/SKILL.md` (see grok_hook.rs:147-149),
+// so the fixture is built with `top = ".agents"`. Exercises the same
+// attack vector on the new grok install path: an attacker-placed symlink
+// must NOT silently redirect fs::write at the target file.
+#[test]
+fn install_skill_refuses_symlinks_grok() {
+    // AC1 setup: a temp project dir whose .agents/skills/cmux-orchestration/SKILL.md
+    // is a symlink to a temp file with known content. Drop guard removes both.
+    let guard = SymlinkSkillFixture::new_for(".agents", "install-skill-symlink-grok");
+
+    // Invoke the REAL cmux binary (integration test, not a unit call into
+    // run_install_skill), so removing the check makes this test fail.
+    // `grok` MUST be arg[0] (main.rs dispatches it before --socket parsing);
+    // install-skill never uses the socket anyway. current_dir pins
+    // skill_path(false)'s CWD-relative target.
+    let output = Command::new(bin())
+        .args(["grok", "install-skill"])
+        .current_dir(&guard.project_dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .expect("failed to spawn cmux grok install-skill");
+
+    // Assertion 1 — exit code is non-zero (the refusal path returns 1;
+    // grok_hook.rs::run_install_skill install branch).
+    assert!(
+        !output.status.success(),
+        "grok install-skill must refuse a symlink target, got status {:?}\n\
+         stdout:\n{}\n\
+         stderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // Assertion 2 — combined stdout+stderr mentions "symlink"
+    // (case-insensitive), so the user learns *why* it failed
+    // (the eprintln in grok_hook::run_install_skill).
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        combined.to_lowercase().contains("symlink"),
+        "error output must mention \"symlink\", got: {combined:?}"
+    );
+
+    // Assertion 3 — the symlink target file is byte-for-byte unchanged,
+    // proving the refusal happened *before* fs::write (which would
+    // otherwise follow the symlink and clobber the target — the exact
+    // attack vector).
     let read_back = fs::read(&guard.target_path)
         .expect("symlink target file must still exist after refusal");
     assert_eq!(
@@ -343,7 +409,7 @@ fn trigger_flash_returns_success() {
 
     // 3. Unknown workspace id -> server-side `anyhow::bail!("unknown workspace {workspace}")`
     //    (server.rs line 863), surfaced by `print_response` (cli.rs lines 550–555)
-    //    as exit code 1 and a bare (no `cmux-mux:` prefix) stderr line
+    //    as exit code 1 and a bare (no `cmux:` prefix) stderr line
     //    `unknown workspace 99999`.
     let out = cli(&server, &["trigger-flash", "--workspace", "99999"]);
     assert_eq!(out.status.code(), Some(1), "unknown workspace should fail with exit 1");
@@ -357,7 +423,7 @@ fn trigger_flash_returns_success() {
     // 4. Missing --workspace flag entirely -> client-side usage error from
     //    `build_trigger_flash` (cli.rs lines 696–701) -> `flags.required_u64("workspace")`
     //    (cli.rs lines 798–804) -> `UsageError("--workspace is required")` (line 799),
-    //    which `run_command` prints as `cmux-mux: --workspace is required` (line 408)
+    //    which `run_command` prints as `cmux: --workspace is required` (line 408)
     //    and returns exit code 2. This is the same usage-error contract the
     //    template asserts for `set-workspace-color`'s missing `--colour` case
     //    (lines 377–378: `assert_eq!(missing.status.code(), Some(2));`).
@@ -501,7 +567,7 @@ fn bin() -> &'static str {
 
 /// Fixture for the install-skill symlink-refusal test.
 ///
-/// Owns a temp "project" dir acting as CWD for `cmux-mux claude install-skill`
+/// Owns a temp "project" dir acting as CWD for `cmux claude install-skill`
 /// (whose non-global `skill_path` is `.claude/skills/cmux-orchestration/SKILL.md`,
 /// relative to CWD — see claude_hook.rs:427-432). Inside it we place:
 ///   <project>/.claude/skills/cmux-orchestration/SKILL.md -> <project>/target.txt
@@ -509,7 +575,7 @@ fn bin() -> &'static str {
 /// On drop we remove the symlink, the target file, and the whole project dir,
 /// even if the test panicked — mirroring HeadlessServer::drop (tests/cli.rs:45-52).
 struct SymlinkSkillFixture {
-    /// Temp dir used as `current_dir` for the cmux-mux subprocess.
+    /// Temp dir used as `current_dir` for the cmux subprocess.
     project_dir: PathBuf,
     /// Absolute path of the symlink itself (the path install-skill targets).
     symlink_path: PathBuf,
@@ -521,21 +587,31 @@ struct SymlinkSkillFixture {
 }
 
 impl SymlinkSkillFixture {
+    /// Default fixture for the Claude install-skill path (`.claude/...`).
     fn new() -> Self {
+        Self::new_for(".claude", "install-skill-symlink")
+    }
+
+    /// Build a fixture for an install-skill variant whose non-global path is
+    /// `<top>/skills/cmux-orchestration/SKILL.md` relative to CWD (e.g.
+    /// `.claude` for claude, `.agents` for grok — see grok_hook.rs:147-149).
+    /// `tag` keeps the temp dir name unique per variant so parallel test
+    /// runs never collide.
+    fn new_for(top: &str, tag: &str) -> Self {
         const KNOWN_CONTENT: &str =
             "#!/bin/sh\necho this is a precious file that must survive install-skill\n";
 
-        let project_dir = unique_temp_dir("install-skill-symlink");
+        let project_dir = unique_temp_dir(tag);
         fs::create_dir_all(&project_dir).expect("mkdir project_dir");
 
         // The exact non-global path install-skill will write to.
         let symlink_path: PathBuf = project_dir
-            .join(".claude")
+            .join(top)
             .join("skills")
             .join("cmux-orchestration")
             .join("SKILL.md");
         fs::create_dir_all(symlink_path.parent().expect("symlink_path has parent"))
-            .expect("mkdir .claude/skills/cmux-orchestration");
+            .expect("mkdir skills/cmux-orchestration");
 
         // The real file the symlink redirects to. Putting it inside the same
         // temp project dir keeps cleanup to one remove_dir_all on drop.

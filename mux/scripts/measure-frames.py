@@ -13,7 +13,7 @@ import time
 
 
 def default_socket() -> str:
-    return os.path.join(tempfile.gettempdir(), f"cmux-mux-{os.getuid()}", "main.sock")
+    return os.path.join(tempfile.gettempdir(), f"cmux-{os.getuid()}", "main.sock")
 
 
 class Rpc:

@@ -2096,7 +2096,7 @@ CLI mapping:
 Example:
 
 ```json
-{"id":60,"cmd":"new-remote-workspace","host":"myhost","slot":"cmux","session_id":"cmux-...","local_binary_path":"/home/me/.cache/cmux-mux/cmuxd-remote-linux-amd64","name":"work"}
+{"id":60,"cmd":"new-remote-workspace","host":"myhost","slot":"cmux","session_id":"cmux-...","local_binary_path":"/home/me/.cache/cmux/cmuxd-remote-linux-amd64","name":"work"}
 {"id":60,"ok":true,"data":{"surface":7}}
 ```
 

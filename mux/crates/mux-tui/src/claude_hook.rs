@@ -125,7 +125,7 @@ fn send_request(cmd: &str, mut params: Value) -> Option<Value> {
 }
 
 // ---------- session store ----------
-// `$XDG_STATE_HOME/cmux-mux/claude-sessions.json`, most-recent-first,
+// `$XDG_STATE_HOME/cmux/claude-sessions.json`, most-recent-first,
 // deduplicated by session_id, capped at MAX_SESSIONS. Locked with flock
 // for the read-modify-write since multiple panes' hooks can fire
 // concurrently.
@@ -145,7 +145,7 @@ fn store_path() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| mux_core::platform::home_dir().map(|home| home.join(".local").join("state")))
         .unwrap_or_else(|| PathBuf::from("/tmp"));
-    base.join("cmux-mux").join("claude-sessions.json")
+    base.join("cmux").join("claude-sessions.json")
 }
 
 fn now_ms() -> u64 {
@@ -596,7 +596,7 @@ mod tests {
         // Regression test: reinstalling after the binary moved/was renamed
         // (a different absolute path, same `claude hook` command) must
         // replace the stale entry, not add a second one alongside it - this
-        // is exactly what happened live when cmux-mux was renamed to cmux
+        // is exactly what happened live when the binary was renamed to cmux
         // and the old absolute path stopped existing.
         let _guard = ENV_LOCK.lock().unwrap();
         let dir = temp_state_dir("install-stale-path");
@@ -604,7 +604,7 @@ mod tests {
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(
             claude_dir.join("settings.json"),
-            r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/old/deleted/path/cmux-mux claude hook"}]}]}}"#,
+            r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/old/deleted/path/cmux claude hook"}]}]}}"#,
         )
         .unwrap();
         std::env::set_var("HOME", &dir);

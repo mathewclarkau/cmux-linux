@@ -12,7 +12,7 @@ The CLI resolves the target session in this order:
 | --- | --- |
 | 1 | `--socket <path>` |
 | 2 | `CMUX_MUX_SOCKET` |
-| 3 | `--session <name>` using `$TMPDIR/cmux-mux-<uid>/<session>.sock` |
+| 3 | `--session <name>` using `$TMPDIR/cmux-<uid>/<session>.sock` |
 | 4 | default session `main` using the default socket path |
 
 `--session` and `--socket` are global flags and may appear before or after the verb.

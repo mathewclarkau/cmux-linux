@@ -88,7 +88,7 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
    every lifecycle event (merged alongside any hooks already there, safely
    idempotent). It reports agent state over `report-agent`/`list-agents`
    (`crates/mux-tui/src/claude_hook.rs`) and records sessions to
-   `$XDG_STATE_HOME/cmux-mux/claude-sessions.json` for `cmux claude sessions`
+   `$XDG_STATE_HOME/cmux/claude-sessions.json` for `cmux claude sessions`
    / `cmux claude resume <session-id>`.
 3. ~~Agent-state notifications (OSC 9/99/777 → desktop notification)~~ — done.
    Every pane's raw output is watched for an OSC 9, OSC 777, or kitty-protocol
@@ -101,7 +101,7 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
 4. ~~Session persistence across daemon restarts~~ — done. Every session
    (headless or local TUI) debounce-writes a snapshot of its workspace/screen/
    pane layout — split shape+ratios, names, each tab's cwd, active selections —
-   to `$XDG_STATE_HOME/cmux-mux/sessions/<session>.json`
+   to `$XDG_STATE_HOME/cmux/sessions/<session>.json`
    (`crates/mux-core/src/persist.rs`), and replays it on next start with the
    same `--session` name. Closing every workspace deletes the file instead of
    leaving something to resurrect later. Deliberately not restored: a tab's
@@ -184,6 +184,13 @@ cmux aider install-hooks --global   # creates a wrapper globally at ~/.local/bin
 cmux aider install-hooks --uninstall
 ```
 *Note: For the local wrapper, ensure `.bin/` is prepended to your `$PATH` or call `./.bin/aider` directly.*
+
+#### 6. Grok CLI
+```bash
+cmux grok install-hooks            # installs workspace-level hooks in .grok/hooks.json
+cmux grok install-hooks --global   # installs global hooks in ~/.grok/hooks.json
+cmux grok install-hooks --uninstall
+```
 
 ## Documentation
 

@@ -462,7 +462,7 @@ class MuxClient:
 
 def default_socket_path(session: str) -> str:
     base = os.environ.get("TMPDIR") or tempfile.gettempdir()
-    return os.path.join(base, f"cmux-mux-{os.getuid()}", f"{session}.sock")
+    return os.path.join(base, f"cmux-{os.getuid()}", f"{session}.sock")
 
 
 def _parse_tree(data: Dict[str, Any]) -> Tree:

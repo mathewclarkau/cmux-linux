@@ -110,16 +110,8 @@ pub mod transport {
 }
 
 /// Runtime socket/pidfile directory for the current user.
-///
-/// Kept as `cmux-mux-<uid>` (not renamed to match the `cmux` binary) so an
-/// already-running daemon's socket path doesn't move out from under any
-/// client that computes it independently. Same reasoning applies to every
-/// other path literal below (session snapshots, chrome-profile dirs) and to
-/// `claude_hook.rs`'s `claude-sessions.json` path and `remote_pty.rs`'s
-/// remote-side cache path — these are on-disk paths with existing data,
-/// not CLI-visible text, so the binary rename doesn't touch them.
 pub fn runtime_dir() -> PathBuf {
-    runtime_base_dir().join(format!("cmux-mux-{}", user_id_component()))
+    runtime_base_dir().join(format!("cmux-{}", user_id_component()))
 }
 
 /// Where a session's persisted tree snapshot lives, honoring the XDG
@@ -129,7 +121,7 @@ pub fn session_snapshot_path(session: &str) -> PathBuf {
     let base = env_path("XDG_STATE_HOME")
         .or_else(|| home_dir().map(|home| home.join(".local").join("state")))
         .unwrap_or_else(std::env::temp_dir);
-    base.join("cmux-mux").join("sessions").join(format!("{session}.json"))
+    base.join("cmux").join("sessions").join(format!("{session}.json"))
 }
 
 /// User config file path, honoring the XDG override order.
@@ -285,32 +277,32 @@ pub fn chrome_user_data_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         home_dir().map(|home| {
-            home.join("Library").join("Application Support").join("cmux-mux").join("chrome-profile")
+            home.join("Library").join("Application Support").join("cmux").join("chrome-profile")
         })
     }
 
     #[cfg(target_os = "linux")]
     {
         env_path("XDG_DATA_HOME")
-            .map(|data_home| data_home.join("cmux-mux").join("chrome-profile"))
+            .map(|data_home| data_home.join("cmux").join("chrome-profile"))
             .or_else(|| {
                 home_dir().map(|home| {
-                    home.join(".local").join("share").join("cmux-mux").join("chrome-profile")
+                    home.join(".local").join("share").join("cmux").join("chrome-profile")
                 })
             })
     }
 
     #[cfg(windows)]
     {
-        env_path("LOCALAPPDATA").map(|dir| dir.join("cmux-mux").join("chrome-profile"))
+        env_path("LOCALAPPDATA").map(|dir| dir.join("cmux").join("chrome-profile"))
     }
 
     #[cfg(all(not(target_os = "macos"), not(target_os = "linux"), not(windows)))]
     {
-        env_path("XDG_DATA_HOME").map(|dir| dir.join("cmux-mux").join("chrome-profile")).or_else(
+        env_path("XDG_DATA_HOME").map(|dir| dir.join("cmux").join("chrome-profile")).or_else(
             || {
                 home_dir().map(|home| {
-                    home.join(".local").join("share").join("cmux-mux").join("chrome-profile")
+                    home.join(".local").join("share").join("cmux").join("chrome-profile")
                 })
             },
         )

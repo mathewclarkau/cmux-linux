@@ -7,7 +7,7 @@ CONTROL_SOCKET_RE = re.compile(r"control socket at (.+)$")
 
 def fallback_socket_path():
     base = os.environ.get("XDG_RUNTIME_DIR") or os.environ.get("TMPDIR") or "/tmp"
-    return os.path.join(base, f"cmux-mux-{os.getuid()}", f"{SESSION}.sock")
+    return os.path.join(base, f"cmux-{os.getuid()}", f"{SESSION}.sock")
 
 def wait_for_control_socket(server, seconds=15):
     deadline = time.time() + seconds

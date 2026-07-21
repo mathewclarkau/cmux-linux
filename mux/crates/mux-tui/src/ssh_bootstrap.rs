@@ -175,7 +175,7 @@ fn cache_dir() -> anyhow::Result<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| mux_core::platform::home_dir().map(|h| h.join(".cache")))
         .ok_or_else(|| anyhow::anyhow!("could not resolve a cache directory ($HOME unset?)"))?;
-    Ok(base.join("cmux-mux"))
+    Ok(base.join("cmux"))
 }
 
 // ---------- socket client ----------

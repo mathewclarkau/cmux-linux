@@ -27,7 +27,7 @@ Selection colors are resolved in this order: explicit `mux.json`, Ghostty config
 | `tabs.min_width` | integer | `7` | Minimum tab label width, clamped to 3 through 40 |
 | `tabs.solid_background` | boolean | `true` | Renders tab chips with solid backgrounds |
 | `tabs.show_titles` | boolean | `false` | Shows full process titles after tab numbers |
-| `tabs.agents` | string array | `["claude","codex","opencode","pi"]` | Agent names surfaced in tab labels when `show_titles` is false |
+| `tabs.agents` | string array | `["claude","codex","grok","opencode","pi"]` | Agent names surfaced in tab labels when `show_titles` is false |
 
 Tabs are numbered by default. A recognized agent program can appear after the number. A user-assigned tab name replaces the generated label.
 
@@ -53,7 +53,7 @@ Live sidebar dragging also leaves at least 40 columns for pane content.
 
 When `browser.ephemeral` is true, it takes precedence over `browser.user_data_dir`: launched Chrome uses a fresh temporary profile, and the configured directory is not deleted.
 
-The default launched profile is `~/Library/Application Support/cmux-mux/chrome-profile` on macOS. On non-macOS targets it is `$XDG_DATA_HOME/cmux-mux/chrome-profile` when `XDG_DATA_HOME` is set, then `~/.local/share/cmux-mux/chrome-profile`.
+The default launched profile is `~/Library/Application Support/cmux/chrome-profile` on macOS. On non-macOS targets it is `$XDG_DATA_HOME/cmux/chrome-profile` when `XDG_DATA_HOME` is set, then `~/.local/share/cmux/chrome-profile`.
 
 ## Scrollbar
 
@@ -120,7 +120,7 @@ Chord strings can be single characters or a key name with optional `ctrl`, `cont
     "min_width": 9,
     "solid_background": true,
     "show_titles": false,
-    "agents": ["claude", "codex", "opencode", "pi"]
+    "agents": ["claude", "codex", "grok", "opencode", "pi"]
   },
   "sidebar": {
     "width": 24,
@@ -131,7 +131,7 @@ Chord strings can be single characters or a key name with optional `ctrl`, `cont
     "cdp_url": "http://127.0.0.1:9222",
     "discover": true,
     "discover_ports": [9222, 9223],
-    "user_data_dir": "/Users/me/Library/Application Support/cmux-mux/chrome-profile",
+    "user_data_dir": "/Users/me/Library/Application Support/cmux/chrome-profile",
     "ephemeral": false
   },
   "scrollbar": {

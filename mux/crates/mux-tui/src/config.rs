@@ -19,7 +19,7 @@
 //!     "min_width": 7,
 //!     "solid_background": true,
 //!     "show_titles": false,
-//!     "agents": ["claude", "codex", "opencode", "pi"]
+//!     "agents": ["claude", "codex", "grok", "opencode", "pi"]
 //!   },
 //!   "sidebar": {
 //!     "width": 22,
@@ -30,7 +30,7 @@
 //!     "cdp_url": "http://127.0.0.1:9222",
 //!     "discover": false,
 //!     "discover_ports": [9222],
-//!     "user_data_dir": "/Users/me/Library/Application Support/cmux-mux/chrome-profile",
+//!     "user_data_dir": "/Users/me/Library/Application Support/cmux/chrome-profile",
 //!     "ephemeral": false,
 //!     "max_capture_megapixels": 2.0,
 //!     "capture_scale": null
@@ -236,7 +236,7 @@ impl Default for Tabs {
             min_width: 7,
             solid_background: true,
             show_titles: false,
-            agents: ["claude", "codex", "opencode", "pi"].map(String::from).to_vec(),
+            agents: ["claude", "codex", "grok", "opencode", "pi"].map(String::from).to_vec(),
         }
     }
 }
