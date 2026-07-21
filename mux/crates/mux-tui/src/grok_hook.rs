@@ -176,6 +176,20 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
+        // Refuse to overwrite a symlink: same rationale as claude_hook.rs
+        // (PR #18 / issue #10 hardening) and aider_hook.rs (PR #3) — fs::write
+        // on a symlink path overwrites the symlink target, not the symlink
+        // itself. An attacker-placed symlink in a user-writable target path
+        // could redirect the write to an arbitrary file.
+        if let Ok(meta) = fs::symlink_metadata(&path) {
+            if meta.file_type().is_symlink() {
+                eprintln!(
+                    "error: refusing to overwrite symlink at {}.                      Remove it manually if you want to install the skill.",
+                    path.display()
+                );
+                return 1;
+            }
+        }
         if let Err(e) = fs::write(&path, crate::skill_content::ORCHESTRATION_SKILL) {
             eprintln!("error writing {}: {e}", path.display());
             return 1;

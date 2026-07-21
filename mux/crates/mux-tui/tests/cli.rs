@@ -301,6 +301,72 @@ fn install_skill_refuses_symlinks() {
     // file, and the temp project dir — even if any assertion above panicked.
 }
 
+// Regression test for the symlink_metadata guard added to
+// grok_hook::run_install_skill (PR #24 follow-up). Sibling to the Claude
+// test above (PR #18 / issue #10) — the grok non-global skill path is
+// `.agents/skills/cmux-orchestration/SKILL.md` (see grok_hook.rs:147-149),
+// so the fixture is built with `top = ".agents"`. Exercises the same
+// attack vector on the new grok install path: an attacker-placed symlink
+// must NOT silently redirect fs::write at the target file.
+#[test]
+fn install_skill_refuses_symlinks_grok() {
+    // AC1 setup: a temp project dir whose .agents/skills/cmux-orchestration/SKILL.md
+    // is a symlink to a temp file with known content. Drop guard removes both.
+    let guard = SymlinkSkillFixture::new_for(".agents", "install-skill-symlink-grok");
+
+    // Invoke the REAL cmux binary (integration test, not a unit call into
+    // run_install_skill), so removing the check makes this test fail.
+    // `grok` MUST be arg[0] (main.rs dispatches it before --socket parsing);
+    // install-skill never uses the socket anyway. current_dir pins
+    // skill_path(false)'s CWD-relative target.
+    let output = Command::new(bin())
+        .args(["grok", "install-skill"])
+        .current_dir(&guard.project_dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .expect("failed to spawn cmux grok install-skill");
+
+    // Assertion 1 — exit code is non-zero (the refusal path returns 1;
+    // grok_hook.rs::run_install_skill install branch).
+    assert!(
+        !output.status.success(),
+        "grok install-skill must refuse a symlink target, got status {:?}\n\
+         stdout:\n{}\n\
+         stderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // Assertion 2 — combined stdout+stderr mentions "symlink"
+    // (case-insensitive), so the user learns *why* it failed
+    // (the eprintln in grok_hook::run_install_skill).
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        combined.to_lowercase().contains("symlink"),
+        "error output must mention \"symlink\", got: {combined:?}"
+    );
+
+    // Assertion 3 — the symlink target file is byte-for-byte unchanged,
+    // proving the refusal happened *before* fs::write (which would
+    // otherwise follow the symlink and clobber the target — the exact
+    // attack vector).
+    let read_back = fs::read(&guard.target_path)
+        .expect("symlink target file must still exist after refusal");
+    assert_eq!(
+        read_back,
+        guard.original_content.as_bytes(),
+        "refusal must not have written through the symlink to its target"
+    );
+
+    // guard goes out of scope here: Drop removes the symlink, the target
+    // file, and the temp project dir — even if any assertion above panicked.
+}
+
 #[test]
 fn trigger_flash_returns_success() {
     let server = HeadlessServer::start("trigger-flash");
@@ -521,21 +587,31 @@ struct SymlinkSkillFixture {
 }
 
 impl SymlinkSkillFixture {
+    /// Default fixture for the Claude install-skill path (`.claude/...`).
     fn new() -> Self {
+        Self::new_for(".claude", "install-skill-symlink")
+    }
+
+    /// Build a fixture for an install-skill variant whose non-global path is
+    /// `<top>/skills/cmux-orchestration/SKILL.md` relative to CWD (e.g.
+    /// `.claude` for claude, `.agents` for grok — see grok_hook.rs:147-149).
+    /// `tag` keeps the temp dir name unique per variant so parallel test
+    /// runs never collide.
+    fn new_for(top: &str, tag: &str) -> Self {
         const KNOWN_CONTENT: &str =
             "#!/bin/sh\necho this is a precious file that must survive install-skill\n";
 
-        let project_dir = unique_temp_dir("install-skill-symlink");
+        let project_dir = unique_temp_dir(tag);
         fs::create_dir_all(&project_dir).expect("mkdir project_dir");
 
         // The exact non-global path install-skill will write to.
         let symlink_path: PathBuf = project_dir
-            .join(".claude")
+            .join(top)
             .join("skills")
             .join("cmux-orchestration")
             .join("SKILL.md");
         fs::create_dir_all(symlink_path.parent().expect("symlink_path has parent"))
-            .expect("mkdir .claude/skills/cmux-orchestration");
+            .expect("mkdir skills/cmux-orchestration");
 
         // The real file the symlink redirects to. Putting it inside the same
         // temp project dir keeps cleanup to one remove_dir_all on drop.
