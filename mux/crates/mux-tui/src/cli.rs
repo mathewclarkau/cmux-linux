@@ -288,6 +288,27 @@ const VERBS: &[VerbSpec] = &[
         print: print_empty,
         stream: false,
     },
+    VerbSpec {
+        name: "list-sessions",
+        allowed: &[],
+        build: build_no_args,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
+        name: "kill-session",
+        allowed: &["session"],
+        build: build_kill_session,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
+        name: "kill-stale",
+        allowed: &[],
+        build: build_no_args,
+        print: print_empty,
+        stream: false,
+    },
 ];
 
 pub fn is_cli_invocation(args: &[String]) -> bool {
@@ -398,6 +419,12 @@ fn verb_by_name(name: &str) -> Option<&'static VerbSpec> {
 }
 
 fn run_command(args: CliArgs) -> i32 {
+    match args.verb.name {
+        "list-sessions" => return run_list_sessions(&args.global, &args.flags),
+        "kill-session" => return run_kill_session(&args.global, &args.flags),
+        "kill-stale" => return run_kill_stale(&args.global, &args.flags),
+        _ => {}
+    }
     let request = match (args.verb.build)(&args.flags) {
         Ok(mut value) => {
             value["cmd"] = json!(args.verb.name);
@@ -761,6 +788,175 @@ fn build_list_agents(flags: &FlagMap) -> Result<Value, UsageError> {
     flags.insert_optional_u64(&mut value, "surface")?;
     flags.insert_optional_string(&mut value, "state");
     Ok(value)
+}
+
+fn build_kill_session(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({});
+    flags.insert_optional_string(&mut value, "session");
+    Ok(value)
+}
+
+fn get_runtime_dir(global: &GlobalArgs) -> PathBuf {
+    global
+        .socket
+        .as_ref()
+        .and_then(|s| s.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(mux_core::platform::runtime_dir)
+}
+
+fn read_pid_file(path: &std::path::Path) -> Option<u32> {
+    if let Ok(content) = std::fs::read_to_string(path) {
+        content.trim().parse::<u32>().ok()
+    } else {
+        None
+    }
+}
+
+fn run_list_sessions(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
+    let dir = get_runtime_dir(global);
+    let mut session_names = std::collections::BTreeSet::new();
+
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if ext == "sock" || ext == "pid" {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        session_names.insert(stem.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    struct SessionInfo {
+        session: String,
+        pid: Option<u32>,
+        status: &'static str,
+    }
+
+    let mut sessions = Vec::new();
+    for name in session_names {
+        let sock_path = dir.join(format!("{name}.sock"));
+        let pid_p = dir.join(format!("{name}.pid"));
+        let pid = read_pid_file(&pid_p);
+        let is_live = mux_core::server::is_session_socket_live(&sock_path);
+        let status = if is_live { "live" } else { "stale" };
+        sessions.push(SessionInfo { session: name, pid, status });
+    }
+
+    if global.json {
+        let json_list: Vec<Value> = sessions
+            .iter()
+            .map(|s| {
+                json!({
+                    "session": s.session,
+                    "name": s.session,
+                    "pid": s.pid,
+                    "status": s.status,
+                })
+            })
+            .collect();
+        let payload = json!({ "sessions": json_list });
+        if serde_json::to_writer(io::stdout(), &payload).is_ok() {
+            println!();
+            0
+        } else {
+            3
+        }
+    } else {
+        for s in &sessions {
+            let pid_str = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".to_string());
+            println!("{} {} {}", s.session, pid_str, s.status);
+        }
+        0
+    }
+}
+
+fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
+    let target_session = flags.optional("session").or_else(|| global.session.clone());
+    let Some(session_name) = target_session else {
+        eprintln!("cmux: --session is required");
+        return 2;
+    };
+
+    let dir = get_runtime_dir(global);
+    let sock_path = dir.join(format!("{session_name}.sock"));
+    let pid_p = dir.join(format!("{session_name}.pid"));
+
+    if !sock_path.exists() && !pid_p.exists() {
+        eprintln!("cmux: session {session_name:?} not found");
+        return 1;
+    }
+
+    if let Some(pid) = read_pid_file(&pid_p) {
+        if mux_core::server::is_cmux_process(pid) {
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGTERM);
+            }
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
+                if !mux_core::server::is_process_alive(pid) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if mux_core::server::is_process_alive(pid) {
+                unsafe {
+                    libc::kill(pid as libc::pid_t, libc::SIGKILL);
+                }
+                let deadline2 = std::time::Instant::now() + Duration::from_secs(1);
+                while std::time::Instant::now() < deadline2 {
+                    if !mux_core::server::is_process_alive(pid) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+    }
+
+    let _ = std::fs::remove_file(&sock_path);
+    let _ = std::fs::remove_file(&pid_p);
+
+    if global.json {
+        println!("{}", json!({ "ok": true }));
+    }
+    0
+}
+
+fn run_kill_stale(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
+    let dir = get_runtime_dir(global);
+    let mut session_names = std::collections::BTreeSet::new();
+
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if ext == "sock" || ext == "pid" {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        session_names.insert(stem.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cleaned = 0;
+    for name in session_names {
+        let sock_path = dir.join(format!("{name}.sock"));
+        let pid_p = dir.join(format!("{name}.pid"));
+        if !mux_core::server::is_session_socket_live(&sock_path) {
+            let _ = std::fs::remove_file(&sock_path);
+            let _ = std::fs::remove_file(&pid_p);
+            cleaned += 1;
+        }
+    }
+
+    if global.json {
+        println!("{}", json!({ "ok": true, "cleaned": cleaned }));
+    }
+    0
 }
 
 fn selector_request(flags: &FlagMap) -> Result<Value, UsageError> {

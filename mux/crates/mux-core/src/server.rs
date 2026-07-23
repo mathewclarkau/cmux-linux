@@ -41,6 +41,72 @@ pub fn default_socket_path(session: &str) -> PathBuf {
     platform::runtime_dir().join(format!("{session}.sock"))
 }
 
+/// PID file path corresponding to a socket path.
+pub fn pid_path(socket_path: &Path) -> PathBuf {
+    socket_path.with_extension("pid")
+}
+
+/// Check if a process ID is currently alive.
+pub fn is_process_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        let res = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if res == 0 {
+            true
+        } else {
+            std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// Check if a process ID is alive AND is a cmux process.
+pub fn is_cmux_process(pid: u32) -> bool {
+    if !is_process_alive(pid) {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let cmdline_path = format!("/proc/{pid}/cmdline");
+        if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
+            cmdline.contains("cmux")
+        } else {
+            false
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
+/// Check if a session socket path is live (connectable AND process is alive if pidfile present).
+pub fn is_session_socket_live(socket_path: &Path) -> bool {
+    if !socket_path.exists() {
+        return false;
+    }
+    if transport::connect(socket_path).is_err() {
+        return false;
+    }
+    let pid_p = pid_path(socket_path);
+    if pid_p.exists() {
+        if let Ok(content) = std::fs::read_to_string(&pid_p) {
+            if let Ok(pid) = content.trim().parse::<u32>() {
+                if !is_cmux_process(pid) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
 #[derive(Deserialize)]
 struct Request {
     id: Option<Value>,
@@ -361,18 +427,23 @@ pub fn serve(mux: Arc<Mux>, path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
         std::fs::create_dir_all(dir)?;
         platform::restrict_directory(dir)?;
     }
+    let pid_p = pid_path(&path);
     // Refuse to clobber a live socket; remove a stale one.
-    if path.exists() {
-        match transport::connect(&path) {
-            Ok(_) => anyhow::bail!(
+    if path.exists() || pid_p.exists() {
+        if is_session_socket_live(&path) {
+            anyhow::bail!(
                 "session socket {} is already in use (another instance running?)",
                 path.display()
-            ),
-            Err(_) => std::fs::remove_file(&path)?,
+            );
         }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&pid_p);
     }
     let listener = transport::listen(&path)?;
     platform::restrict_file(&path)?;
+
+    std::fs::write(&pid_p, format!("{}\n", std::process::id()))?;
+    platform::restrict_file(&pid_p)?;
 
     std::thread::Builder::new().name("mux-server".into()).spawn(move || loop {
         let Ok(stream) = listener.accept() else { continue };
@@ -732,7 +803,15 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             let surface = mux.new_workspace(name, cols.zip(rows))?;
             Ok(json!({ "surface": surface.id }))
         }
-        Command::NewRemoteWorkspace { host, slot, session_id, local_binary_path, name, cols, rows } => {
+        Command::NewRemoteWorkspace {
+            host,
+            slot,
+            session_id,
+            local_binary_path,
+            name,
+            cols,
+            rows,
+        } => {
             let spec = crate::remote_pty::RemoteSpec {
                 host,
                 slot,
@@ -1043,7 +1122,8 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
     }
 }
 
-/// Remove the socket file (call on clean shutdown).
+/// Remove the socket file and pid file (call on clean shutdown).
 pub fn cleanup(path: &Path) {
     let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(pid_path(path));
 }
