@@ -6,25 +6,25 @@
 //! `cmux attach` connects the same TUI to an existing (usually
 //! headless) session over that socket, which is how detach/reattach works.
 
+mod aider_hook;
+mod antigravity_hook;
 mod app;
 mod browser_input;
 mod claude_hook;
-mod antigravity_hook;
-mod codex_hook;
-mod pi_hook;
-mod aider_hook;
-mod grok_hook;
-mod hook_merge;
 mod cli;
+mod codex_hook;
 mod config;
 mod desktop_notify;
 mod git_info;
+mod grok_hook;
+mod hook_merge;
 mod host_colors;
 mod keys;
+mod pi_hook;
 mod session;
+mod skill_content;
 mod ssh_bootstrap;
 mod ui;
-mod skill_content;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -98,7 +98,7 @@ CLI VERBS
   rename-workspace, set-workspace-color, trigger-flash, resize-surface,
   focus-pane, select-tab, select-screen, select-workspace, move-tab,
   move-workspace, scroll-surface, subscribe, attach-surface, report-agent,
-  list-agents, browser-reload
+  list-agents, browser-reload, list-sessions, kill-session, kill-stale
 
 CLAUDE CODE HOOK INTEGRATION
   cmux claude install-hooks [--uninstall]

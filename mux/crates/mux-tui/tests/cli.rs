@@ -152,13 +152,25 @@ fn report_agent_and_list_agents_round_trip() {
     // A socket report cannot downgrade an existing hook report.
     let downgrade = cli(
         &server,
-        &["report-agent", "--surface", &surface.to_string(), "--state", "idle", "--source", "socket"],
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "idle",
+            "--source",
+            "socket",
+        ],
     );
     assert_success(&downgrade);
     let list = cli(&server, &["--json", "list-agents", "--state", "working"]);
     assert_success(&list);
     let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
-    assert_eq!(value["agents"].as_array().unwrap().len(), 1, "hook report should still be in effect");
+    assert_eq!(
+        value["agents"].as_array().unwrap().len(),
+        1,
+        "hook report should still be in effect"
+    );
 
     // Plain (non-JSON) output is one line per agent.
     let plain = cli(&server, &["list-agents"]);
@@ -169,7 +181,15 @@ fn report_agent_and_list_agents_round_trip() {
     // Bad state/source are rejected.
     let bad = cli(
         &server,
-        &["report-agent", "--surface", &surface.to_string(), "--state", "nonsense", "--source", "hook"],
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "nonsense",
+            "--source",
+            "hook",
+        ],
     );
     assert_eq!(bad.status.code(), Some(1));
 }
@@ -289,8 +309,8 @@ fn install_skill_refuses_symlinks() {
     // Assertion 2 — the symlink target file is byte-for-byte unchanged,
     // proving the refusal happened *before* fs::write (which would otherwise
     // follow the symlink and clobber the target — the exact attack vector).
-    let read_back = fs::read(&guard.target_path)
-        .expect("symlink target file must still exist after refusal");
+    let read_back =
+        fs::read(&guard.target_path).expect("symlink target file must still exist after refusal");
     assert_eq!(
         read_back,
         guard.original_content.as_bytes(),
@@ -355,8 +375,8 @@ fn install_skill_refuses_symlinks_grok() {
     // proving the refusal happened *before* fs::write (which would
     // otherwise follow the symlink and clobber the target — the exact
     // attack vector).
-    let read_back = fs::read(&guard.target_path)
-        .expect("symlink target file must still exist after refusal");
+    let read_back =
+        fs::read(&guard.target_path).expect("symlink target file must still exist after refusal");
     assert_eq!(
         read_back,
         guard.original_content.as_bytes(),
@@ -402,7 +422,13 @@ fn trigger_flash_returns_success() {
     //    by new-workspace is fine.
     let out = cli(
         &server,
-        &["trigger-flash", "--workspace", &workspace_id.to_string(), "--surface", &surface.to_string()],
+        &[
+            "trigger-flash",
+            "--workspace",
+            &workspace_id.to_string(),
+            "--surface",
+            &surface.to_string(),
+        ],
     );
     assert_success(&out);
     assert!(out.stdout.is_empty(), "trigger-flash should be quiet on success");
@@ -605,11 +631,8 @@ impl SymlinkSkillFixture {
         fs::create_dir_all(&project_dir).expect("mkdir project_dir");
 
         // The exact non-global path install-skill will write to.
-        let symlink_path: PathBuf = project_dir
-            .join(top)
-            .join("skills")
-            .join("cmux-orchestration")
-            .join("SKILL.md");
+        let symlink_path: PathBuf =
+            project_dir.join(top).join("skills").join("cmux-orchestration").join("SKILL.md");
         fs::create_dir_all(symlink_path.parent().expect("symlink_path has parent"))
             .expect("mkdir skills/cmux-orchestration");
 
@@ -627,23 +650,12 @@ impl SymlinkSkillFixture {
         // the check fs::write would follow it and clobber target_path. This
         // guards against a misconfigured fixture silently making the test
         // pass for the wrong reason (a missing symlink ⇒ error before check).
-        assert!(
-            symlink_path.exists(),
-            "fixture broken: symlink does not resolve to a real file"
-        );
+        assert!(symlink_path.exists(), "fixture broken: symlink does not resolve to a real file");
         let meta = fs::symlink_metadata(&symlink_path)
             .expect("symlink_metadata on the freshly created symlink");
-        assert!(
-            meta.file_type().is_symlink(),
-            "fixture broken: SKILL.md is not a symlink"
-        );
+        assert!(meta.file_type().is_symlink(), "fixture broken: SKILL.md is not a symlink");
 
-        Self {
-            project_dir,
-            symlink_path,
-            target_path,
-            original_content,
-        }
+        Self { project_dir, symlink_path, target_path, original_content }
     }
 }
 
@@ -655,4 +667,241 @@ impl Drop for SymlinkSkillFixture {
         let _ = fs::remove_file(&self.target_path);
         let _ = fs::remove_dir_all(&self.project_dir);
     }
+}
+
+#[test]
+fn list_sessions_lists_active_headless_session() {
+    let dir = unique_temp_dir("list-sess");
+    fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("test-list.sock");
+    let mut child = Command::new(bin())
+        .args(["--headless", "--socket"])
+        .arg(&socket)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let pid_file = dir.join("test-list.pid");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if socket.exists() && pid_file.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(socket.exists(), "socket must exist");
+    assert!(pid_file.exists(), "pid file must exist");
+
+    let output = Command::new(bin())
+        .args(["--socket"])
+        .arg(&socket)
+        .arg("list-sessions")
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("test-list"), "output should list session test-list, got: {stdout}");
+    assert!(stdout.contains("live"), "output should show live status, got: {stdout}");
+
+    let json_output = Command::new(bin())
+        .args(["--socket"])
+        .arg(&socket)
+        .args(["--json", "list-sessions"])
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_success(&json_output);
+    let value: serde_json::Value = serde_json::from_slice(&json_output.stdout).unwrap();
+    let sessions = value["sessions"].as_array().expect("sessions array");
+    assert!(
+        sessions.iter().any(|s| s["session"] == "test-list" && s["status"] == "live"),
+        "expected test-list with status live in json, got {value}"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn kill_session_terminates_daemon_and_cleans_files() {
+    let dir = unique_temp_dir("kill-sess");
+    fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("target-sess.sock");
+    let mut child = Command::new(bin())
+        .args(["--headless", "--socket"])
+        .arg(&socket)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let pid_file = dir.join("target-sess.pid");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if socket.exists() && pid_file.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(socket.exists());
+    assert!(pid_file.exists());
+
+    let output = Command::new(bin())
+        .args(["--socket"])
+        .arg(&socket)
+        .args(["kill-session", "--session", "target-sess"])
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_success(&output);
+
+    // Verify process is killed.
+    let status = child.wait().unwrap();
+    assert!(
+        status.success() || status.code().is_none(),
+        "process should exit cleanly on SIGTERM or be killed"
+    );
+    assert!(!socket.exists(), "socket should be removed");
+    assert!(!pid_file.exists(), "pid file should be removed");
+
+    // Verify killing non-existent session returns exit 1.
+    let missing = Command::new(bin())
+        .args(["--socket"])
+        .arg(&socket)
+        .args(["kill-session", "--session", "nonexistent"])
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn kill_stale_removes_stale_pair_and_leaves_live_untouched() {
+    let dir = unique_temp_dir("kill-stale");
+    fs::create_dir_all(&dir).unwrap();
+    let live_socket = dir.join("live-sess.sock");
+    let mut child = Command::new(bin())
+        .args(["--headless", "--socket"])
+        .arg(&live_socket)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let live_pid = dir.join("live-sess.pid");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if live_socket.exists() && live_pid.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    // Create fake stale files (nonexistent PID 999999)
+    let stale_socket = dir.join("stale-sess.sock");
+    let stale_pid = dir.join("stale-sess.pid");
+    fs::write(&stale_socket, "fake").unwrap();
+    fs::write(&stale_pid, "999999\n").unwrap();
+
+    let output = Command::new(bin())
+        .args(["--socket"])
+        .arg(&live_socket)
+        .args(["kill-stale"])
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_success(&output);
+
+    assert!(!stale_socket.exists(), "stale socket should be removed");
+    assert!(!stale_pid.exists(), "stale pid file should be removed");
+    assert!(live_socket.exists(), "live socket should be untouched");
+    assert!(live_pid.exists(), "live pid file should be untouched");
+
+    // Idempotent test: run again when no stale sessions remain.
+    let output2 = Command::new(bin())
+        .args(["--socket"])
+        .arg(&live_socket)
+        .args(["kill-stale"])
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_success(&output2);
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn serve_recovers_from_stale_socket() {
+    let dir = unique_temp_dir("recover-stale");
+    fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("recover.sock");
+    let pid_file = dir.join("recover.pid");
+
+    // Spawn a daemon and SIGKILL it without cleanup
+    let mut child = Command::new(bin())
+        .args(["--headless", "--socket"])
+        .arg(&socket)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if socket.exists() && pid_file.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    // Verify stale socket still exists on disk
+    assert!(socket.exists());
+
+    // Start a new daemon on the same socket path — should clear stale socket and bind
+    let mut child2 = Command::new(bin())
+        .args(["--headless", "--socket"])
+        .arg(&socket)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut rebound = false;
+    while Instant::now() < deadline {
+        if socket.exists() && pid_file.exists() {
+            if let Ok(pid_str) = fs::read_to_string(&pid_file) {
+                if pid_str.trim() == child2.id().to_string() {
+                    rebound = true;
+                    break;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(rebound, "new daemon should overwrite stale pid file with its own pid");
+
+    let _ = child2.kill();
+    let _ = child2.wait();
+    let _ = fs::remove_dir_all(&dir);
 }
