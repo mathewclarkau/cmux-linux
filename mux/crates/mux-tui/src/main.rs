@@ -12,6 +12,7 @@ mod app;
 mod browser_input;
 mod claude_hook;
 mod cli;
+mod clipboard;
 mod codex_hook;
 mod config;
 mod desktop_notify;

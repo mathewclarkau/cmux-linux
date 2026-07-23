@@ -1658,6 +1658,17 @@ impl App {
             self.forward_browser_key(key);
             return;
         }
+        // Issue #30: Claude Code (and similar agents) try to read the OS
+        // clipboard on Ctrl+V for images, but that often fails inside a
+        // nested multiplexer. If the clipboard holds an image, materialize
+        // it and paste `@/path.png` so agents can attach the file.
+        if is_paste_image_chord(key) {
+            if let Some(payload) = crate::clipboard::image_paste_payload() {
+                self.paste(&payload);
+                return;
+            }
+            // No image → fall through so text Ctrl+V / agent handlers run.
+        }
         let Some(input) = keys::key_input_from(key) else { return };
         let Some(surface) = self.active_surface_handle() else { return };
         self.encode_buf.clear();
@@ -1747,6 +1758,17 @@ impl App {
             });
             return;
         }
+        // Host terminal paste of an image often yields empty text. Try the
+        // system clipboard image path before no-op'ing (issue #30).
+        let text = if text.is_empty() {
+            if let Some(payload) = crate::clipboard::image_paste_payload() {
+                payload
+            } else {
+                return;
+            }
+        } else {
+            text.to_string()
+        };
         let Some(bracketed) = surface.with_terminal(|t| t.mode(2004, false)) else {
             return;
         };
@@ -2664,6 +2686,20 @@ fn browser_modifiers(modifiers: KeyModifiers) -> u32 {
         out |= 8;
     }
     out
+}
+
+/// Ctrl+V or Alt+V — chords Claude Code uses for image paste on Linux/Windows.
+fn is_paste_image_chord(key: &KeyEvent) -> bool {
+    if key.kind != KeyEventKind::Press {
+        return false;
+    }
+    if !matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V')) {
+        return false;
+    }
+    let mods = key.modifiers;
+    // Ctrl+V (Linux / most terminals) or Alt+V (Claude's Windows hint).
+    (mods.contains(KeyModifiers::CONTROL) && !mods.contains(KeyModifiers::ALT))
+        || (mods.contains(KeyModifiers::ALT) && !mods.contains(KeyModifiers::CONTROL))
 }
 
 fn browser_only_action(action: Action) -> bool {
