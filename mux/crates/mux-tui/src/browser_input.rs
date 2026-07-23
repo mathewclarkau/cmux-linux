@@ -69,29 +69,9 @@ pub enum BrowserInputKind {
     PasteFromSystemClipboard,
 }
 
-/// Reads the desktop clipboard by shelling out to whichever clipboard tool
-/// is available, since cmux (unlike the outer terminal) has no direct
-/// clipboard API of its own - it only ever *writes* the clipboard, via
-/// OSC52. Tries Wayland's `wl-paste` first, then X11's `xclip`; returns
-/// `None` (not an error) if neither is installed or the clipboard is
-/// empty/unreadable, so callers can no-op cleanly.
+/// Text clipboard read (shared with PTY image-paste in `clipboard`).
 fn read_system_clipboard() -> Option<String> {
-    let from_wl_paste = std::process::Command::new("wl-paste")
-        .arg("--no-newline")
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .map(|out| out.stdout);
-    let from_xclip = from_wl_paste.or_else(|| {
-        std::process::Command::new("xclip")
-            .args(["-selection", "clipboard", "-o"])
-            .output()
-            .ok()
-            .filter(|out| out.status.success())
-            .map(|out| out.stdout)
-    });
-    let text = String::from_utf8(from_xclip?).ok()?;
-    (!text.is_empty()).then_some(text)
+    crate::clipboard::read_text()
 }
 
 impl BrowserInputKind {
