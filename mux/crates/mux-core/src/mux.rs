@@ -255,6 +255,12 @@ impl Mux {
         if let Some(runtime) = self.browser_runtime.lock().unwrap().take() {
             runtime.shutdown();
         }
+        // Note: do NOT call process::kill_remaining_children() here.
+        // Mux is also constructed in-process by tests that run in parallel;
+        // a global child sweep would kill sibling tests' PTY children.
+        // The daemon path in mux-tui calls kill_remaining_children after
+        // shutdown so subreaper-reparented orphans are still cleaned up
+        // in production (issue #28).
     }
 
     fn snapshot_path(&self) -> std::path::PathBuf {

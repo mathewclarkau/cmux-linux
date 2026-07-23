@@ -253,6 +253,10 @@ fn run_attach(args: Args) -> anyhow::Result<()> {
 }
 
 fn run_server(args: Args) -> anyhow::Result<()> {
+    // Issue #28: inherit orphaned pane grandchildren so mux.shutdown()
+    // can reap them instead of leaving them under PID 1.
+    let _ = mux_core::process::set_child_subreaper();
+
     let mut surface_options = SurfaceOptions::default();
     let config = config::load();
     surface_options.chrome_binary = config.browser.chrome_binary.clone();
@@ -282,6 +286,13 @@ fn run_server(args: Args) -> anyhow::Result<()> {
         run_tui(Session::Local(mux.clone()), args.session)
     };
     mux.shutdown();
+    // Issue #28: after known surfaces are killed, sweep anything that
+    // reparented to us via PR_SET_CHILD_SUBREAPER (grandchildren whose
+    // intermediate parent already exited before surface.kill ran).
+    #[cfg(target_os = "linux")]
+    {
+        mux_core::process::kill_remaining_children();
+    }
     mux_core::server::cleanup(&socket_path);
     result
 }
