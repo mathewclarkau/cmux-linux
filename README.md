@@ -9,7 +9,8 @@ This repo instead builds on `mux/`, upstream's own cross-platform Rust + Zig bac
 (`cmux` / `mux-tui`), which already reimplements the same session → workspace →
 screen → pane → surface model over a JSON-Lines Unix-socket control protocol. See
 [`PROVENANCE.md`](./PROVENANCE.md) for exactly what was vendored from where, and
-under what license.
+[`UPSTREAM.md`](./UPSTREAM.md) for release↔upstream mapping and the re-sync
+procedure.
 
 This is an unofficial, community-maintained port and is not affiliated with,
 endorsed by, or supported by Manaflow, Inc. Upstream `cmux` is dual-licensed

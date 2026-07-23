@@ -4,7 +4,7 @@ This repository repurposes pieces of [manaflow-ai/cmux](https://github.com/manaf
 for Linux. The upstream `cmux` app itself is macOS-only (Swift/AppKit) and is not
 included here. What's included:
 
-- `mux/` — vendored verbatim (build artifacts excluded) from
+- `mux/` — vendored from
   `manaflow-ai/cmux@adc48877acd03a000da1660006713ac9f81ed611`, subdirectory `mux/`.
   This is the project's own cross-platform Rust + Zig terminal-multiplexer backend
   (`cmux` / `mux-tui`), already OS-agnostic upstream. It is not a git submodule
@@ -18,12 +18,14 @@ included here. What's included:
   `manaflow-ai/ghostty` remote); local modifications live as patch files in
   `patches/`, applied by `scripts/bootstrap.sh` after `submodule update`. See
   `patches/*.patch` for what each one does and why.
-- `daemon/remote/` — vendored verbatim from the same
+- `daemon/remote/` — vendored from the same
   `manaflow-ai/cmux@adc48877acd03a000da1660006713ac9f81ed611`, subdirectory
-  `daemon/remote/`. This is `cmuxd-remote`, upstream's own Go daemon for durable
-  remote PTYs over SSH — already cross-compiles cleanly for `linux/{amd64,arm64}`.
-  Used unmodified; `mux-core/src/remote_pty.rs` and `mux-tui/src/ssh_bootstrap.rs`
-  are new Rust code that builds it, uploads it, and speaks its NDJSON RPC protocol.
+  `daemon/remote/`, plus selective re-sync cherry-picks documented below and in
+  [`UPSTREAM.md`](./UPSTREAM.md). This is `cmuxd-remote`, upstream's own Go daemon
+  for durable remote PTYs over SSH — already cross-compiles cleanly for
+  `linux/{amd64,arm64}`. `mux-core/src/remote_pty.rs` and
+  `mux-tui/src/ssh_bootstrap.rs` are new Rust code that builds it, uploads it,
+  and speaks its NDJSON RPC protocol.
 
 ## Licensing
 
@@ -35,6 +37,30 @@ included here. What's included:
   repository-wide grant, so the GPL-3.0-or-later terms govern these vendored
   copies unless/until Manaflow states otherwise.
 - `ghostty` (the submodule) is MIT-licensed; see `ghostty/LICENSE`.
+
+## Anchor history
+
+Append-only. Do not rewrite prior rows when re-syncing.
+
+| Date | Event | Upstream SHA | Integrated | Skipped | Deferred | Notes |
+|------|-------|--------------|------------|---------|----------|-------|
+| 2026-07 (initial) | Vendor `mux/` + `daemon/remote/` | `adc48877acd03a000da1660006713ac9f81ed611` | — | — | — | Original Linux-port anchor |
+| 2026-07-23 | Classification + batch 1 PATH fix (#29) | Classified against `7652d3b1cf24b86188d8d04efe60dd6d317b39d1`; integrated `d19f59aa2` | 1 | 14 | 13 | Full table in `UPSTREAM.md`. `mux/` still at anchor + port commits; `daemon/remote/` = anchor + PATH cherry-pick |
+
+**Current code anchors**
+
+| Tree | Base vendor SHA | Plus |
+|------|-----------------|------|
+| `mux/` | `adc48877a` | Linux-port commits only (hooks, sessions CLI, etc.) |
+| `daemon/remote/` | `adc48877a` | Cherry-pick `d19f59aa2` (remote PTY PATH) |
+| `ghostty/` submodule | `a78fe53ef` | `patches/*.patch` via bootstrap |
+
+## Re-sync cadence
+
+Monthly (or sooner if a known-fixed upstream bug bites us): follow the procedure
+in [`UPSTREAM.md`](./UPSTREAM.md). Goal: keep the classification table honest so
+contributors can see at a glance whether a release is "up to date with upstream
+@ X" or deliberately behind.
 
 ## What was NOT touched
 
