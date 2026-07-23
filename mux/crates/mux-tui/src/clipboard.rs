@@ -47,7 +47,11 @@ pub fn write_paste_image(png_or_image: &[u8]) -> Option<PathBuf> {
     let dir = paste_dir()?;
     std::fs::create_dir_all(&dir).ok()?;
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_nanos();
-    let ext = if looks_like_png(png_or_image) { "png" } else { "img" };
+    // Use a real image extension: agents (Claude Code) detect attachments by
+    // file extension, so a `.img` file would not be recognised as an image.
+    // The only non-PNG source is the `image/jpeg` clipboard branch, so any
+    // non-PNG payload here is JPEG.
+    let ext = if looks_like_png(png_or_image) { "png" } else { "jpg" };
     let path = dir.join(format!("paste-{}-{}.{}", std::process::id(), nanos, ext));
     std::fs::write(&path, png_or_image).ok()?;
     Some(path)
