@@ -13,6 +13,7 @@ mod model;
 mod mux;
 mod notify;
 mod persist;
+pub mod process;
 pub mod remote_pty;
 mod short_id;
 mod surface;

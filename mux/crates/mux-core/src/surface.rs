@@ -237,6 +237,10 @@ pub struct PtySurface {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send>>,
+    /// Direct PTY child PID. Used to walk/kill the process tree on
+    /// surface kill (issue #28); grandchildren that double-forked would
+    /// otherwise outlive a single-pid SIGHUP from ChildKiller.
+    child_pid: Option<u32>,
     dead: AtomicBool,
     /// Set when output arrived since the last render; cleared by the
     /// frontend when it draws.
@@ -307,6 +311,7 @@ impl Surface {
 
         let mut child = pty.slave.spawn_command(cmd)?;
         drop(pty.slave);
+        let child_pid = child.process_id();
         let killer = child.clone_killer();
         let mut reader = pty.master.try_clone_reader()?;
         let writer = pty.master.take_writer()?;
@@ -348,6 +353,7 @@ impl Surface {
             writer: Mutex::new(writer),
             master: Mutex::new(pty.master),
             killer: Mutex::new(killer),
+            child_pid,
             dead: AtomicBool::new(false),
             dirty: AtomicBool::new(false),
             title: Mutex::new(String::new()),
@@ -621,6 +627,24 @@ impl Surface {
     pub fn kill(&self) {
         match self {
             Surface::Pty(pty) => {
+                // Issue #28: kill the whole process tree rooted at the PTY
+                // child, not just the direct child. portable_pty's
+                // ChildKiller only SIGHUPs a single pid, so backgrounded
+                // / double-forked grandchildren would otherwise leak.
+                #[cfg(target_os = "linux")]
+                {
+                    if let Ok(master) = pty.master.lock() {
+                        if let Some(pgid) = master.process_group_leader() {
+                            if pgid > 1 {
+                                // Negative pgid = signal the whole process group.
+                                let _ = unsafe { libc::kill(-pgid, libc::SIGTERM) };
+                            }
+                        }
+                    }
+                    if let Some(pid) = pty.child_pid {
+                        crate::process::kill_process_tree(pid);
+                    }
+                }
                 let _ = pty.killer.lock().unwrap().kill();
             }
             Surface::Browser(browser) => browser.kill(),

@@ -1,0 +1,322 @@
+//! Linux process-tree helpers for orphan reaping.
+//!
+//! When a pane's shell exits (or is killed), grandchildren that double-forked
+//! or were backgrounded can outlive the direct PTY child. Combined with
+//! [`set_child_subreaper`], this module lets cmux inherit those orphans and
+//! terminate the whole tree on surface kill / mux shutdown.
+//!
+//! See issue #28.
+
+use std::collections::HashSet;
+use std::time::{Duration, Instant};
+
+/// Make this process a subreaper so orphaned descendants reparent here
+/// instead of PID 1. No-op / returns false on non-Linux.
+///
+/// Safe to call more than once. Requires Linux 3.4+.
+pub fn set_child_subreaper() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // PR_SET_CHILD_SUBREAPER = 36
+        let rc = unsafe { libc::prctl(36, 1i64, 0, 0, 0) };
+        rc == 0
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+/// Whether `pid` is currently alive (same semantics as server::is_process_alive).
+pub fn is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        let res = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if res == 0 {
+            true
+        } else {
+            std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+/// Direct children of `pid` (Linux `/proc/<pid>/task/<pid>/children`, with
+/// a `/proc` scan fallback). Empty on non-Linux.
+pub fn direct_children(pid: u32) -> Vec<u32> {
+    #[cfg(target_os = "linux")]
+    {
+        let path = format!("/proc/{pid}/task/{pid}/children");
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            let kids: Vec<u32> = contents
+                .split_whitespace()
+                .filter_map(|s| s.parse::<u32>().ok())
+                .collect();
+            // Some kernels expose the file but leave it empty for the
+            // calling process in certain contexts; fall through to a scan.
+            if !kids.is_empty() {
+                return kids;
+            }
+        }
+        scan_proc_for_children(pid)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        Vec::new()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn scan_proc_for_children(pid: u32) -> Vec<u32> {
+    let mut kids = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return kids;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.as_bytes().iter().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(child_pid) = name.parse::<u32>() else { continue };
+        if child_pid == pid {
+            continue;
+        }
+        let stat_path = format!("/proc/{child_pid}/stat");
+        let Ok(stat) = std::fs::read_to_string(&stat_path) else {
+            continue;
+        };
+        // /proc/pid/stat: "pid (comm) state ppid ..."
+        // comm may contain spaces/parens; ppid is the first field after
+        // the final ')' of the comm.
+        if let Some(close) = stat.rfind(')') {
+            let after = &stat[close + 1..];
+            let mut fields = after.split_whitespace();
+            // state, ppid
+            let _state = fields.next();
+            if let Some(ppid_s) = fields.next() {
+                if ppid_s.parse::<u32>().ok() == Some(pid) {
+                    kids.push(child_pid);
+                }
+            }
+        }
+    }
+    kids
+}
+
+/// All descendants of `root` (not including `root` itself), depth-first.
+pub fn all_descendants(root: u32) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    let mut seen = HashSet::new();
+    seen.insert(root);
+    while let Some(pid) = stack.pop() {
+        for child in direct_children(pid) {
+            if seen.insert(child) {
+                out.push(child);
+                stack.push(child);
+            }
+        }
+    }
+    out
+}
+
+/// Reap any zombie children of this process (non-blocking).
+pub fn reap_zombies() {
+    #[cfg(unix)]
+    {
+        loop {
+            let mut status: libc::c_int = 0;
+            let rc = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+            if rc <= 0 {
+                break;
+            }
+        }
+    }
+}
+
+/// Send `sig` to every pid in `pids`. Ignores ESRCH / EPERM.
+fn signal_all(pids: &[u32], sig: libc::c_int) {
+    #[cfg(unix)]
+    {
+        for &pid in pids {
+            if pid == 0 {
+                continue;
+            }
+            let _ = unsafe { libc::kill(pid as libc::pid_t, sig) };
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (pids, sig);
+    }
+}
+
+/// Terminate `root` and every descendant: SIGTERM, wait up to `grace`,
+/// then SIGKILL survivors. Also reaps zombies along the way.
+///
+/// Does nothing if `root` is 0 or is this process.
+pub fn kill_process_tree(root: u32) {
+    let self_pid = std::process::id();
+    if root == 0 || root == self_pid {
+        return;
+    }
+
+    // Snapshot tree; re-walk after SIGTERM for late-spawned kids.
+    let mut targets: HashSet<u32> = all_descendants(root).into_iter().collect();
+    targets.insert(root);
+    targets.remove(&self_pid);
+
+    let list: Vec<u32> = targets.into_iter().collect();
+    signal_all(&list, libc::SIGTERM);
+
+    let grace = Duration::from_secs(2);
+    let deadline = Instant::now() + grace;
+    while Instant::now() < deadline {
+        reap_zombies();
+        // Catch late reparents / new children under still-living nodes.
+        let mut still = false;
+        for &pid in &list {
+            if is_alive(pid) {
+                still = true;
+                break;
+            }
+        }
+        // Also pull any new descendants of still-living roots.
+        for d in all_descendants(root) {
+            if d != self_pid && is_alive(d) {
+                still = true;
+                let _ = unsafe { libc::kill(d as libc::pid_t, libc::SIGTERM) };
+            }
+        }
+        if !still && !is_alive(root) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // Final hard kill of anything still around in the tree.
+    let mut survivors = all_descendants(root);
+    survivors.push(root);
+    survivors.retain(|&p| p != self_pid && is_alive(p));
+    signal_all(&survivors, libc::SIGKILL);
+    // Brief wait for SIGKILL to take effect.
+    let hard_deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < hard_deadline {
+        reap_zombies();
+        if survivors.iter().all(|&p| !is_alive(p)) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    reap_zombies();
+}
+
+/// Kill every remaining child process of *this* process (and their
+/// descendants). Used on mux shutdown after surface kills so anything
+/// reparented via the subreaper is cleaned up.
+pub fn kill_remaining_children() {
+    let self_pid = std::process::id();
+    let kids = direct_children(self_pid);
+    for kid in kids {
+        kill_process_tree(kid);
+    }
+    reap_zombies();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn kill_process_tree_reaps_background_grandchild() {
+        // Shape matching issue #28 acceptance:
+        //   sh -c 'sleep 999 & wait'  — sleep is a grandchild that would
+        //   normally reparent to init if sh exits first.
+        let enabled = set_child_subreaper();
+        assert!(enabled, "PR_SET_CHILD_SUBREAPER should succeed on Linux");
+
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "sleep 999 & exec sleep 998"])
+            .spawn()
+            .expect("spawn shell tree");
+        let root = child.id();
+
+        // Wait until the background sleep is visible as a descendant.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut found_bg = false;
+        while Instant::now() < deadline {
+            let desc = all_descendants(root);
+            // Either sleep 999 is under root, or (if exec replaced sh) we
+            // still have the root sleep 998 alive.
+            if is_alive(root) {
+                // Look for any sleep-named descendant via /proc.
+                for d in &desc {
+                    if let Ok(cmd) = std::fs::read_to_string(format!("/proc/{d}/cmdline")) {
+                        if cmd.contains("sleep") {
+                            found_bg = true;
+                            break;
+                        }
+                    }
+                }
+                // Even without finding the bg sleep yet, proceed once root is up.
+                if found_bg || Instant::now() > deadline - Duration::from_secs(1) {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(is_alive(root), "root should still be alive before kill");
+
+        // Snapshot every descendant so we can assert none survive.
+        let mut watched = all_descendants(root);
+        watched.push(root);
+
+        kill_process_tree(root);
+        let _ = child.try_wait();
+
+        // Nothing in the original tree (or reparented to us) should remain.
+        for pid in watched {
+            assert!(!is_alive(pid), "pid {pid} should be dead after kill_process_tree");
+        }
+
+        // Also assert no leftover "sleep 999" from this test.
+        // (Best-effort: only fail if we can still see a descendant we tracked.)
+        reap_zombies();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn direct_children_finds_spawned_child() {
+        let mut child = Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+        // Give the kernel a moment to publish the child in /proc.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut found = false;
+        while Instant::now() < deadline {
+            let kids = direct_children(std::process::id());
+            if kids.contains(&pid) {
+                found = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(found, "expected {pid} in direct_children of self");
+        let _ = child.kill();
+        let _ = child.wait();
+        reap_zombies();
+    }
+}

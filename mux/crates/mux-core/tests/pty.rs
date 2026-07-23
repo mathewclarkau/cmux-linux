@@ -742,3 +742,61 @@ fn session_persists_layout_and_cwd_across_simulated_restart() {
     std::env::remove_var("XDG_STATE_HOME");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Issue #28 acceptance: spawning a background `sleep` under a pane shell,
+/// then shutting down the mux, leaves zero leftover processes from that tree.
+#[test]
+#[cfg(target_os = "linux")]
+fn shutdown_kills_background_grandchild_sleep() {
+    let _ = mux_core::process::set_child_subreaper();
+
+    // Shape: shell backgrounds sleep 999, then becomes sleep 998 so the
+    // surface stays alive until mux.shutdown().
+    let mux = Mux::new(
+        unique_session("issue28-tree"),
+        SurfaceOptions {
+            command: Some(vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "sleep 999 & exec sleep 998".into(),
+            ]),
+            ..Default::default()
+        },
+    );
+    let _surface = mux.new_workspace(None, None).unwrap();
+
+    // Collect PIDs we care about (any sleep 998/999 that is a descendant
+    // of this test process via the subreaper / surface child).
+    let self_pid = std::process::id();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut watched: Vec<u32> = Vec::new();
+    while Instant::now() < deadline {
+        watched = mux_core::process::all_descendants(self_pid)
+            .into_iter()
+            .filter(|&pid| {
+                std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
+                    .map(|c| c.contains("sleep") && (c.contains("999") || c.contains("998")))
+                    .unwrap_or(false)
+            })
+            .collect();
+        if !watched.is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !watched.is_empty(),
+        "expected sleep 998/999 descendant(s) before shutdown"
+    );
+
+    mux.shutdown();
+
+    let leftover: Vec<u32> = watched
+        .into_iter()
+        .filter(|&pid| mux_core::process::is_alive(pid))
+        .collect();
+    assert!(
+        leftover.is_empty(),
+        "leftover sleep PIDs after mux.shutdown(): {leftover:?}"
+    );
+}
