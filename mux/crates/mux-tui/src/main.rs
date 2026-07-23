@@ -24,6 +24,7 @@ mod keys;
 mod pi_hook;
 mod session;
 mod skill_content;
+mod socket_watchdog;
 mod ssh_bootstrap;
 mod ui;
 
@@ -235,6 +236,9 @@ fn main() {
     if raw_args.first().map(|arg| arg.as_str()) == Some("ssh") {
         std::process::exit(ssh_bootstrap::run(&raw_args[1..]));
     }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("socket-watchdog") {
+        std::process::exit(socket_watchdog::run(&raw_args[1..]));
+    }
     if cli::is_cli_invocation(&raw_args) {
         std::process::exit(cli::run(&raw_args, USAGE));
     }
@@ -280,6 +284,9 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     mux.restore_session();
     mux.enable_persistence();
     mux_core::server::serve(mux.clone(), Some(socket_path.clone()))?;
+    // Issue #27: detached companion that unlinks .sock/.pid if we die via
+    // SIGKILL (handlers/atexit never run). Harmless no-op on graceful exit.
+    socket_watchdog::spawn(std::process::id(), &socket_path);
 
     let result = if args.headless {
         run_headless(&mux, &socket_path)

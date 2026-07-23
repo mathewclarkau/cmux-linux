@@ -852,29 +852,12 @@ fn serve_recovers_from_stale_socket() {
     let socket = dir.join("recover.sock");
     let pid_file = dir.join("recover.pid");
 
-    // Spawn a daemon and SIGKILL it without cleanup
-    let mut child = Command::new(bin())
-        .args(["--headless", "--socket"])
-        .arg(&socket)
-        .env("XDG_RUNTIME_DIR", &dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline {
-        if socket.exists() && pid_file.exists() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-
-    let _ = child.kill();
-    let _ = child.wait();
-
-    // Verify stale socket still exists on disk
+    // Synthetic stale pair (dead PID). We no longer rely on SIGKILL leaving
+    // files behind — the socket-watchdog (#27) cleans those up within ≤5s.
+    fs::write(&socket, b"").unwrap();
+    fs::write(&pid_file, "999999\n").unwrap();
     assert!(socket.exists());
+    assert!(pid_file.exists());
 
     // Start a new daemon on the same socket path — should clear stale socket and bind
     let mut child2 = Command::new(bin())
@@ -903,5 +886,56 @@ fn serve_recovers_from_stale_socket() {
 
     let _ = child2.kill();
     let _ = child2.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Issue #27 acceptance: `kill -9` on a headless daemon leaves zero
+/// leftover `.sock`/`.pid` files within ≤5s without operator action.
+#[test]
+fn sigkill_watchdog_removes_socket_and_pid_within_5s() {
+    let dir = unique_temp_dir("sigkill-wd");
+    fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("wd-sess.sock");
+    let pid_file = dir.join("wd-sess.pid");
+
+    let mut child = Command::new(bin())
+        .args(["--headless", "--socket"])
+        .arg(&socket)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if socket.exists() && pid_file.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(socket.exists(), "daemon should create socket");
+    assert!(pid_file.exists(), "daemon should create pid file");
+
+    // SIGKILL bypasses handlers/atexit — only the external watchdog cleans up.
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let cleanup_deadline = Instant::now() + Duration::from_secs(5);
+    let mut cleaned = false;
+    while Instant::now() < cleanup_deadline {
+        if !socket.exists() && !pid_file.exists() {
+            cleaned = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        cleaned,
+        "watchdog should unlink socket+pid within 5s after SIGKILL (socket={}, pid={})",
+        socket.exists(),
+        pid_file.exists()
+    );
+
     let _ = fs::remove_dir_all(&dir);
 }
