@@ -2,6 +2,8 @@
 
 `cmux` reads `~/.config/cmux/mux.json`, or `$XDG_CONFIG_HOME/cmux/mux.json` when `XDG_CONFIG_HOME` is set. Set `CMUX_MUX_CONFIG` to use another file; it takes precedence over both. Every documented key is optional. Unknown keys in the typed sections make the raw config invalid, so the TUI logs an error and falls back to defaults.
 
+A TOML config file is also supported: `~/.config/cmux/mux.toml` (or `$XDG_CONFIG_HOME/cmux/mux.toml`) is loaded when `mux.json` is absent. When both files exist, `mux.json` wins (it is the explicit override, kept for tooling compatibility). `CMUX_MUX_CONFIG` may point at either a `.toml` or `.json` file; files with no recognised extension are sniffed by content (a leading `{` means JSON, otherwise TOML). Every documented `mux.json` key has an identical TOML equivalent; see the TOML example below.
+
 Colors accept `#rrggbb`, `#rgb`, an xterm-256 number, or a numeric string.
 
 ## Theme
@@ -155,4 +157,67 @@ Chord strings can be single characters or a key name with optional `ctrl`, `cont
     "detach": "d"
   }
 }
+```
+
+## TOML example
+
+The same config expressed as `mux.toml`. TOML is the user-facing surface:
+nested tables read more naturally than JSON, comments are allowed, and
+the enum field (`scrollbar.position`) and multi-value chord arrays map
+cleanly. Keys whose JSON value is `null` (for example `selection_foreground`
+or `tab_active_bg`) are simply omitted in TOML; omitting a key means "no
+override", matching the JSON absent-key semantics.
+
+```toml
+# cmux TOML config: the user-facing surface. When both mux.json and
+# mux.toml exist, mux.json wins (it is the explicit override).
+
+[theme]
+selection_background = "#355c7d"
+# selection_foreground omitted: keep the Ghostty-seeded value (or the default).
+sidebar_rail = "#87afd7"
+sidebar_active_bg = 236
+tab_rail = "#87afd7"
+tab_bg = 236
+# tab_active_bg omitted: keep the focused/unfocused two-tone default.
+border_active = "#87afd7"
+border_inactive = "#444444"
+
+[tabs]
+min_width = 9
+solid_background = true
+show_titles = false
+agents = ["claude", "codex", "grok", "opencode", "pi"]
+
+[sidebar]
+width = 24
+max_width = 40
+
+[browser]
+chrome_binary = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+cdp_url = "http://127.0.0.1:9222"
+discover = true
+discover_ports = [9222, 9223]
+user_data_dir = "/Users/me/Library/Application Support/cmux/chrome-profile"
+ephemeral = false
+
+[scrollbar]
+position = "column"
+
+[keys]
+prefix = "ctrl+a"
+alt_shortcuts = false
+"new-tab" = ["t", "alt+t"]
+"new_browser_tab" = "B"
+"new-pane-smart" = "alt+n"
+"next-tab" = "tab"
+"prev-tab" = "backtab"
+"next-screen" = ["n", "alt+]"]
+"prev-screen" = ["p", "alt+["]
+"rename-tab" = "r"
+"rename-screen" = ","
+"focus-left" = ["h", "left", "alt+h", "alt+left"]
+"focus-right" = ["l", "right", "alt+l", "alt+right"]
+"close-pane" = "none"
+detach = "d"
 ```

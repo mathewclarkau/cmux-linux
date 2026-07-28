@@ -56,6 +56,7 @@
 //! default.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use mux_core::platform;
@@ -154,7 +155,7 @@ pub enum ScrollbarPosition {
     Border,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Scrollbar {
     pub position: ScrollbarPosition,
 }
@@ -183,7 +184,7 @@ impl ColorValue {
 }
 
 /// Resolved presentation colors used by the renderers.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     pub selection_bg: Color,
     /// None keeps each cell's own foreground under the selection.
@@ -216,7 +217,7 @@ impl Default for Theme {
 }
 
 /// Tab-bar behavior.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Tabs {
     /// Minimum label width in cells (padded with spaces).
     pub min_width: u16,
@@ -242,7 +243,7 @@ impl Default for Tabs {
 }
 
 /// Sidebar behavior.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sidebar {
     pub width: u16,
     pub max_width: u16,
@@ -254,7 +255,7 @@ impl Default for Sidebar {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Browser {
     pub chrome_binary: Option<String>,
     pub cdp_url: Option<String>,
@@ -380,7 +381,7 @@ impl Chord {
 }
 
 /// Resolved key bindings: the prefix chord plus one chord per action.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Keys {
     pub prefix: Chord,
     bindings: Vec<(Chord, Action)>,
@@ -596,7 +597,7 @@ fn parse_chord(s: &str) -> Option<Chord> {
 }
 
 /// Full resolved configuration.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Config {
     pub theme: Theme,
     pub tabs: Tabs,
@@ -740,7 +741,16 @@ fn agent_in_title(tabs: &Tabs, title: &str) -> Option<String> {
 fn load_raw_config() -> RawConfig {
     let Some(path) = platform::config_path() else { return RawConfig::default() };
     let Ok(text) = std::fs::read_to_string(&path) else { return RawConfig::default() };
-    match serde_json::from_str(&text) {
+    let parsed = if is_toml_path(&path) {
+        toml::from_str(&text).map_err(|e| e.to_string())
+    } else if is_json_path(&path) {
+        serde_json::from_str(&text).map_err(|e| e.to_string())
+    } else if looks_like_json(&text) {
+        serde_json::from_str(&text).map_err(|e| e.to_string())
+    } else {
+        toml::from_str(&text).map_err(|e| e.to_string())
+    };
+    match parsed {
         Ok(config) => config,
         Err(e) => {
             // A broken config should not take the TUI down; complain on
@@ -749,6 +759,30 @@ fn load_raw_config() -> RawConfig {
             RawConfig::default()
         }
     }
+}
+
+/// True when the path extension (or `CMUX_MUX_CONFIG` value) marks a
+/// TOML file.
+fn is_toml_path(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
+}
+
+/// True when the path extension marks a JSON file.
+fn is_json_path(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+}
+
+/// Content sniff for files with no recognised extension: a leading `{`
+/// (after whitespace and Byte-Order-Mark) means JSON; anything else is
+/// TOML. TOML never starts with a brace.
+fn looks_like_json(text: &str) -> bool {
+    let mut chars = text.chars();
+    if text.starts_with('\u{feff}') {
+        chars.next();
+    }
+    chars
+        .find(|c| !c.is_whitespace())
+        .is_some_and(|c| c == '{')
 }
 
 /// `#rrggbb`, `#rgb`, or an xterm-256 index in a string.
@@ -980,5 +1014,281 @@ mod tests {
             Browser::default().max_capture_megapixels
         );
         assert_eq!(config.browser.capture_scale, None);
+    }
+
+    // --- TOML config support (issue #37) ---
+
+    /// JSON and TOML configs carrying identical data, used to verify
+    /// every key round-trips between the two formats.
+    const JSON_EXAMPLE: &str = r##"{
+  "theme": {
+    "selection_background": "#355c7d",
+    "selection_foreground": "#ffffff",
+    "sidebar_rail": "#87afd7",
+    "sidebar_active_bg": 236,
+    "tab_rail": "#87afd7",
+    "tab_bg": 236,
+    "tab_active_bg": "#87afd7",
+    "border_active": "#87afd7",
+    "border_inactive": "#444444"
+  },
+  "tabs": {
+    "min_width": 9,
+    "solid_background": true,
+    "show_titles": false,
+    "agents": ["claude", "codex", "grok", "opencode", "pi"]
+  },
+  "sidebar": { "width": 24, "max_width": 40 },
+  "browser": {
+    "chrome_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "cdp_url": "http://127.0.0.1:9222",
+    "discover": true,
+    "discover_ports": [9222, 9223],
+    "user_data_dir": "/Users/me/Library/Application Support/cmux/chrome-profile",
+    "ephemeral": false,
+    "max_capture_megapixels": 2.0,
+    "capture_scale": 0.5
+  },
+  "scrollbar": { "position": "column" },
+  "keys": {
+    "prefix": "ctrl+a",
+    "alt_shortcuts": false,
+    "new-tab": ["t", "alt+t"],
+    "new_browser_tab": "B",
+    "new-pane-smart": "alt+n",
+    "next-tab": "tab",
+    "prev-tab": "backtab",
+    "next-screen": ["n", "alt+]"],
+    "prev-screen": ["p", "alt+["],
+    "rename-tab": "r",
+    "rename-screen": ",",
+    "focus-left": ["h", "left", "alt+h", "alt+left"],
+    "focus-right": ["l", "right", "alt+l", "alt+right"],
+    "close-pane": "none",
+    "detach": "d"
+  }
+}
+"##;
+
+    const TOML_EXAMPLE: &str = r##"
+# cmux TOML config: the user-facing surface. When both mux.json and
+# mux.toml exist, mux.json wins (it is the explicit override).
+[theme]
+selection_background = "#355c7d"
+selection_foreground = "#ffffff"
+sidebar_rail = "#87afd7"
+sidebar_active_bg = 236
+tab_rail = "#87afd7"
+tab_bg = 236
+tab_active_bg = "#87afd7"
+border_active = "#87afd7"
+border_inactive = "#444444"
+
+[tabs]
+min_width = 9
+solid_background = true
+show_titles = false
+agents = ["claude", "codex", "grok", "opencode", "pi"]
+
+[sidebar]
+width = 24
+max_width = 40
+
+[browser]
+chrome_binary = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+cdp_url = "http://127.0.0.1:9222"
+discover = true
+discover_ports = [9222, 9223]
+user_data_dir = "/Users/me/Library/Application Support/cmux/chrome-profile"
+ephemeral = false
+max_capture_megapixels = 2.0
+capture_scale = 0.5
+
+[scrollbar]
+position = "column"
+
+[keys]
+prefix = "ctrl+a"
+alt_shortcuts = false
+"new-tab" = ["t", "alt+t"]
+"new_browser_tab" = "B"
+"new-pane-smart" = "alt+n"
+"next-tab" = "tab"
+"prev-tab" = "backtab"
+"next-screen" = ["n", "alt+]"]
+"prev-screen" = ["p", "alt+["]
+"rename-tab" = "r"
+"rename-screen" = ","
+"focus-left" = ["h", "left", "alt+h", "alt+left"]
+"focus-right" = ["l", "right", "alt+l", "alt+right"]
+"close-pane" = "none"
+detach = "d"
+"##;
+
+    fn unique_dir(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("mux-config-test-{name}-{}", std::process::id()))
+    }
+
+    #[test]
+    fn toml_round_trips_identically_to_json() {
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap();
+        let dir = unique_dir("rt");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let json_path = dir.join("mux.json");
+        let toml_path = dir.join("mux.toml");
+        std::fs::write(&json_path, JSON_EXAMPLE).unwrap();
+        std::fs::write(&toml_path, TOML_EXAMPLE).unwrap();
+
+        std::env::set_var("CMUX_MUX_CONFIG", &json_path);
+        let from_json = load();
+        std::env::set_var("CMUX_MUX_CONFIG", &toml_path);
+        let from_toml = load();
+        std::env::remove_var("CMUX_MUX_CONFIG");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // The `keys.bindings` Vec is rebuilt by iterating a HashMap, whose
+        // order is randomised per map, so two `load()` calls do not produce
+        // a stable Vec order. Compare every typed field plus the bindings as
+        // a set so the round trip is about identity of the resolved config,
+        // not the storage order of an unordered map.
+        assert_eq!(from_json.theme, from_toml.theme);
+        assert_eq!(from_json.tabs, from_toml.tabs);
+        assert_eq!(from_json.sidebar, from_toml.sidebar);
+        assert_eq!(from_json.browser, from_toml.browser);
+        assert_eq!(from_json.scrollbar, from_toml.scrollbar);
+        assert_eq!(from_json.keys.prefix, from_toml.keys.prefix);
+        assert_eq!(from_json.keys.bindings.len(), from_toml.keys.bindings.len());
+        for (chord, action) in &from_json.keys.bindings {
+            assert!(
+                from_toml.keys.bindings.iter().any(|(c, a)| c == chord && a == action),
+                "JSON-only binding {chord:?} -> {action:?} absent in TOML round trip"
+            );
+        }
+        // Sanity: the JSON path also produced concrete overrides, not just
+        // the defaults, so the equality above is meaningful.
+        assert_eq!(from_json.theme.sidebar_rail, Color::Rgb(0x87, 0xaf, 0xd7));
+        assert_eq!(from_json.tabs.min_width, 9);
+        assert_eq!(from_json.sidebar.width, 24);
+        assert_eq!(from_json.browser.discover_ports, vec![9222, 9223]);
+        assert_eq!(from_json.scrollbar.position, ScrollbarPosition::Column);
+        assert_eq!(from_json.keys.prefix.mods & KeyModifiers::CONTROL, KeyModifiers::CONTROL);
+        assert_eq!(
+            from_json.keys.action_for(&KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
+            Some(Action::RenameTab)
+        );
+    }
+
+    #[test]
+    fn mux_toml_loaded_when_only_toml_present() {
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("CMUX_MUX_CONFIG");
+        let dir = unique_dir("only-toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cmux_dir = dir.join("cmux");
+        std::fs::create_dir_all(&cmux_dir).unwrap();
+        // A minimal TOML that overrides one distinguishable colour.
+        std::fs::write(
+            cmux_dir.join("mux.toml"),
+            r##"
+[theme]
+sidebar_rail = 99
+"##,
+        )
+        .unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+        let config = load();
+        // Capture the path while XDG_CONFIG_HOME still points at the temp
+        // dir and the files exist; config_path() does its own existence
+        // check, so it must run before cleanup.
+        let resolved = platform::config_path();
+        std::env::remove_var("XDG_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(config.theme.sidebar_rail, Color::Indexed(99));
+        assert_eq!(resolved, Some(dir.join("cmux").join("mux.toml")));
+    }
+
+    #[test]
+    fn mux_json_wins_when_both_present() {
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("CMUX_MUX_CONFIG");
+        let dir = unique_dir("json-wins");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cmux_dir = dir.join("cmux");
+        std::fs::create_dir_all(&cmux_dir).unwrap();
+        std::fs::write(cmux_dir.join("mux.json"), r##"{"theme": {"sidebar_rail": 42}}"##).unwrap();
+        std::fs::write(
+            cmux_dir.join("mux.toml"),
+            r##"
+[theme]
+sidebar_rail = 99
+"##,
+        )
+        .unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+        let config = load();
+        let resolved = platform::config_path();
+        std::env::remove_var("XDG_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // JSON is the explicit override and wins over TOML.
+        assert_eq!(config.theme.sidebar_rail, Color::Indexed(42));
+        assert_eq!(resolved, Some(dir.join("cmux").join("mux.json")));
+    }
+
+    #[test]
+    fn cmux_mux_config_accepts_toml_or_json_by_extension() {
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap();
+        let dir = unique_dir("ext");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let toml_path = dir.join("config.toml");
+        std::fs::write(&toml_path, r##"
+[theme]
+sidebar_rail = 77
+"##).unwrap();
+        std::env::set_var("CMUX_MUX_CONFIG", &toml_path);
+        assert_eq!(load().theme.sidebar_rail, Color::Indexed(77));
+
+        let json_path = dir.join("config.json");
+        std::fs::write(&json_path, r##"{"theme": {"sidebar_rail": 66}}"##).unwrap();
+        std::env::set_var("CMUX_MUX_CONFIG", &json_path);
+        assert_eq!(load().theme.sidebar_rail, Color::Indexed(66));
+
+        std::env::remove_var("CMUX_MUX_CONFIG");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cmux_mux_config_sniffs_content_when_extension_missing() {
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap();
+        let dir = unique_dir("sniff");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // No extension: TOML content (starts with a comment, not `{`).
+        let toml_path = dir.join("config");
+        std::fs::write(
+            &toml_path,
+            r##"
+# a TOML cmux config
+[theme]
+sidebar_rail = 55
+"##,
+        )
+        .unwrap();
+        std::env::set_var("CMUX_MUX_CONFIG", &toml_path);
+        assert_eq!(load().theme.sidebar_rail, Color::Indexed(55));
+
+        // No extension: JSON content (the first non-whitespace char is `{`).
+        let json_path = dir.join("cfg");
+        std::fs::write(&json_path, r##"{"theme": {"sidebar_rail": 44}}"##).unwrap();
+        std::env::set_var("CMUX_MUX_CONFIG", &json_path);
+        assert_eq!(load().theme.sidebar_rail, Color::Indexed(44));
+
+        std::env::remove_var("CMUX_MUX_CONFIG");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

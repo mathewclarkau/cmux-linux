@@ -124,25 +124,42 @@ pub fn session_snapshot_path(session: &str) -> PathBuf {
     base.join("cmux").join("sessions").join(format!("{session}.json"))
 }
 
-/// User config file path, honoring the XDG override order.
+/// User config directory, honoring the XDG override order. The config
+/// file itself is `mux.json` or `mux.toml` inside this directory.
+pub fn config_dir() -> Option<PathBuf> {
+    if let Some(config_home) = env_path("XDG_CONFIG_HOME") {
+        return Some(config_home.join("cmux"));
+    }
+    platform_config_dir()
+}
+
+/// User config file path, honoring the XDG override order. The legacy
+/// `mux.json` wins when both JSON and TOML exist (it is the explicit
+/// override); otherwise `mux.toml` is loaded when present.
 pub fn config_path() -> Option<PathBuf> {
     if let Some(path) = env_path("CMUX_MUX_CONFIG") {
         return Some(path);
     }
-    if let Some(config_home) = env_path("XDG_CONFIG_HOME") {
-        return Some(config_home.join("cmux").join("mux.json"));
+    let dir = config_dir()?;
+    let json_path = dir.join("mux.json");
+    if json_path.exists() {
+        return Some(json_path);
     }
-    platform_config_path()
+    let toml_path = dir.join("mux.toml");
+    if toml_path.exists() {
+        return Some(toml_path);
+    }
+    Some(json_path)
 }
 
 #[cfg(not(windows))]
-fn platform_config_path() -> Option<PathBuf> {
-    home_dir().map(|home| home.join(".config").join("cmux").join("mux.json"))
+fn platform_config_dir() -> Option<PathBuf> {
+    home_dir().map(|home| home.join(".config").join("cmux"))
 }
 
 #[cfg(windows)]
-fn platform_config_path() -> Option<PathBuf> {
-    env_path("APPDATA").map(|appdata| appdata.join("cmux").join("mux.json"))
+fn platform_config_dir() -> Option<PathBuf> {
+    env_path("APPDATA").map(|appdata| appdata.join("cmux"))
 }
 
 /// Default interactive shell for spawned PTY surfaces.
