@@ -420,6 +420,9 @@ pub struct App {
     pub menu: Option<ContextMenu>,
     pub prompt: Option<Prompt>,
     pub omnibar: Option<OmnibarState>,
+    /// Fuzzy finder overlay (`leader G`). Open mutably borrows the tree
+    /// to build its item list, so it holds no `Session` of its own.
+    pub finder: Option<crate::finder::FinderState>,
     pub toast: Option<Toast>,
     pub(crate) shake_frames: u8,
     /// Workspaces with an active manual flash pulse, keyed by when it
@@ -670,6 +673,7 @@ pub fn run(session: Session, session_label: String) -> anyhow::Result<()> {
         menu: None,
         prompt: None,
         omnibar: None,
+        finder: None,
         toast: None,
         shake_frames: 0,
         flashing: HashMap::new(),
@@ -980,6 +984,9 @@ impl App {
                 if let Some(prompt) = self.prompt.as_mut() {
                     prompt.input.insert_str(&text);
                     Ok(RenderAction::Draw)
+                } else if let Some(finder) = self.finder.as_mut() {
+                    finder.input.insert_str(&text);
+                    Ok(RenderAction::Draw)
                 } else if let Some(state) = self.omnibar.as_mut() {
                     clear_omnibar_selection(state);
                     state.input.insert_str(&text);
@@ -1133,6 +1140,9 @@ impl App {
         self.status_message = None;
         if self.prompt.is_some() {
             return self.handle_prompt_key(key);
+        }
+        if self.finder.is_some() {
+            return self.handle_finder_key(key);
         }
         if self.menu.is_some() {
             return self.handle_menu_key(key);
@@ -1402,6 +1412,10 @@ impl App {
                 self.quit = true;
                 return Ok(RenderAction::None);
             }
+            Action::OpenFuzzyFinder => {
+                self.open_finder();
+                return Ok(RenderAction::Draw);
+            }
         }
         self.status_message = None;
         Ok(RenderAction::Draw)
@@ -1409,6 +1423,97 @@ impl App {
 
     fn set_status_from_browser_result(&mut self, result: anyhow::Result<()>) {
         self.status_message = result.err().map(|err| err.to_string());
+    }
+
+    /// Open the fuzzy finder overlay, seeding it from the current tree
+    /// snapshot. Closing on Escape or focus sets it back to `None`.
+    fn open_finder(&mut self) {
+        let items = crate::finder::build_items(&self.tree);
+        self.finder = Some(crate::finder::FinderState::new(items));
+    }
+
+    /// Keys while the finder is open: typing edits the query, Up/Down
+    /// move the cursor, `B`/`W`/`I`/`D`/`A` set the state filter, Enter
+    /// focuses the selected target, Escape closes.
+    fn handle_finder_key(&mut self, key: KeyEvent) -> anyhow::Result<RenderAction> {
+        let Some(finder) = self.finder.as_mut() else { return Ok(RenderAction::None) };
+        match key.code {
+            KeyCode::Esc => {
+                self.finder = None;
+                return Ok(RenderAction::Draw);
+            }
+            KeyCode::Up => {
+                finder.move_cursor(-1);
+                return Ok(RenderAction::Draw);
+            }
+            KeyCode::Down => {
+                finder.move_cursor(1);
+                return Ok(RenderAction::Draw);
+            }
+            KeyCode::Enter => {
+                let target = finder.selected();
+                self.finder = None;
+                if let Some(target) = target {
+                    self.focus_finder_target(target);
+                }
+                return Ok(RenderAction::Draw);
+            }
+            KeyCode::Char('B') => finder.state_filter = crate::finder::StateFilter::Blocked,
+            KeyCode::Char('W') => finder.state_filter = crate::finder::StateFilter::Working,
+            KeyCode::Char('I') => finder.state_filter = crate::finder::StateFilter::Idle,
+            KeyCode::Char('D') => finder.state_filter = crate::finder::StateFilter::Done,
+            KeyCode::Char('A') => finder.state_filter = crate::finder::StateFilter::All,
+            _ => match finder.input.handle_key(&key) {
+                crate::ui::input::InputEvent::Cancel => {
+                    self.finder = None;
+                    return Ok(RenderAction::Draw);
+                }
+                crate::ui::input::InputEvent::Commit => {
+                    let target = finder.selected();
+                    self.finder = None;
+                    if let Some(target) = target {
+                        self.focus_finder_target(target);
+                    }
+                    return Ok(RenderAction::Draw);
+                }
+                crate::ui::input::InputEvent::Changed | crate::ui::input::InputEvent::None => {}
+            },
+        }
+        // Typing or a filter change resets the cursor to the top row.
+        finder.cursor = 0;
+        Ok(RenderAction::Draw)
+    }
+
+    /// Resolve a finder target to a focus action against the session.
+    /// Focusing a surface also activates its workspace, screen, pane,
+    /// and tab so the user lands on the agent they picked.
+    fn focus_finder_target(&self, target: crate::finder::FinderTarget) {
+        use crate::finder::FinderTarget;
+        match target {
+            FinderTarget::Workspace(id) => {
+                if let Some(index) = self.tree.workspaces.iter().position(|ws| ws.id == id) {
+                    self.session.select_workspace(Some(index), None);
+                }
+            }
+            FinderTarget::Pane(id) => {
+                self.session.focus_pane(id);
+            }
+            FinderTarget::Surface(id) => {
+                for ws in &self.tree.workspaces {
+                    for screen in &ws.screens {
+                        for pane in &screen.panes {
+                            if let Some(tab_index) =
+                                pane.tabs.iter().position(|tab| tab.surface == id)
+                            {
+                                self.session.focus_pane(pane.id);
+                                self.session.select_tab(Some(pane.id), Some(tab_index), None);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn open_rename_tab_prompt(&mut self, pane: Option<PaneId>) {

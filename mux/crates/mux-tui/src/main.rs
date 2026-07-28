@@ -16,6 +16,7 @@ mod clipboard;
 mod codex_hook;
 mod config;
 mod desktop_notify;
+mod finder;
 mod git_info;
 mod grok_hook;
 mod hook_merge;

@@ -38,9 +38,12 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
     overlay::draw_menu(app, frame);
 
     // The dialog owns the terminal cursor while it is open (draw_prompt
-    // sets it on the input row).
+    // sets it on the input row). The fuzzy finder is the next overlay up
+    // in the priority stack and owns the cursor while open.
     if app.prompt.is_some() {
         overlay::draw_prompt(app, frame);
+    } else if app.finder.is_some() {
+        crate::finder::draw(app, frame);
     } else if app.menu.is_none() {
         if let Some((x, y)) = cursor {
             frame.set_cursor_position(Position::new(x, y));
