@@ -409,6 +409,11 @@ pub struct App {
     sidebar_width_override: Option<u16>,
     /// Pane region of the current frame (screen minus sidebar/status).
     pub content_area: Rect,
+    /// Full terminal rect of the current frame (the area `ui::draw`
+    /// renders into). Cached here so the finder click hit-test can map a
+    /// screen-space click to a results row without re-reading the
+    /// terminal between events.
+    pub screen: Rect,
     /// Clickable regions of the current frame, rebuilt by the renderers.
     pub hits: Vec<(Rect, Hit)>,
     /// Per-pane tab-bar scroll offset (first visible tab index), for
@@ -667,6 +672,7 @@ pub fn run(session: Session, session_label: String) -> anyhow::Result<()> {
         sidebar_width: 0,
         sidebar_width_override: None,
         content_area: Rect::default(),
+        screen: Rect::default(),
         hits: Vec::new(),
         tab_scroll: HashMap::new(),
         hover: None,
@@ -874,6 +880,7 @@ impl App {
     /// content sizes to surfaces.
     fn sync_layout(&mut self, size: (u16, u16)) {
         let (width, height) = size;
+        self.screen = Rect { x: 0, y: 0, width, height };
         self.sidebar_width = sidebar_width_for(
             &self.config,
             self.sidebar_visible,
@@ -1516,6 +1523,29 @@ impl App {
         }
     }
 
+    /// Left-click while the finder overlay is open. A click that lands on
+    /// a results row focuses that row's target and closes the finder, the
+    /// same outcome as pressing Enter on it; a click anywhere else in the
+    /// overlay (border, title, query input, filter label) or off it
+    /// entirely is a no-op so the user keeps their typed query.
+    fn handle_finder_click(&mut self, x: u16, y: u16) -> anyhow::Result<RenderAction> {
+        let screen = self.screen;
+        let Some(row) = crate::finder::finder_row_at(screen, x, y) else {
+            return Ok(RenderAction::None);
+        };
+        let target = match self.finder.as_mut() {
+            Some(finder) => finder
+                .ranked()
+                .get(row)
+                .map(|(item_i, _)| finder.items[*item_i].target),
+            None => None,
+        };
+        let Some(target) = target else { return Ok(RenderAction::None) };
+        self.finder = None;
+        self.focus_finder_target(target);
+        Ok(RenderAction::Draw)
+    }
+
     fn open_rename_tab_prompt(&mut self, pane: Option<PaneId>) {
         let Some(pane) = pane else { return };
         let Some(tab) = self.tree.pane(pane).and_then(|p| p.tabs.get(p.active_tab)) else {
@@ -2151,6 +2181,14 @@ impl App {
     fn handle_left_down(&mut self, x: u16, y: u16) -> anyhow::Result<RenderAction> {
         self.selection = None;
         self.drag = None;
+
+        // An open finder overlay captures the click: a click on a results
+        // row focuses that target and closes the finder; a click in the
+        // overlay chrome or off it leaves the finder open so an errant
+        // click does not discard the typed query.
+        if self.finder.is_some() {
+            return self.handle_finder_click(x, y);
+        }
 
         // An open rename dialog captures the click.
         if self.prompt.is_some() {

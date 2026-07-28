@@ -58,6 +58,10 @@ pub struct TabView {
     pub title: String,
     pub cwd: Option<String>,
     pub agent_state: Option<AgentState>,
+    /// The agent session id reported on this surface (the same string
+    /// `list-agents` reports as `session`), if any. Surfaced here so the
+    /// fuzzy finder can index it for type-ahead search.
+    pub agent_session: Option<String>,
     pub kind: SurfaceKind,
     pub browser_source: Option<BrowserSource>,
     pub browser_frames_stalled: bool,
@@ -196,6 +200,11 @@ pub fn tree_from_state(state: &State) -> TreeView {
                     title: state.surfaces.get(sid).map(|s| s.title()).unwrap_or_default(),
                     cwd: state.surfaces.get(sid).and_then(|s| s.cwd()),
                     agent_state: state.surfaces.get(sid).and_then(|s| s.agent_report()).map(|r| r.state),
+                    agent_session: state
+                        .surfaces
+                        .get(sid)
+                        .and_then(|s| s.agent_report())
+                        .and_then(|r| r.session.clone()),
                     kind: state.surfaces.get(sid).map(|s| s.kind()).unwrap_or(SurfaceKind::Pty),
                     browser_source: state.surfaces.get(sid).and_then(|s| s.browser_source()),
                     browser_frames_stalled: state
@@ -289,6 +298,10 @@ fn parse_pane(value: &Value) -> Option<PaneView> {
                                 .get("agent_state")
                                 .and_then(|v| v.as_str())
                                 .and_then(AgentState::parse),
+                            agent_session: tab
+                                .get("agent_session")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
                             kind: match tab.get("kind").and_then(|v| v.as_str()) {
                                 Some("browser") => SurfaceKind::Browser,
                                 _ => SurfaceKind::Pty,

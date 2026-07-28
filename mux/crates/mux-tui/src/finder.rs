@@ -8,7 +8,7 @@
 //! matcher is a small subsequence scorer written from scratch (no new
 //! crate, keeping the Cargo.lock at version 3).
 
-use mux_core::{AgentState, PaneId, SurfaceId, WorkspaceId};
+use mux_core::{AgentState, PaneId, Rect, SurfaceId, WorkspaceId};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Position;
 use ratatui::style::{Color, Modifier, Style};
@@ -68,6 +68,10 @@ impl StateFilter {
 pub struct FinderItem {
     pub target: FinderTarget,
     pub label: String,
+    /// The agent session id reported on this row's surface, if any.
+    /// Workspaces and panes carry no session; surfaces carry the same
+    /// `session` string `list-agents` reports, so type-ahead matches it.
+    pub agent_session: Option<String>,
     pub agent_state: Option<AgentState>,
 }
 
@@ -97,7 +101,16 @@ impl FinderState {
             if !self.state_filter.keeps(item.agent_state) {
                 continue;
             }
-            if let Some(score) = fuzzy_score(query, &item.label) {
+            // A row matches if the query is a subsequence of its label OR
+            // of its agent session id (when present). The label still
+            // drives display; the session is purely extra searchable text
+            // so type-ahead covers agent session ids per AC2.
+            let score = fuzzy_score(query, &item.label).or_else(|| {
+                item.agent_session
+                    .as_deref()
+                    .and_then(|s| fuzzy_score(query, s))
+            });
+            if let Some(score) = score {
                 out.push((i, score));
             }
         }
@@ -135,6 +148,7 @@ pub fn build_items(tree: &TreeView) -> Vec<FinderItem> {
         items.push(FinderItem {
             target: FinderTarget::Workspace(ws.id),
             label: format!("#{} {}", ws.short_id, ws.name),
+            agent_session: None,
             agent_state: None,
         });
         for screen in &ws.screens {
@@ -146,6 +160,7 @@ pub fn build_items(tree: &TreeView) -> Vec<FinderItem> {
                         pane.short_id,
                         pane.name.as_deref().unwrap_or(pane.display_name())
                     ),
+                    agent_session: None,
                     agent_state: None,
                 });
                 for tab in &pane.tabs {
@@ -153,6 +168,7 @@ pub fn build_items(tree: &TreeView) -> Vec<FinderItem> {
                     items.push(FinderItem {
                         target: FinderTarget::Surface(tab.surface),
                         label: format!("#{} {}", tab.short_id, title),
+                        agent_session: tab.agent_session.clone(),
                         agent_state: tab.agent_state,
                     });
                 }
@@ -192,21 +208,65 @@ pub fn fuzzy_score(query: &str, hay: &str) -> Option<u32> {
     if qi == query.len() { Some(score) } else { None }
 }
 
+/// The centered bordered-box rectangle the finder overlay occupies,
+/// matching [`draw`]'s geometry. Pure: identical screen sizes produce
+/// identical rects, so the draw path and the click hit-test path share
+/// one source of truth. Returns `None` when the screen is too small.
+pub fn finder_rect(screen: Rect) -> Option<Rect> {
+    let width = 60u16.min(screen.width.saturating_sub(2)).max(30);
+    let height = 14u16.min(screen.height.saturating_sub(2)).max(4);
+    if screen.width < width || screen.height < height {
+        return None;
+    }
+    Some(Rect {
+        x: (screen.width - width) / 2,
+        y: (screen.height - height) / 2,
+        width,
+        height,
+    })
+}
+
+/// Y offset of the first results row inside the overlay box. Kept
+/// alongside [`finder_rect`] so the click hit-test path maps a
+/// screen-space point to a results row with the same arithmetic the
+/// draw path uses.
+const ROWS_TOP_OFFSET: u16 = 4;
+
+/// Map a screen-space click to the 0-based results-row index it lands
+/// on, or `None` when the click is outside the overlay box or in its
+/// title/query/filter chrome (anything above the results region).
+pub fn finder_row_at(screen: Rect, x: u16, y: u16) -> Option<usize> {
+    let rect = finder_rect(screen)?;
+    if !rect.contains(x, y) {
+        return None;
+    }
+    let rows_y = rect.y + ROWS_TOP_OFFSET;
+    let rows_h = rect.height.saturating_sub((ROWS_TOP_OFFSET + 1) as u16);
+    if y < rows_y || y >= rows_y + rows_h {
+        return None;
+    }
+    Some((y - rows_y) as usize)
+}
+
 /// Draw the finder overlay: a bordered box centered on the frame with
 /// the query input on the top row, the state filter on the right of it,
 /// and the ranked rows below. The finder owns the terminal cursor while
 /// open. Best-effort geometry: if the screen is too small, it draws
 /// nothing rather than panicking.
 pub fn draw(app: &mut crate::app::App, frame: &mut Frame) {
-    let screen = frame.area();
+    let ratatui_screen = frame.area();
+    let screen = Rect {
+        x: ratatui_screen.x,
+        y: ratatui_screen.y,
+        width: ratatui_screen.width,
+        height: ratatui_screen.height,
+    };
+    let Some(rect) = finder_rect(screen) else { return };
     let Some(finder) = app.finder.as_mut() else { return };
-    let width: u16 = 60u16.min(screen.width.saturating_sub(2)).max(30);
-    let height: u16 = 14u16.min(screen.height.saturating_sub(2)).max(4);
-    if screen.width < width || screen.height < height {
-        return;
-    }
-    let x = (screen.width - width) / 2;
-    let y = (screen.height - height) / 2;
+    let x = rect.x;
+    let width = rect.width;
+    let height = rect.height;
+    let y = rect.y;
     let base = Style::default().bg(Color::Indexed(236)).fg(Color::Indexed(252));
     let border = base.fg(Color::Indexed(244));
     let title = base.fg(Color::Indexed(255)).add_modifier(Modifier::BOLD);
@@ -220,8 +280,8 @@ pub fn draw(app: &mut crate::app::App, frame: &mut Frame) {
     let (shown, cursor_col) = finder.input.visible_text_and_cursor(input_w as usize);
     let cursor_x = x + 2 + (cursor_col as u16).min(input_w);
     let ranked = finder.ranked();
-    let rows_y = y + 4;
-    let rows_h = height.saturating_sub(5);
+    let rows_y = y + ROWS_TOP_OFFSET;
+    let rows_h = height.saturating_sub((ROWS_TOP_OFFSET + 1) as u16);
 
     // Background, border, title, filter label, and query input row. Drawn
     // in a scope so the buffer borrow ends before we move the terminal
@@ -302,7 +362,23 @@ mod tests {
     use mux_core::AgentState;
 
     fn item(label: &str, state: Option<AgentState>, target: FinderTarget) -> FinderItem {
-        FinderItem { target, label: label.to_string(), agent_state: state }
+        FinderItem { target, label: label.to_string(), agent_session: None, agent_state: state }
+    }
+
+    /// Same as [`item`] but with an agent session id attached, mirroring a
+    /// surface row built from a tab that carries an agent report.
+    fn item_with_session(
+        label: &str,
+        state: Option<AgentState>,
+        target: FinderTarget,
+        session: &str,
+    ) -> FinderItem {
+        FinderItem {
+            target,
+            label: label.to_string(),
+            agent_session: Some(session.to_string()),
+            agent_state: state,
+        }
     }
 
     /// A throwaway target id; only the label and state matter for the
@@ -383,5 +459,79 @@ mod tests {
         for (i, (item_i, _)) in ranked.iter().enumerate() {
             assert_eq!(*item_i, i, "tree order not preserved at row {i}");
         }
+    }
+
+    #[test]
+    fn agent_session_id_is_searchable() {
+        // Two surfaces whose labels share no letters with the session id;
+        // only the agent session id can match the typed query.
+        let items = vec![
+            item_with_session(
+                "shell",
+                Some(AgentState::Working),
+                surf(1),
+                "agent-7f3a-session",
+            ),
+            item_with_session(
+                "shell",
+                Some(AgentState::Idle),
+                surf(2),
+                "agent-7f3b-session",
+            ),
+        ];
+        // A query fragment present only in the session id surfaces the
+        // matching agent row.
+        let mut finder = FinderState::new(items.clone());
+        finder.input = TextInput::new("7f3b".to_string());
+        let ranked = finder.ranked();
+        assert_eq!(ranked.len(), 1, "only the surface whose session id contains the query matches");
+        assert_eq!(finder.items[ranked[0].0].agent_session.as_deref(), Some("agent-7f3b-session"));
+        assert_eq!(finder.items[ranked[0].0].target, surf(2));
+
+        // An empty query still surfaces every row (session id or not).
+        finder.input = TextInput::new(String::new());
+        assert_eq!(finder.ranked().len(), items.len());
+    }
+
+    #[test]
+    fn finder_rect_is_centered_and_too_small_yields_none() {
+        // On a 100x40 screen the box is 60x14, centred by the screen's own
+        // width/height (the overlay positions against the terminal origin,
+        // matching the draw path, so `screen.x` does not shift it).
+        let screen = Rect { x: 10, y: 0, width: 100, height: 40 };
+        let rect = finder_rect(screen).unwrap();
+        assert_eq!(rect.width, 60);
+        assert_eq!(rect.height, 14);
+        assert_eq!(rect.x, (100 - 60) / 2);
+        assert_eq!(rect.y, (40 - 14) / 2);
+
+        // A screen just under the minimum row height has no overlay.
+        let tiny = Rect { x: 0, y: 0, width: 100, height: 3 };
+        assert!(finder_rect(tiny).is_none());
+    }
+
+    #[test]
+    fn finder_row_at_maps_click_to_results_row() {
+        // 100x40 screen: overlay box sits at x=20, y=13, 60x14.
+        let screen = Rect { x: 10, y: 0, width: 100, height: 40 };
+        let rect = finder_rect(screen).unwrap();
+        let rows_y = rect.y + ROWS_TOP_OFFSET;
+
+        // Clicking on the title row (y == rect.y + 1) does NOT select a
+        // results row: it is chrome, not a results row.
+        assert_eq!(finder_row_at(screen, rect.x + 5, rect.y + 1), None);
+        // Clicking on the query input row (y == rect.y + 2) likewise.
+        assert_eq!(finder_row_at(screen, rect.x + 5, rect.y + 2), None);
+        // The first results row maps to index 0.
+        assert_eq!(finder_row_at(screen, rect.x + 5, rows_y), Some(0));
+        // The second results row maps to index 1.
+        assert_eq!(finder_row_at(screen, rect.x + 5, rows_y + 1), Some(1));
+        // A click outside the box entirely selects nothing.
+        assert_eq!(finder_row_at(screen, 0, 0), None);
+        // A click on the bottom border row (rect.y + height - 1) is past
+        // the results region (the last row is reserved for the border) and
+        // so maps to no row.
+        let bottom_border = rect.y + rect.height - 1;
+        assert_eq!(finder_row_at(screen, rect.x + 5, bottom_border), None);
     }
 }
