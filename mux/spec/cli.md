@@ -93,6 +93,40 @@ The generated CLI requires one of `--index` or `--delta` for `select-tab`, `sele
 | `list-agents` | proposed | none | `--surface <id>`, `--state <state>` | agent lines |
 | `report-agent` | proposed | `--surface <id> --state <state> --source socket|hook` | `--session <id>` | none |
 
+## Plugin Verb Group
+
+`cmux plugin` is a local verb group (no control-socket traffic). It manages
+`cmux-plugin.toml` manifests and a small JSON registry under the cmux data
+directory (`$XDG_DATA_HOME/cmux`, or `~/.local/share/cmux` by default).
+
+NOT IMPLEMENTED by this group (deferred to a follow-up PR): plugin
+*execution* (proxying `cmux <plugin-name> <verb>` calls to a running
+plugin process, WASM/WASI sandboxing, the permission model). The verbs
+below only manage manifest state. Do not read them as implying execution.
+
+Manifest file `cmux-plugin.toml`:
+
+```toml
+[plugin]
+name = "pifactory-fleet"        # required, non-empty, single path component
+entry = "bin/fleet.wasm"         # required, non-empty; stored verbatim,
+                                 # not resolved or validated as executable
+verbs = ["deploy", "rollback"]   # required, non-empty; stored verbatim,
+                                 # not proxied to anything yet
+```
+
+| Subcommand | Required args | Optional flags | Human stdout |
+| --- | --- | --- | --- |
+| `cmux plugin list` | none | `--json`, global flags | one line per plugin (`<name> <enabled|disabled> <entry> <verb,verb>`), or `no plugins installed` when empty |
+| `cmux plugin install <manifest-path>` | `<manifest-path>` | none | `installed plugin <name> from <path>` |
+| `cmux plugin uninstall <name>` | `<name>` | none | `uninstalled plugin <name>` |
+| `cmux plugin enable <name>` | `<name>` | none | `plugin <name> enabled` (or `... already enabled`) |
+| `cmux plugin disable <name>` | `<name>` | none | `plugin <name> disabled` (or `... already disabled`) |
+
+Exit codes follow the global convention: `0` success, `1` command error
+(missing/malformed manifest, name collision, unknown plugin), `2` usage
+error (missing/extra positional argument, unknown subcommand).
+
 ## Worked Examples
 
 1. Identify a session:

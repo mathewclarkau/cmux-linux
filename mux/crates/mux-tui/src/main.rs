@@ -23,6 +23,7 @@ mod hook_merge;
 mod host_colors;
 mod keys;
 mod pi_hook;
+mod plugin;
 mod session;
 mod skill_content;
 mod socket_watchdog;
@@ -68,6 +69,7 @@ USAGE:
   cmux pi install-hooks           Pi agent extension integration (see below)
   cmux aider install-hooks        Aider wrapper integration (see below)
   cmux grok install-hooks         Grok CLI hook integration (see below)
+  cmux plugin <subcommand> Manage cmux-plugin.toml manifests (see below)
   cmux ssh <host> [OPTS]   Open a remote workspace over SSH (see below)
 
 OPTIONS:
@@ -170,6 +172,19 @@ GROK CLI INTEGRATION
   cmux grok install-skill [--uninstall] [--global]
       Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
       (or ~/.grok/skills/cmux-orchestration/SKILL.md if --global).
+
+PLUGIN LOADER (manifest + registry only; no execution yet)
+  cmux plugin list                       List installed plugins (read-only)
+  cmux plugin install <manifest-path>    Install a plugin from a cmux-plugin.toml
+  cmux plugin uninstall <name>           Remove an installed plugin
+  cmux plugin enable <name>              Mark a plugin enabled
+  cmux plugin disable <name>             Mark a plugin disabled
+
+      These verbs only manage on-disk manifest state and a small JSON
+      registry under ~/.local/share/cmux/plugins.json. Plugin *execution*
+      (proxying `cmux <plugin-name> <verb>` to a running plugin process,
+      WASM/WASI sandboxing) is NOT implemented by this verb group and is
+      deferred to a follow-up PR.
 
 REMOTE (SSH) WORKSPACES
   cmux ssh <host> [--name <workspace-name>] [--session <mux-session>]
@@ -276,6 +291,9 @@ fn main() {
                 std::process::exit(2);
             }
         }
+    }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("plugin") {
+        std::process::exit(plugin::run(&raw_args[1..]));
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("ssh") {
         std::process::exit(ssh_bootstrap::run(&raw_args[1..]));
