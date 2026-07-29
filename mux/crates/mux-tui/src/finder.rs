@@ -61,6 +61,17 @@ impl StateFilter {
     }
 }
 
+/// Outcome of an Esc/Cancel on the finder: clear an active state filter
+/// first (keeping the overlay open), and only close the finder when the
+/// filter is already `All`. See [`FinderState::cancel`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinderCancel {
+    /// An active state filter was reset to `All`; the finder stayed open.
+    ClearedFilter,
+    /// No filter was active, so the caller should close the finder.
+    CloseFinder,
+}
+
 /// One searchable row. `agent_state` is `None` for workspaces and panes
 /// (they have no agent report) and `Some` for surfaces, sourced from the
 /// tab's reported state.
@@ -99,6 +110,83 @@ impl FinderState {
             cursor: 0,
             scroll: 0,
             items,
+        }
+    }
+
+    /// Apply `next` as the active state filter, toggling back to `All`
+    /// when the same filter key is pressed again (so `B` then `B`
+    /// returns to the unfiltered list). Pressing `A` always collapses to
+    /// `All` (it is the explicit "no filter" key), which is a no-op when
+    /// the filter is already `All`. The cursor and scroll are clamped to
+    /// the new (smaller or larger) ranked list so the selection never
+    /// points past the end.
+    pub fn set_state_filter(&mut self, next: StateFilter) {
+        self.state_filter = if self.state_filter == next { StateFilter::All } else { next };
+        let len = self.ranked().len();
+        if len == 0 {
+            self.cursor = 0;
+            self.scroll = 0;
+        } else {
+            if self.cursor >= len {
+                self.cursor = len - 1;
+            }
+            self.clamp_scroll_after_shrink(len);
+        }
+    }
+
+    /// Handle an Esc/Cancel. If a state filter is active, clear it back to
+    /// `All` and stay open (returns `ClearedFilter`); only when the filter
+    /// is already `All` does this signal the caller to close the finder
+    /// (`CloseFinder`). Mirrors the same-key-toggle clear so Esc clears the
+    /// filter first and only closes on a second press (AC3 Esc path). The
+    /// cursor and scroll reset to the top, matching what the toggle path
+    /// does after a filter change.
+    pub fn cancel(&mut self) -> FinderCancel {
+        if self.state_filter != StateFilter::All {
+            self.state_filter = StateFilter::All;
+            self.cursor = 0;
+            self.scroll = 0;
+            FinderCancel::ClearedFilter
+        } else {
+            FinderCancel::CloseFinder
+        }
+    }
+
+    /// Replace the snapshot of finder items built on open. Used when an
+    /// `agent-state-changed` event arrives while the finder is open so the
+    /// live agent states refresh without losing the current query, state
+    /// filter, or cursor position. The cursor is clamped to the new ranked
+    /// list length in case the refresh shrank the matching set.
+    pub fn set_items(&mut self, items: Vec<FinderItem>) {
+        self.items = items;
+        let len = self.ranked().len();
+        if len == 0 {
+            self.cursor = 0;
+            self.scroll = 0;
+        } else {
+            if self.cursor >= len {
+                self.cursor = len - 1;
+            }
+            self.clamp_scroll_after_shrink(len);
+        }
+    }
+
+    /// Clamp `scroll` so it never sits past the cursor (or past the last
+    /// row) after the ranked list shrinks. Without this an
+    /// `agent-state-changed` refresh that shrinks the matching set below
+    /// the current scroll offset would leave `draw()`'s
+    /// `ranked.iter().skip(scroll).take(rows)` skipping every row and
+    /// rendering a blank viewport until the next keypress resets scroll.
+    /// The cursor is already clamped to `[0, len - 1]` so capping scroll
+    /// at the cursor keeps a row on screen without needing the screen size
+    /// (which the finder does not store).
+    fn clamp_scroll_after_shrink(&mut self, len: usize) {
+        let max_scroll = len.saturating_sub(1);
+        if self.scroll > self.cursor {
+            self.scroll = self.cursor;
+        }
+        if self.scroll > max_scroll {
+            self.scroll = max_scroll;
         }
     }
 
@@ -649,5 +737,170 @@ mod tests {
         assert_eq!(finder.cursor, 0);
         assert_eq!(finder.scroll, 0);
         assert_eq!(finder_row_at(screen, rect.x + 5, rows_y, finder.scroll), Some(0));
+    }
+
+    /// Pressing the same state-filter key twice clears the filter back to
+    /// the full list (AC3 same-key toggle, AC6 unit test). A fixture list
+    /// spans every agent state plus two stateless rows.
+    #[test]
+    fn pressing_same_state_key_twice_clears_filter() {
+        let items = vec![
+            item("working-agent", Some(AgentState::Working), surf(1)),
+            item("blocked-agent", Some(AgentState::Blocked), surf(2)),
+            item("idle-agent", Some(AgentState::Idle), surf(3)),
+            item("done-agent", Some(AgentState::Done), surf(4)),
+            item("workspace-one", None, FinderTarget::Workspace(1)),
+            item("pane-one", None, FinderTarget::Pane(1)),
+        ];
+        let mut finder = FinderState::new(items.clone());
+        // Start unfiltered: every row shows.
+        assert_eq!(finder.state_filter, StateFilter::All);
+        assert_eq!(finder.ranked().len(), items.len());
+
+        // Press B: only the blocked agent remains (stateless rows drop out).
+        finder.set_state_filter(StateFilter::Blocked);
+        let ranked = finder.ranked();
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(finder.items[ranked[0].0].label, "blocked-agent");
+
+        // Press B again: the same-key toggle reverts to All, restoring the
+        // full list including the stateless workspace and pane rows.
+        finder.set_state_filter(StateFilter::Blocked);
+        assert_eq!(finder.state_filter, StateFilter::All);
+        assert_eq!(finder.ranked().len(), items.len());
+    }
+
+    /// `set_items` rebuilds the snapshot from a fresh tree without losing
+    /// the active query, state filter, or cursor window, so an
+    /// `agent-state-changed` event while the finder is open updates the
+    /// list in real time (AC4 live refresh).
+    #[test]
+    fn set_items_refreshes_snapshot_preserving_filter() {
+        let items = vec![
+            item("blocked-agent", Some(AgentState::Blocked), surf(1)),
+            item("working-agent", Some(AgentState::Working), surf(2)),
+            item("workspace-one", None, FinderTarget::Workspace(1)),
+        ];
+        let mut finder = FinderState::new(items.clone());
+        finder.set_state_filter(StateFilter::Blocked);
+        assert_eq!(finder.ranked().len(), 1);
+
+        // The server reports the blocked agent transitioned to working; the
+        // refreshed snapshot drops the blocked row, so the active Blocked
+        // filter now yields zero matches while the filter itself is kept.
+        let refreshed = vec![
+            item("working-agent", Some(AgentState::Working), surf(2)),
+            item("workspace-one", None, FinderTarget::Workspace(1)),
+        ];
+        finder.set_items(refreshed);
+        assert_eq!(finder.state_filter, StateFilter::Blocked);
+        assert_eq!(finder.ranked().len(), 0);
+
+        // Clearing the filter shows the refreshed full list.
+        finder.set_state_filter(StateFilter::Blocked);
+        assert_eq!(finder.state_filter, StateFilter::All);
+        assert_eq!(finder.ranked().len(), 2);
+    }
+
+    /// Esc/Cancel on an active state filter clears the filter and keeps the
+    /// finder open; a second Esc/Cancel (filter now `All`) signals the
+    /// caller to close it (AC3 Esc path, round-2 blocker).
+    #[test]
+    fn cancel_clears_active_filter_then_closes_on_second_press() {
+        let items = vec![
+            item("working-agent", Some(AgentState::Working), surf(1)),
+            item("blocked-agent", Some(AgentState::Blocked), surf(2)),
+            item("idle-agent", Some(AgentState::Idle), surf(3)),
+            item("workspace-one", None, FinderTarget::Workspace(1)),
+        ];
+        let mut finder = FinderState::new(items);
+        finder.set_state_filter(StateFilter::Blocked);
+        assert_eq!(finder.state_filter, StateFilter::Blocked);
+        // There is an active filter, so the finder must NOT close yet.
+        assert_ne!(finder.state_filter, StateFilter::All);
+
+        // First Cancel: clear the filter, finder stays open.
+        assert_eq!(finder.cancel(), FinderCancel::ClearedFilter);
+        assert_eq!(finder.state_filter, StateFilter::All);
+        assert_eq!(finder.cancel(), FinderCancel::CloseFinder);
+    }
+
+    /// A snapshot refresh that shrinks the ranked list below the current
+    /// scroll offset must re-clamp `scroll` so the viewport is not blank
+    /// (round-2 warning: scroll not clamped when the filtered list shrinks).
+    #[test]
+    fn set_items_clamps_scroll_when_list_shrinks() {
+        let screen = Rect { x: 0, y: 0, width: 100, height: 40 };
+        let rows_visible = FinderState::rows_visible(screen);
+        assert!(rows_visible >= 1, "overlay should show at least one row");
+
+        // Build a list longer than the viewport and scroll toward the bottom.
+        let total = rows_visible + 6;
+        let items: Vec<FinderItem> = (0..total as u64)
+            .map(|i| item(&format!("row-{i}"), None, surf(i)))
+            .collect();
+        let mut finder = FinderState::new(items);
+        for _ in 0..(rows_visible + 2) {
+            finder.move_cursor(1, rows_visible);
+        }
+        assert!(finder.scroll > 0, "viewport should have scrolled down");
+
+        // An agent-state-changed refresh shrinks the matching set well below
+        // the current scroll offset.
+        let shrunk: Vec<FinderItem> = (0..3u64)
+            .map(|i| item(&format!("shrunk-{i}"), None, surf(i)))
+            .collect();
+        finder.set_items(shrunk);
+        let new_len = finder.ranked().len();
+        let new_max = new_len.saturating_sub(1);
+        assert!(
+            finder.scroll <= new_max,
+            "scroll {} must be within [0, {new_max}] after shrink",
+            finder.scroll
+        );
+        // The viewport is non-empty: at least one ranked row falls inside
+        // [scroll, scroll + rows_visible).
+        let visible_rows = (finder.scroll..new_len).take(rows_visible).count();
+        assert!(visible_rows >= 1, "viewport must be non-empty after shrink, got {visible_rows}");
+    }
+
+    /// Switching the state filter to a narrower set must likewise re-clamp
+    /// `scroll` so a previously scrolled viewport does not go blank when the
+    /// ranked list shrinks under the new filter (round-2 warning).
+    #[test]
+    fn set_state_filter_clamps_scroll_when_list_shrinks() {
+        let screen = Rect { x: 0, y: 0, width: 100, height: 40 };
+        let rows_visible = FinderState::rows_visible(screen);
+        assert!(rows_visible >= 1);
+
+        // A long mix of states so narrowing the filter leaves only a few
+        // matching rows down the list.
+        let mut items: Vec<FinderItem> = Vec::new();
+        for i in 0..(rows_visible + 6) as u64 {
+            let state = if i == (rows_visible + 4) as u64 {
+                Some(AgentState::Blocked)
+            } else {
+                Some(AgentState::Working)
+            };
+            items.push(item(&format!("row-{i}"), state, surf(i)));
+        }
+        let mut finder = FinderState::new(items);
+        // Scroll toward the bottom of the full (Working) list.
+        for _ in 0..(rows_visible + 2) {
+            finder.move_cursor(1, rows_visible);
+        }
+        assert!(finder.scroll > 0);
+
+        // Narrow to Blocked: only one row matches, far below the old scroll.
+        finder.set_state_filter(StateFilter::Blocked);
+        let new_len = finder.ranked().len();
+        let new_max = new_len.saturating_sub(1);
+        assert!(
+            finder.scroll <= new_max,
+            "scroll {} must be within [0, {new_max}] after narrowing",
+            finder.scroll
+        );
+        let visible_rows = (finder.scroll..new_len).take(rows_visible).count();
+        assert!(visible_rows >= 1, "viewport must be non-empty after narrowing, got {visible_rows}");
     }
 }

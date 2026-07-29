@@ -139,3 +139,23 @@ detach
 Chord strings are case-sensitive for single characters. Uppercase letters and symbols represent the shifted character.
 
 Supported examples include `"c"`, `"%"`, `"ctrl+b"`, `"alt+enter"`, `"tab"`, `"backtab"`, `"shift+tab"`, `"pageup"`, `"pagedown"`, `"esc"`, `"space"`, `"left"`, `"right"`, `"up"`, `"down"`, `"home"`, and `"end"`.
+
+## Fuzzy Finder
+
+Press `Ctrl-b G` (`leader G`) to open the fuzzy finder overlay, which lists
+workspaces, panes, and surfaces for type-ahead navigation. While the finder
+is open, the following state-filter keys narrow the result set to one agent
+state. Pressing the same key again, or `Esc`, clears the filter back to the
+full list. The active filter is shown on the finder title row (for example
+`[blocked: B W I D A]`), not a separate footer.
+
+| Key | Filter |
+| --- | --- |
+| `B` | blocked agents |
+| `W` | working agents |
+| `I` | idle agents |
+| `D` | done agents |
+| `A` | all agents (no filter) |
+
+The finder subscribes to `agent-state-changed` events, so the filtered list
+updates in real time as agents report new states while the overlay is open.
