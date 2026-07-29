@@ -570,8 +570,11 @@ fn pane_parts_for_rect(
     (bar, omnibar, content, track)
 }
 
-pub fn run(session: Session, session_label: String) -> anyhow::Result<()> {
-    let config = crate::config::load();
+pub fn run(session: Session, session_label: String, overlay: Option<crate::config::Overlay>) -> anyhow::Result<()> {
+    let mut config = crate::config::load();
+    if let Some(o) = overlay {
+        o.apply(&mut config);
+    }
     // First workspace before the terminal switches modes, so a spawn
     // failure prints a normal error. Spawn at the size the first pane
     // will actually render at (a post-spawn resize makes shells like zsh

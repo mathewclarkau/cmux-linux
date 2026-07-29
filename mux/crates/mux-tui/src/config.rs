@@ -56,7 +56,7 @@
 //! default.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use mux_core::platform;
@@ -624,6 +624,71 @@ pub struct Config {
     pub keys: Keys,
 }
 
+/// Apply a raw theme table onto a resolved config: every present colour
+/// overrides the seeded/default value. Shared by `load()` (server config)
+/// and `Overlay::apply` (client overlay), so the two never drift.
+fn apply_theme_raw(config: &mut Config, t: &RawTheme) {
+    if let Some(c) = t.selection_background.as_ref().and_then(ColorValue::to_color) {
+        config.theme.selection_bg = c;
+    }
+    match t.selection_foreground.as_ref() {
+        None => {}
+        Some(None) => config.theme.selection_fg = None,
+        Some(Some(c)) => {
+            if let Some(color) = c.to_color() {
+                config.theme.selection_fg = Some(color);
+            }
+        }
+    }
+    if let Some(c) = t.sidebar_rail.as_ref().and_then(ColorValue::to_color) {
+        config.theme.sidebar_rail = c;
+    }
+    if let Some(c) = t.sidebar_active_bg.as_ref().and_then(ColorValue::to_color) {
+        config.theme.sidebar_active_bg = c;
+    }
+    if let Some(c) = t.tab_rail.as_ref().and_then(ColorValue::to_color) {
+        config.theme.tab_rail = c;
+    }
+    if let Some(c) = t.tab_bg.as_ref().and_then(ColorValue::to_color) {
+        config.theme.tab_bg = c;
+    }
+    if let Some(c) = t.tab_active_bg.as_ref().and_then(ColorValue::to_color) {
+        config.theme.tab_active_bg = Some(c);
+    }
+    if let Some(c) = t.border_active.as_ref().and_then(ColorValue::to_color) {
+        config.theme.border_active = c;
+    }
+    if let Some(c) = t.border_inactive.as_ref().and_then(ColorValue::to_color) {
+        config.theme.border_inactive = c;
+    }
+}
+
+/// Apply raw tab overrides onto a resolved config.
+fn apply_tabs_raw(config: &mut Config, t: &RawTabs) {
+    if let Some(w) = t.min_width {
+        config.tabs.min_width = w.clamp(3, 40);
+    }
+    if let Some(b) = t.solid_background {
+        config.tabs.solid_background = b;
+    }
+    if let Some(b) = t.show_titles {
+        config.tabs.show_titles = b;
+    }
+    if let Some(agents) = t.agents.clone() {
+        config.tabs.agents = agents.into_iter().map(|a| a.to_lowercase()).collect();
+    }
+}
+
+/// Apply raw sidebar overrides onto a resolved config.
+fn apply_sidebar_raw(config: &mut Config, s: &RawSidebar) {
+    if let Some(w) = s.width {
+        config.sidebar.width = w.clamp(10, 60);
+    }
+    if let Some(w) = s.max_width {
+        config.sidebar.max_width = w;
+    }
+}
+
 /// Load the config: defaults, overlaid with the user's Ghostty selection
 /// colors, overlaid with `mux.json`.
 pub fn load() -> Config {
@@ -648,58 +713,10 @@ pub fn load() -> Config {
         ThemeValue::Table(t) => Some(t.clone()),
     };
     if let Some(t) = raw_theme {
-        if let Some(c) = t.selection_background.as_ref().and_then(ColorValue::to_color) {
-            config.theme.selection_bg = c;
-        }
-        match t.selection_foreground.as_ref() {
-            None => {}
-            Some(None) => config.theme.selection_fg = None,
-            Some(Some(c)) => {
-                if let Some(color) = c.to_color() {
-                    config.theme.selection_fg = Some(color);
-                }
-            }
-        }
-        if let Some(c) = t.sidebar_rail.as_ref().and_then(ColorValue::to_color) {
-            config.theme.sidebar_rail = c;
-        }
-        if let Some(c) = t.sidebar_active_bg.as_ref().and_then(ColorValue::to_color) {
-            config.theme.sidebar_active_bg = c;
-        }
-        if let Some(c) = t.tab_rail.as_ref().and_then(ColorValue::to_color) {
-            config.theme.tab_rail = c;
-        }
-        if let Some(c) = t.tab_bg.as_ref().and_then(ColorValue::to_color) {
-            config.theme.tab_bg = c;
-        }
-        if let Some(c) = t.tab_active_bg.as_ref().and_then(ColorValue::to_color) {
-            config.theme.tab_active_bg = Some(c);
-        }
-        if let Some(c) = t.border_active.as_ref().and_then(ColorValue::to_color) {
-            config.theme.border_active = c;
-        }
-        if let Some(c) = t.border_inactive.as_ref().and_then(ColorValue::to_color) {
-            config.theme.border_inactive = c;
-        }
+        apply_theme_raw(&mut config, &t);
     }
-    if let Some(w) = raw.tabs.min_width {
-        config.tabs.min_width = w.clamp(3, 40);
-    }
-    if let Some(b) = raw.tabs.solid_background {
-        config.tabs.solid_background = b;
-    }
-    if let Some(b) = raw.tabs.show_titles {
-        config.tabs.show_titles = b;
-    }
-    if let Some(agents) = raw.tabs.agents {
-        config.tabs.agents = agents.into_iter().map(|a| a.to_lowercase()).collect();
-    }
-    if let Some(w) = raw.sidebar.width {
-        config.sidebar.width = w.clamp(10, 60);
-    }
-    if let Some(w) = raw.sidebar.max_width {
-        config.sidebar.max_width = w;
-    }
+    apply_tabs_raw(&mut config, &raw.tabs);
+    apply_sidebar_raw(&mut config, &raw.sidebar);
     config.browser.chrome_binary = raw.browser.chrome_binary.filter(|s| !s.trim().is_empty());
     config.browser.cdp_url = raw.browser.cdp_url.filter(|s| !s.trim().is_empty());
     if let Some(discover) = raw.browser.discover {
@@ -735,6 +752,156 @@ pub fn load() -> Config {
     }
     config.keys.apply(&raw.keys);
     config
+}
+
+// --- Local config overlay (issue #40) ---
+//
+// The overlay is the *client* side of an attach: a typed subset of the
+// server config (theme/tabs/sidebar/keys only) that the laptop layers on
+// top of the server-side session so colours and key bindings travel with
+// the operator. Browser panes, scrollbar, and the session name are
+// server-side truth and must NOT be overridable here, so `RawOverlay`
+// carries `#[serde(deny_unknown_fields)]` to reject them at parse time
+// (AC7) instead of silently ignoring them.
+
+/// Raw deserialization shape for a local overlay file. Only the chrome
+/// fields the client is allowed to override; anything else (browser,
+// session, scrollbar) is rejected by `deny_unknown_fields`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)] // overlay: reject server-only chrome fields
+struct RawOverlay {
+    #[serde(default)]
+    theme: Option<ThemeValue>,
+    #[serde(default)]
+    tabs: Option<RawTabs>,
+    #[serde(default)]
+    sidebar: Option<RawSidebar>,
+    #[serde(default)]
+    keys: Option<HashMap<String, Value>>,
+}
+
+/// Typed client overlay: a subset of `Config` (theme/tabs/sidebar/keys)
+/// applied on top of the server-side config during `cmux attach`. The
+/// browser, scrollbar, and session name stay server-side truth.
+#[derive(Debug, Default)]
+pub struct Overlay {
+    theme: Option<ThemeValue>,
+    tabs: Option<RawTabs>,
+    sidebar: Option<RawSidebar>,
+    keys: Option<HashMap<String, Value>>,
+}
+
+impl Overlay {
+    fn from_raw(raw: RawOverlay) -> Self {
+        Overlay {
+            theme: raw.theme,
+            tabs: raw.tabs,
+            sidebar: raw.sidebar,
+            keys: raw.keys,
+        }
+    }
+
+    /// Resolve a string/table theme the same way `load()` does, then layer
+    /// the present chrome fields onto `config`. Browser and scrollbar are
+    /// intentionally untouched: the server keeps the truth for the tree.
+    pub fn apply(&self, config: &mut Config) {
+        if let Some(tv) = &self.theme {
+            let resolved = match tv {
+                ThemeValue::String(name) => {
+                    if name == "none" {
+                        None
+                    } else {
+                        load_preset(name)
+                    }
+                }
+                ThemeValue::Table(t) => Some(t.clone()),
+            };
+            if let Some(t) = resolved {
+                apply_theme_raw(config, &t);
+            }
+        }
+        if let Some(t) = &self.tabs {
+            apply_tabs_raw(config, t);
+        }
+        if let Some(s) = &self.sidebar {
+            apply_sidebar_raw(config, s);
+        }
+        if let Some(k) = &self.keys {
+            config.keys.apply(k);
+        }
+    }
+
+    /// How many top-level chrome keys this overlay overrides, for the
+    /// `cmux: applying local config from <path> (overrides N keys)` log
+    /// line. Counts a section once if it is present at all.
+    pub fn override_count(&self) -> usize {
+        let mut n = 0;
+        if self.theme.is_some() {
+            n += 1;
+        }
+        if self.tabs.is_some() {
+            n += 1;
+        }
+        if self.sidebar.is_some() {
+            n += 1;
+        }
+        if self.keys.is_some() {
+            n += 1;
+        }
+        n
+    }
+}
+
+/// Resolve which local overlay file would apply for an attach, without
+/// reading it. Resolution order (AC2): explicit `--config <path>` ->
+/// `$CMUX_LOCAL_CONFIG` -> `~/.config/cmux/mux.local.toml` ->
+/// `~/.config/cmux/mux.json` -> `None` (server-side config wins). The
+/// explicit and env cases are returned as-is even when the file does not
+/// exist, so the caller can log the missing path rather than silently
+/// falling back to the server config.
+pub fn local_config_path(explicit: Option<&Path>) -> Option<PathBuf> {
+    if let Some(path) = explicit {
+        return Some(path.to_path_buf());
+    }
+    if let Some(path) = std::env::var_os("CMUX_LOCAL_CONFIG") {
+        return Some(PathBuf::from(path));
+    }
+    let dir = platform::config_dir()?;
+    let local_toml = dir.join("mux.local.toml");
+    if local_toml.exists() {
+        return Some(local_toml);
+    }
+    let json = dir.join("mux.json");
+    if json.exists() {
+        return Some(json);
+    }
+    None
+}
+
+/// Read and parse a local overlay file into an `Overlay`. Returns `None`
+/// (with a stderr note, mirroring `load_raw_config`) when the file is
+/// missing or fails to parse, so the attach path degrades to the
+/// server-side config instead of taking the TUI down.
+pub fn load_overlay_file(path: &Path) -> Option<Overlay> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return None;
+    };
+    let parsed = if is_toml_path(path) {
+        toml::from_str::<RawOverlay>(&text).map_err(|e| e.to_string())
+    } else if is_json_path(path) {
+        serde_json::from_str::<RawOverlay>(&text).map_err(|e| e.to_string())
+    } else if looks_like_json(&text) {
+        serde_json::from_str::<RawOverlay>(&text).map_err(|e| e.to_string())
+    } else {
+        toml::from_str::<RawOverlay>(&text).map_err(|e| e.to_string())
+    };
+    match parsed {
+        Ok(raw) => Some(Overlay::from_raw(raw)),
+        Err(e) => {
+            eprintln!("cmux: ignoring invalid local config {}: {e}", path.display());
+            None
+        }
+    }
 }
 
 /// Load a preset by name from the bundled themes directory.
@@ -1527,5 +1694,103 @@ sidebar_rail = 55
 
         assert_eq!(config.theme.sidebar_rail, Color::Rgb(0x87, 0xdc, 0xbf));
         assert_eq!(config.theme.border_inactive, Color::Indexed(238));
+    }
+
+    // --- Local config overlay (issue #40) ---
+
+    #[test]
+    fn overlay_rejects_browser_and_session_fields() {
+        // The overlay is a chrome-only subset: browser panes and the
+        // session name are server-side truth. deny_unknown_fields rejects
+        // them at parse time so a typo or a stale server-side block does
+        // not silently get dropped (AC7).
+        let with_browser: Result<RawOverlay, _> =
+            serde_json::from_str(r##"{"browser": {"cdp_url": "http://localhost:9222"}}"##);
+        assert!(with_browser.is_err(), "overlay must reject a browser field");
+
+        let with_session: Result<RawOverlay, _> =
+            serde_json::from_str(r##"{"session": "main"}"##);
+        assert!(with_session.is_err(), "overlay must reject a session field");
+    }
+
+    #[test]
+    fn overlay_applies_only_chrome_keys() {
+        let raw: RawOverlay = toml::from_str(
+            r##"
+[theme]
+sidebar_rail = 42
+
+[tabs]
+min_width = 9
+
+[sidebar]
+width = 30
+
+[keys]
+prefix = "ctrl+s"
+"##,
+        )
+        .unwrap();
+        let overlay = Overlay::from_raw(raw);
+        assert_eq!(overlay.override_count(), 4);
+
+        let mut config = Config::default();
+        let browser_before = config.browser.clone();
+        let scrollbar_before = config.scrollbar;
+        overlay.apply(&mut config);
+
+        // Chrome fields the overlay is allowed to touch: all applied.
+        assert_eq!(config.theme.sidebar_rail, Color::Indexed(42));
+        assert_eq!(config.tabs.min_width, 9);
+        assert_eq!(config.sidebar.width, 30);
+        assert_eq!(
+            config.keys.prefix,
+            Chord { code: KeyCode::Char('s'), mods: KeyModifiers::CONTROL }
+        );
+
+        // Server-side truth is untouched: browser and scrollbar stay as
+        // they were (AC3/AC7).
+        assert_eq!(config.browser, browser_before);
+        assert_eq!(config.browser, Browser::default());
+        assert_eq!(config.scrollbar, scrollbar_before);
+    }
+
+    #[test]
+    fn local_config_path_resolution_order() {
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap();
+
+        // Explicit --config wins over env and XDG, even when the file
+        // does not exist (the caller logs the missing path).
+        let explicit = Path::new("/tmp/cmux-overlay-explicit-4af0.toml");
+        std::env::set_var("CMUX_LOCAL_CONFIG", "/tmp/cmux-overlay-env-4af0.json");
+        assert_eq!(local_config_path(Some(explicit)), Some(explicit.to_path_buf()));
+
+        // With no explicit path, $CMUX_LOCAL_CONFIG wins over XDG.
+        assert_eq!(
+            local_config_path(None),
+            Some(PathBuf::from("/tmp/cmux-overlay-env-4af0.json"))
+        );
+        std::env::remove_var("CMUX_LOCAL_CONFIG");
+
+        // XDG mux.local.toml wins over mux.json when both exist.
+        let dir = unique_dir("overlay-res");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cmux = dir.join("cmux");
+        std::fs::create_dir_all(&cmux).unwrap();
+        std::fs::write(cmux.join("mux.local.toml"), "[theme]\nsidebar_rail = 1\n").unwrap();
+        std::fs::write(cmux.join("mux.json"), "{\"theme\": {\"sidebar_rail\": 2}}").unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+        assert_eq!(local_config_path(None), Some(cmux.join("mux.local.toml")));
+
+        // mux.json is the fallback when mux.local.toml is absent.
+        let _ = std::fs::remove_file(cmux.join("mux.local.toml"));
+        assert_eq!(local_config_path(None), Some(cmux.join("mux.json")));
+
+        // Nothing present: None, so the attach uses server-side config.
+        let _ = std::fs::remove_file(cmux.join("mux.json"));
+        assert_eq!(local_config_path(None), None);
+
+        std::env::remove_var("XDG_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

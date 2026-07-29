@@ -990,3 +990,51 @@ fn sigkill_watchdog_removes_socket_and_pid_within_5s() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// Issue #40: `cmux attach --show-local-config-resolution` is a dry run that
+/// resolves the local overlay file (theme/sidebar_rail + keys/prefix here)
+/// and prints the path plus the override count, without attaching to a
+/// server or starting the TUI. Exits 0 and needs no live session.
+#[test]
+fn show_local_config_resolution_prints_path_without_attaching() {
+    let dir = unique_temp_dir("show-local-config-res");
+    fs::create_dir_all(&dir).unwrap();
+    let cmux_dir = dir.join("cmux");
+    fs::create_dir_all(&cmux_dir).unwrap();
+    fs::write(
+        cmux_dir.join("mux.local.toml"),
+        "[theme]\nsidebar_rail = 42\n[keys]\nprefix = \"ctrl+s\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(bin())
+        .args(["attach", "--show-local-config-resolution"])
+        .env("XDG_CONFIG_HOME", &dir)
+        .env_remove("CMUX_LOCAL_CONFIG")
+        .env_remove("CMUX_MUX_CONFIG")
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "expected exit 0, got {:?}\n{}",
+        output.status.code(),
+        combined
+    );
+    assert!(
+        combined.contains("mux.local.toml"),
+        "expected the resolved overlay path, got: {combined}"
+    );
+    assert!(
+        combined.contains("overrides 2 keys"),
+        "expected theme+keys = 2 overrides, got: {combined}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -41,6 +41,34 @@ cargo run -p mux-tui -- attach --session agents
 
 Detach from an attached TUI with prefix `d`. With default keys, that is `Ctrl-b d`. The server keeps running, and another `attach` reconnects to the same tree. PTY tabs attach with a Ghostty VT-state replay followed by a live output stream.
 
+### SSH and remote attach with local config
+
+For a remote box, run the server headless there and attach from your laptop,
+carrying your local colours and key bindings onto the remote session:
+
+```bash
+# on the remote box
+cmux --headless --session agents
+
+# on the laptop, over SSH, overlaying the local config
+ssh remotehost 'cmux attach --session agents --apply-local-config'
+```
+
+The local `~/.config/cmux/mux.local.toml` (or `mux.json`, or `$CMUX_LOCAL_CONFIG`,
+or an explicit `--config <path>`) is layered on top of the server config: the
+server keeps the truth for the workspace tree; your laptop wins for theme,
+tabs, sidebar, and keys. So your preferred leader key and colour scheme work
+the same way they do locally. Check which file would apply before connecting
+with the dry run:
+
+```bash
+cmux attach --show-local-config-resolution
+cmux attach --session agents --config ~/.config/cmux/mux.local.toml
+```
+
+The attach logs `cmux: applying local config from <path> (overrides N keys)`.
+See [Configuration > Local config overlay](configuration.md#local-config-overlay-attach).
+
 ## Sessions and sockets
 
 The default socket path is:
