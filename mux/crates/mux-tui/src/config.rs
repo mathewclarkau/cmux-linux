@@ -101,6 +101,8 @@ struct RawConfig {
     browser: RawBrowser,
     #[serde(default)]
     scrollbar: RawScrollbar,
+    #[serde(default)]
+    workspaces: Vec<WorkspaceConfig>,
     /// Key bindings: `"prefix"` plus one entry per action. Values may be
     /// a chord string, an array of chord strings, `"none"`, or
     /// `"alt_shortcuts": false`.
@@ -159,6 +161,14 @@ struct RawBrowser {
 #[serde(deny_unknown_fields)]
 struct RawScrollbar {
     position: Option<ScrollbarPosition>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceConfig {
+    pub name: String,
+    pub color: Option<String>,
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -694,6 +704,7 @@ pub struct Config {
     pub browser: Browser,
     pub scrollbar: Scrollbar,
     pub keys: Keys,
+    pub workspaces: Vec<WorkspaceConfig>,
 }
 
 impl Config {
@@ -884,24 +895,21 @@ pub fn load() -> Config {
         if megapixels.is_finite() && megapixels > 0.0 {
             config.browser.max_capture_megapixels = megapixels;
         } else {
-            eprintln!(
-                "cmux: ignoring browser.max_capture_megapixels={megapixels:?}; expected > 0"
-            );
+            eprintln!("cmux: ignoring browser.max_capture_megapixels={megapixels:?}; expected > 0");
         }
     }
     if let Some(scale) = raw.browser.capture_scale {
         if scale.is_finite() && scale > 0.0 && scale <= 1.0 {
             config.browser.capture_scale = Some(scale);
         } else {
-            eprintln!(
-                "cmux: ignoring browser.capture_scale={scale:?}; expected 0 < scale <= 1"
-            );
+            eprintln!("cmux: ignoring browser.capture_scale={scale:?}; expected 0 < scale <= 1");
         }
     }
     if let Some(position) = raw.scrollbar.position {
         config.scrollbar.position = position;
     }
     config.keys.apply(&raw.keys);
+    config.workspaces = raw.workspaces;
     config
 }
 
@@ -944,12 +952,7 @@ pub struct Overlay {
 
 impl Overlay {
     fn from_raw(raw: RawOverlay) -> Self {
-        Overlay {
-            theme: raw.theme,
-            tabs: raw.tabs,
-            sidebar: raw.sidebar,
-            keys: raw.keys,
-        }
+        Overlay { theme: raw.theme, tabs: raw.tabs, sidebar: raw.sidebar, keys: raw.keys }
     }
 
     /// Resolve a string/table theme the same way `load()` does, then layer
@@ -1135,9 +1138,7 @@ fn looks_like_json(text: &str) -> bool {
     if text.starts_with('\u{feff}') {
         chars.next();
     }
-    chars
-        .find(|c| !c.is_whitespace())
-        .is_some_and(|c| c == '{')
+    chars.find(|c| !c.is_whitespace()).is_some_and(|c| c == '{')
 }
 
 /// `#rrggbb`, `#rgb`, or an xterm-256 index in a string.
@@ -1188,6 +1189,28 @@ mod tests {
     /// `CMUX_MUX_CONFIG` is process-global state; tests that set it must not
     /// run concurrently with each other.
     static CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn workspace_definitions_load_from_toml_and_json() {
+        let toml: RawConfig = toml::from_str(
+            r##"[[workspaces]]
+name = "Build"
+color = "blue"
+icon = "robot"
+"##,
+        )
+        .unwrap();
+        assert_eq!(toml.workspaces[0].name, "Build");
+        assert_eq!(toml.workspaces[0].color.as_deref(), Some("blue"));
+        assert_eq!(toml.workspaces[0].icon.as_deref(), Some("robot"));
+
+        let json: RawConfig = serde_json::from_str(
+            r##"{"workspaces":[{"name":"Docs","color":"#123456","icon":"eye"}]}"##,
+        )
+        .unwrap();
+        assert_eq!(json.workspaces[0].name, "Docs");
+        assert_eq!(json.workspaces[0].color.as_deref(), Some("#123456"));
+    }
 
     #[test]
     fn parses_hex_and_indexed_colors() {
@@ -1608,10 +1631,14 @@ sidebar_rail = 99
         std::fs::create_dir_all(&dir).unwrap();
 
         let toml_path = dir.join("config.toml");
-        std::fs::write(&toml_path, r##"
+        std::fs::write(
+            &toml_path,
+            r##"
 [theme]
 sidebar_rail = 77
-"##).unwrap();
+"##,
+        )
+        .unwrap();
         std::env::set_var("CMUX_MUX_CONFIG", &toml_path);
         assert_eq!(load().theme.sidebar_rail, Color::Indexed(77));
 
@@ -1833,11 +1860,7 @@ sidebar_rail = 55
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("mux.json");
-        std::fs::write(
-            &path,
-            r##"{"theme": {"sidebar_rail": "#87dcbf"}}"##,
-        )
-        .unwrap();
+        std::fs::write(&path, r##"{"theme": {"sidebar_rail": "#87dcbf"}}"##).unwrap();
         std::env::set_var("CMUX_MUX_CONFIG", &path);
         let config = load();
         std::env::remove_var("CMUX_MUX_CONFIG");
@@ -1859,8 +1882,7 @@ sidebar_rail = 55
             serde_json::from_str(r##"{"browser": {"cdp_url": "http://localhost:9222"}}"##);
         assert!(with_browser.is_err(), "overlay must reject a browser field");
 
-        let with_session: Result<RawOverlay, _> =
-            serde_json::from_str(r##"{"session": "main"}"##);
+        let with_session: Result<RawOverlay, _> = serde_json::from_str(r##"{"session": "main"}"##);
         assert!(with_session.is_err(), "overlay must reject a session field");
     }
 
@@ -1917,10 +1939,7 @@ prefix = "ctrl+s"
         assert_eq!(local_config_path(Some(explicit)), Some(explicit.to_path_buf()));
 
         // With no explicit path, $CMUX_LOCAL_CONFIG wins over XDG.
-        assert_eq!(
-            local_config_path(None),
-            Some(PathBuf::from("/tmp/cmux-overlay-env-4af0.json"))
-        );
+        assert_eq!(local_config_path(None), Some(PathBuf::from("/tmp/cmux-overlay-env-4af0.json")));
         std::env::remove_var("CMUX_LOCAL_CONFIG");
 
         // XDG mux.local.toml wins over mux.json when both exist.

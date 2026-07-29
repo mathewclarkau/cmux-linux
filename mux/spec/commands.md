@@ -1114,14 +1114,14 @@ Example:
 | status | implemented |
 | since | protocol 6 |
 
-Sets or clears a workspace's rail color. An explicit `ColorHex` in `colour` sets the workspace color to that value. `colour: null` clears it back to no color; an absent `colour` key has the same effect as `null` at the protocol level (serde default), but the CLI always sends the key explicitly and requires `--colour` so an omitted flag is a usage error rather than a silent clear (see `cli.md`).
+Sets or clears a workspace's display colour. A `#rrggbb` value or named preset in `colour` sets the workspace colour. `colour: null` clears it back to no colour; an absent `colour` key has the same effect as `null` at the protocol level. The CLI always sends the key explicitly and accepts `--color` as the primary spelling plus `--colour` as a back-compatible alias.
 
 Params:
 
 | Name | JSON type | Required/default | Constraints |
 | --- | --- | --- | --- |
 | `workspace` | `Id` | required | Must identify a live workspace |
-| `colour` | `ColorHex \| null` | optional (default: `null`) | Absent or `null` clears the color, a `ColorHex` string sets it. The CLI always sends the key explicitly (see CLI mapping below), but the wire protocol itself does not require it. |
+| `colour` | `ColorHex \| string \| null` | optional (default: `null`) | Absent or `null` clears the colour; `#rrggbb` or `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `cyan`, `grey`/`gray` sets it. |
 
 Result:
 
@@ -1134,7 +1134,7 @@ Errors:
 | Error | Condition |
 | --- | --- |
 | `unknown workspace <id>` | Workspace id does not exist |
-| `bad color "<value>" (want "#rrggbb")` | `colour` is non-null and not exactly `#rrggbb` |
+| `bad workspace color "<value>" (want "#rrggbb" or a named preset)` | `colour` is not a hex colour or known preset |
 | `bad request: ...` | Missing `workspace` or wrong JSON type |
 
 CLI mapping:
@@ -1142,12 +1142,58 @@ CLI mapping:
 | Item | Value |
 | --- | --- |
 | Verb | `set-workspace-color` |
-| Flags | `--workspace <id> --colour <hex-or-empty-string>` |
+| Flags | `--workspace <id> --color <hex-or-preset>`; `--colour <hex-or-empty-string>` alias |
 | Plain stdout | no output |
 | JSON stdout | exact result object |
 | Exit codes | common |
 
-The CLI requires `--colour`; an empty string (`--colour ""`) sends `colour:null` to clear the color, and any non-empty value is sent through as-is for the server to validate.
+The CLI requires either `--color` or `--colour`; an empty alias value (`--colour ""`) sends `colour:null` to clear the colour, and any non-empty value is sent through for server validation.
+
+The positional shorthand `cmux workspace-color <name> <color>` updates a workspace by exact name, creating it first when absent.
+
+### set-status
+
+| Field | Value |
+| --- | --- |
+| name | `set-status` |
+| status | implemented |
+| since | protocol 6 |
+
+Sets a workspace status icon. Bundled names are `folder`, `robot`, `eye`, `gear`, `search`, `magnifier`, `lock`, and `check`. A single Unicode character or a `\\u{HEX}` escape is also accepted.
+
+Params:
+
+| Name | JSON type | Required/default | Constraints |
+| --- | --- | --- | --- |
+| `icon` | string | required | Bundled name, one Unicode character, or `\\u{HEX}` |
+| `workspace` | `Id` | active workspace | Must identify a live workspace when supplied |
+
+Result: `object{}`.
+
+Errors:
+
+| Error | Condition |
+| --- | --- |
+| `unknown workspace <id>` | Workspace id does not exist |
+| `unknown workspace icon "<value>"; ...` | Icon is not bundled or a supported Unicode value |
+| `no active workspace` | `workspace` is omitted and the session has no workspace |
+
+CLI mapping:
+
+| Item | Value |
+| --- | --- |
+| Verb | `set-status` |
+| Flags | `--icon <name> [--workspace <id>]` |
+| Plain stdout | no output |
+| JSON stdout | exact result object |
+| Exit codes | common |
+
+Example:
+
+```json
+{"id":31,"cmd":"set-status","workspace":4,"icon":"robot"}
+{"id":31,"ok":true,"data":{}}
+```
 
 Example:
 

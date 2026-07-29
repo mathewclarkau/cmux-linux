@@ -27,6 +27,18 @@ fn border_style(theme: &Theme, focused: bool) -> Style {
     }
 }
 
+fn active_tab_background(
+    workspace_color: Option<Color>,
+    theme_background: Option<Color>,
+    focused: bool,
+) -> Color {
+    workspace_color.or(theme_background).unwrap_or(if focused {
+        Color::Indexed(240)
+    } else {
+        Color::Indexed(238)
+    })
+}
+
 /// Draw every pane of the current frame. Returns the terminal cursor
 /// position for the focused pane, if visible.
 pub fn draw_all(app: &mut App, frame: &mut Frame) -> Option<(u16, u16)> {
@@ -104,6 +116,7 @@ fn draw_tab_bar(app: &mut App, frame: &mut Frame, area: &PaneArea, focused: bool
         return;
     }
     let theme = app.config.theme;
+    let workspace_color = app.tree.active_workspace().and_then(|workspace| workspace.color);
     let style = border_style(&theme, focused);
     let (base, active_style) = if tab_cfg.solid_background {
         // Solid tab chips on the border line.
@@ -111,12 +124,12 @@ fn draw_tab_bar(app: &mut App, frame: &mut Frame, area: &PaneArea, focused: bool
             Style::default().bg(theme.tab_bg).fg(Color::Indexed(248)),
             if focused {
                 Style::default()
-                    .bg(theme.tab_active_bg.unwrap_or(Color::Indexed(240)))
+                    .bg(active_tab_background(workspace_color, theme.tab_active_bg, true))
                     .fg(Color::Indexed(255))
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
-                    .bg(theme.tab_active_bg.unwrap_or(Color::Indexed(238)))
+                    .bg(active_tab_background(workspace_color, theme.tab_active_bg, false))
                     .fg(Color::Indexed(252))
             },
         )
@@ -594,6 +607,13 @@ fn apply_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_tab_background_prefers_workspace_then_theme_then_default() {
+        assert_eq!(active_tab_background(Some(Color::Blue), Some(Color::Red), true), Color::Blue);
+        assert_eq!(active_tab_background(None, Some(Color::Red), true), Color::Red);
+        assert_eq!(active_tab_background(None, None, false), Color::Indexed(238));
+    }
 
     #[test]
     fn palette_color_mapping_preserves_host_palette_when_not_overridden() {

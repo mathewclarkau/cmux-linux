@@ -7,6 +7,20 @@ use std::sync::Arc;
 
 use crate::{PaneId, Rgb, ScreenId, SplitDir, Surface, SurfaceId, WorkspaceId};
 
+/// Validated workspace status icon, stored as its display glyph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IconName(String);
+
+impl IconName {
+    pub fn new(glyph: String) -> Self {
+        Self(glyph)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Binary split tree over panes for one screen.
 #[derive(Debug, Clone)]
 pub enum Node {
@@ -138,6 +152,7 @@ pub struct Workspace {
     pub screens: Vec<Screen>,
     pub active_screen: usize,
     pub color: Option<Rgb>,
+    pub icon: Option<IconName>,
 }
 
 impl Workspace {

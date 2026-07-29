@@ -36,7 +36,11 @@ fn rail_color(workspace_color: Option<Color>, active: bool, theme_rail: Color) -
     workspace_color.or(if active { Some(theme_rail) } else { None })
 }
 
-/// Bright, fixed pulse color for a manual flash — deliberately ignores
+fn active_row_background(workspace_color: Option<Color>, theme_background: Color) -> Color {
+    workspace_color.unwrap_or(theme_background)
+}
+
+/// Bright, fixed pulse color for a manual flash: deliberately ignores
 /// the workspace's own color/active state so it reads as "look here"
 /// regardless of context. Layered on top of `rail_color`'s result, not a
 /// replacement for it.
@@ -57,10 +61,6 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
     let now = Instant::now();
     let base = Style::default();
     let dim = base.fg(Color::Indexed(242));
-    let active_style = Style::default()
-        .bg(app.config.theme.sidebar_active_bg)
-        .fg(Color::Indexed(255))
-        .add_modifier(Modifier::BOLD);
     let border = base.fg(Color::Indexed(237));
 
     for y in 0..height {
@@ -90,6 +90,10 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
             break;
         }
         let active = i == app.tree.active_workspace;
+        let active_style = Style::default()
+            .bg(active_row_background(ws.color, app.config.theme.sidebar_active_bg))
+            .fg(Color::Indexed(255))
+            .add_modifier(Modifier::BOLD);
         let flashing =
             app.flashing.get(&ws.id).is_some_and(|start| flash_active(now.duration_since(*start)));
         let mut style = if active { active_style } else { base };
@@ -112,7 +116,11 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
             buf[(0, y)].set_symbol("▎").set_style(rail_style);
             buf[(0, y + 1)].set_symbol("▎").set_style(rail_style);
         }
-        set_line_from(buf, 1, y, &truncate(&ws.name, content_w - 1), style);
+        let label = match ws.icon.as_deref() {
+            Some(icon) => format!("{icon} {}", ws.name),
+            None => ws.name.clone(),
+        };
+        set_line_from(buf, 1, y, &truncate(&label, content_w - 1), style);
         hits.push((row_rect(y), Hit::Workspace { index: i, id: ws.id }));
 
         let screen = ws.active_screen_ref();
@@ -165,6 +173,12 @@ mod tests {
     use super::*;
 
     const THEME_RAIL: Color = Color::Indexed(1);
+
+    #[test]
+    fn active_row_background_prefers_workspace_color() {
+        assert_eq!(active_row_background(Some(Color::Blue), Color::Black), Color::Blue);
+        assert_eq!(active_row_background(None, Color::Black), Color::Black);
+    }
 
     #[test]
     fn rail_color_prefers_workspace_color_whether_active_or_not() {

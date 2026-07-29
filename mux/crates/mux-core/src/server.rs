@@ -27,7 +27,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::model::{Screen, State};
+use crate::model::{IconName, Screen, State};
 use crate::platform::{self, transport};
 use crate::{
     assign_short_ids, AttachFrame, DefaultColors, Mux, MuxEvent, Node, PaneId, Rgb, ScreenId,
@@ -335,6 +335,17 @@ enum Command {
         #[serde(default)]
         colour: Option<String>,
     },
+    /// Set the status icon on a workspace, defaulting to the active one.
+    SetStatus {
+        #[serde(default)]
+        workspace: Option<WorkspaceId>,
+        icon: String,
+    },
+    /// Positional CLI shorthand which creates a missing named workspace.
+    WorkspaceColor {
+        name: String,
+        color: String,
+    },
     /// Emits a transient `flash` event to subscribers. `surface` is
     /// advisory (not validated against the workspace) and just passed
     /// through.
@@ -580,6 +591,7 @@ fn workspaces_json(state: &State) -> Value {
                 "short_id": short_ids.get(&ws.id).cloned().unwrap_or_default(),
                 "name": ws.name,
                 "color": ws.color.map(|c| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)),
+                "icon": ws.icon.as_ref().map(|icon| icon.as_str()),
                 "active": i == state.active_workspace,
                 "screens": ws.screens.iter().enumerate().map(|(s, screen)| {
                     screen_json(state, screen, s == ws.active_screen, &short_ids)
@@ -638,6 +650,48 @@ pub(crate) fn parse_hex_color(value: &str) -> anyhow::Result<Rgb> {
     Ok(Rgb { r: hex(1)?, g: hex(3)?, b: hex(5)? })
 }
 
+pub fn parse_workspace_color(value: &str) -> anyhow::Result<Rgb> {
+    let hex = match value.to_ascii_lowercase().as_str() {
+        "red" => "#ff0000",
+        "orange" => "#ff8800",
+        "yellow" => "#ffff00",
+        "green" => "#00ff00",
+        "blue" => "#0000ff",
+        "purple" => "#800080",
+        "pink" => "#ff00ff",
+        "cyan" => "#00ffff",
+        "grey" | "gray" => "#808080",
+        _ => value,
+    };
+    parse_hex_color(hex).map_err(|_| {
+        anyhow::anyhow!("bad workspace color {value:?} (want \"#rrggbb\" or a named preset)")
+    })
+}
+
+pub fn parse_workspace_icon(value: &str) -> anyhow::Result<IconName> {
+    let glyph = match value.to_ascii_lowercase().as_str() {
+        "folder" => "📁".to_string(),
+        "robot" => "🤖".to_string(),
+        "eye" => "👁".to_string(),
+        "gear" => "⚙".to_string(),
+        "search" | "magnifier" => "🔍".to_string(),
+        "lock" => "🔒".to_string(),
+        "check" => "✓".to_string(),
+        _ if value.starts_with("\\u{") && value.ends_with('}') => {
+            let hex = &value[3..value.len() - 1];
+            let code = u32::from_str_radix(hex, 16).ok();
+            code.and_then(char::from_u32).map(|c| c.to_string()).ok_or_else(|| {
+                anyhow::anyhow!("unknown workspace icon {value:?}")
+            })?
+        }
+        _ if value.chars().count() == 1 => value.to_string(),
+        _ => anyhow::bail!(
+            "unknown workspace icon {value:?}; expected folder, robot, eye, gear, search, magnifier, lock, check, or one Unicode character"
+        ),
+    };
+    Ok(IconName::new(glyph))
+}
+
 fn browser_state_json(
     surface: SurfaceId,
     state: &crate::BrowserAttachState,
@@ -678,9 +732,7 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             "pid": std::process::id(),
         })),
         Command::ListWorkspaces => Ok(mux.with_state(workspaces_json)),
-        Command::GetResolvedConfig => {
-            Ok(mux.resolved_chrome().unwrap_or_else(|| json!({})))
-        }
+        Command::GetResolvedConfig => Ok(mux.resolved_chrome().unwrap_or_else(|| json!({}))),
         Command::Send { surface, text, bytes, send_cr } => {
             let surface = get_surface(mux, surface)?;
             require_pty(&surface)?;
@@ -940,12 +992,38 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
         }
         Command::SetWorkspaceColor { workspace, colour } => {
             let color = match colour {
-                Some(hex) => Some(parse_hex_color(&hex)?),
+                Some(value) => Some(parse_workspace_color(&value)?),
                 None => None,
             };
             if !mux.set_workspace_color(workspace, color) {
                 anyhow::bail!("unknown workspace {workspace}");
             }
+            Ok(json!({}))
+        }
+        Command::SetStatus { workspace, icon } => {
+            let workspace = workspace.or_else(|| {
+                mux.with_state(|state| state.workspaces.get(state.active_workspace).map(|ws| ws.id))
+            });
+            let workspace = workspace.ok_or_else(|| anyhow::anyhow!("no active workspace"))?;
+            let icon = parse_workspace_icon(&icon)?;
+            if !mux.set_workspace_icon(workspace, Some(icon)) {
+                anyhow::bail!("unknown workspace {workspace}");
+            }
+            Ok(json!({}))
+        }
+        Command::WorkspaceColor { name, color } => {
+            let color = parse_workspace_color(&color)?;
+            let workspace = mux.with_state(|state| {
+                state.workspaces.iter().find(|ws| ws.name == name).map(|ws| ws.id)
+            });
+            let workspace = match workspace {
+                Some(id) => id,
+                None => {
+                    mux.new_workspace(Some(name), None)?;
+                    mux.with_state(|state| state.workspaces.last().unwrap().id)
+                }
+            };
+            mux.set_workspace_color(workspace, Some(color));
             Ok(json!({}))
         }
         Command::TriggerFlash { workspace, surface } => {
@@ -1137,4 +1215,26 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
 pub fn cleanup(path: &Path) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(pid_path(path));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_color_accepts_hex_and_named_presets() {
+        assert_eq!(parse_workspace_color("#1234ab").unwrap(), Rgb { r: 0x12, g: 0x34, b: 0xab });
+        assert_eq!(parse_workspace_color("blue").unwrap(), Rgb { r: 0, g: 0, b: 255 });
+        assert!(parse_workspace_color("ultraviolet").is_err());
+    }
+
+    #[test]
+    fn workspace_icon_validates_names_and_unicode() {
+        assert_eq!(parse_workspace_icon("robot").unwrap().as_str(), "🤖");
+        assert_eq!(parse_workspace_icon("\\u{1f50d}").unwrap().as_str(), "🔍");
+        assert!(parse_workspace_icon("bogus")
+            .unwrap_err()
+            .to_string()
+            .contains("unknown workspace icon"));
+    }
 }

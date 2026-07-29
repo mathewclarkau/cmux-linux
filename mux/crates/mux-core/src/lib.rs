@@ -27,7 +27,7 @@ pub use layout::{
     directional_neighbor, layout_screen, split_for_pane_edge, split_sides, LayoutResult, Rect,
     SplitEdge, SplitResize,
 };
-pub use model::{Node, Pane, Screen, State, Workspace};
+pub use model::{IconName, Node, Pane, Screen, State, Workspace};
 pub use mux::{Mux, MuxEvent};
 pub use remote_pty::RemoteSpec;
 pub use short_id::assign_short_ids;
