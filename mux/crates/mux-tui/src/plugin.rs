@@ -214,11 +214,27 @@ fn load_registry(base: &Path) -> Result<Registry, String> {
 
 /// Persist the registry as pretty JSON. Creates the parent directory
 /// on demand so a fresh install works without a pre-existing base dir.
+///
+/// Refuses to write if `<base>/plugins.json` already exists and is a
+/// symlink: `fs::write` would follow the symlink and overwrite its
+/// target, which is dangerous here because an attacker with write access
+/// to the cmux data dir could plant such a symlink pointing at a
+/// sensitive file. Plugin manifests are a third-party-trust boundary
+/// even though execution is deferred, so the same paranoia applies to
+/// the registry file.
 fn save_registry(base: &Path, reg: &Registry) -> Result<(), String> {
     let path = registry_path(base);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    }
+    if let Ok(meta) = fs::symlink_metadata(&path) {
+        if meta.file_type().is_symlink() {
+            return Err(format!(
+                "refusing to write through symlink at {}",
+                path.display()
+            ));
+        }
     }
     let json = serde_json::to_string_pretty(reg)
         .map_err(|err| format!("failed to encode registry: {err}"))?;
@@ -227,6 +243,61 @@ fn save_registry(base: &Path, reg: &Registry) -> Result<(), String> {
 
 fn find_entry_mut<'a>(reg: &'a mut Registry, name: &str) -> Option<&'a mut PluginEntry> {
     reg.plugins.iter_mut().find(|p| p.name == name)
+}
+
+/// Recursive directory removal that refuses to follow symlinks.
+/// `fs::remove_dir_all` will happily walk through a symlink and delete
+/// the target's contents, which is dangerous here: an attacker with
+/// write access to the cmux data dir could plant a symlink inside (or
+/// at the root of) a plugin directory pointing at a sensitive file, and
+/// `uninstall` would then delete through it. We walk the tree top-down
+/// using `fs::symlink_metadata` and refuse the whole removal if any
+/// entry is a symlink. The same helper is used by the rollback path
+/// inside `install` so a partial install cannot be cleaned up through
+/// an attacker-planted symlink either.
+fn remove_dir_safely(path: &Path) -> std::io::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    if meta.file_type().is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("refusing to remove through symlink at {}", path.display()),
+        ));
+    }
+    if meta.is_dir() {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            remove_dir_safely(&entry.path())?;
+        }
+        fs::remove_dir(path)
+    } else {
+        fs::remove_file(path)
+    }
+}
+
+/// Format the registry for either human or `--json` output, sorted by
+/// plugin name in both branches so scripted consumers see the same
+/// order a human reading the plain output sees. JSON serialization
+/// failure is surfaced as a `Result::Err` rather than silently collapsed
+/// to an empty string (the prior code used `unwrap_or_default()`, which
+/// would print `""` and exit 0 on the (rare) failure path, contradicting
+/// the file's own no-silent-fallback style).
+fn format_list_output(reg: &Registry, json: bool) -> Result<String, String> {
+    let mut sorted = reg.clone();
+    sorted.plugins.sort_by(|a, b| a.name.cmp(&b.name));
+    if json {
+        return serde_json::to_string(&sorted)
+            .map_err(|err| format!("failed to encode registry: {err}"));
+    }
+    if sorted.plugins.is_empty() {
+        return Ok("no plugins installed".to_string());
+    }
+    let mut out = String::new();
+    for e in &sorted.plugins {
+        let state = if e.enabled { "enabled" } else { "disabled" };
+        let verbs = e.verbs.join(",");
+        out.push_str(&format!("{} {} {} {}\n", e.name, state, e.entry, verbs));
+    }
+    Ok(out)
 }
 
 // ----- subcommands ---------------------------------------------------------
@@ -239,27 +310,20 @@ fn cmd_list(base: &Path, json: bool) -> i32 {
             return 1;
         }
     };
-    if reg.plugins.is_empty() {
-        if json {
-            let _ = println!("{}", serde_json::to_string(&reg).unwrap_or_default());
-        } else {
-            println!("no plugins installed");
+    // Both human and --json output sort by name, so a script reading
+    // JSON sees the same order a human reading the plain output sees.
+    // Serialization failure is reported and returns 1, not silently
+    // collapsed to an empty string.
+    match format_list_output(&reg, json) {
+        Ok(out) => {
+            print!("{out}");
+            0
         }
-        return 0;
+        Err(err) => {
+            eprintln!("cmux plugin list: {err}");
+            1
+        }
     }
-    // Sorted, stable, greppable output (matches the repo output style).
-    let mut entries = reg.plugins.clone();
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
-    if json {
-        let _ = println!("{}", serde_json::to_string(&reg).unwrap_or_default());
-        return 0;
-    }
-    for e in &entries {
-        let state = if e.enabled { "enabled" } else { "disabled" };
-        let verbs = e.verbs.join(",");
-        println!("{} {} {} {}", e.name, state, e.entry, verbs);
-    }
-    0
 }
 
 fn cmd_install(base: &Path, positional: &[&str]) -> i32 {
@@ -300,15 +364,51 @@ fn cmd_install(base: &Path, positional: &[&str]) -> i32 {
         return 1;
     }
     let plugin_dir = plugins_dir(base).join(&plugin.name);
+    // Refuse to install through a symlink: an attacker with write
+    // access to the cmux data dir could have pre-placed a symlink at
+    // `<base>/plugins/<name>` pointing at a sensitive directory, and
+    // `create_dir_all` would silently treat it as a present directory
+    // (because the symlink target is a directory), after which the
+    // manifest write below would land inside the symlink target rather
+    // than the intended plugin slot.
+    if let Ok(meta) = fs::symlink_metadata(&plugin_dir) {
+        if meta.file_type().is_symlink() {
+            eprintln!(
+                "cmux plugin install: refusing to install through symlink at {}",
+                plugin_dir.display()
+            );
+            return 1;
+        }
+    }
     if let Err(err) = fs::create_dir_all(&plugin_dir) {
         eprintln!("cmux plugin install: failed to create {}: {err}", plugin_dir.display());
         return 1;
     }
     let dest = plugin_dir.join("cmux-plugin.toml");
+    // Defence in depth: also refuse if the manifest slot itself is a
+    // symlink planted inside a directory we just created (or a
+    // directory we adopted). `fs::write` would follow it and clobber
+    // the target. On refusal we attempt a best-effort rollback:
+    // `fs::remove_file` on a symlink removes the link itself, not the
+    // target, then `fs::remove_dir` clears the (now-empty) parent.
+    // This is the only place we deviate from `remove_dir_safely`,
+    // because that helper refuses to touch the symlink at all and would
+    // leave the half-created plugin dir behind.
+    if let Ok(meta) = fs::symlink_metadata(&dest) {
+        if meta.file_type().is_symlink() {
+            let _ = fs::remove_file(&dest);
+            let _ = fs::remove_dir(&plugin_dir);
+            eprintln!(
+                "cmux plugin install: refusing to write through symlink at {}",
+                dest.display()
+            );
+            return 1;
+        }
+    }
     if let Err(err) = fs::write(&dest, &content) {
         // Roll back the directory we just made so a failed install does
         // not leave an empty half-registered plugin on disk.
-        let _ = fs::remove_dir_all(&plugin_dir);
+        let _ = remove_dir_safely(&plugin_dir);
         eprintln!("cmux plugin install: failed to write {}: {err}", dest.display());
         return 1;
     }
@@ -319,7 +419,7 @@ fn cmd_install(base: &Path, positional: &[&str]) -> i32 {
         verbs: plugin.verbs.clone(),
     });
     if let Err(err) = save_registry(base, &reg) {
-        let _ = fs::remove_dir_all(&plugin_dir);
+        let _ = remove_dir_safely(&plugin_dir);
         eprintln!("cmux plugin install: {err}");
         return 1;
     }
@@ -351,11 +451,11 @@ fn cmd_uninstall(base: &Path, positional: &[&str]) -> i32 {
     }
     let plugin_dir = plugins_dir(base).join(name);
     if plugin_dir.exists() {
-        if let Err(err) = fs::remove_dir_all(&plugin_dir) {
-            eprintln!(
-                "cmux plugin uninstall: failed to remove {}: {err}",
-                plugin_dir.display()
-            );
+        // Use the symlink-aware walker rather than `fs::remove_dir_all`,
+        // which would happily delete through an attacker-planted symlink
+        // inside (or at the root of) the plugin directory.
+        if let Err(err) = remove_dir_safely(&plugin_dir) {
+            eprintln!("cmux plugin uninstall: {}", err);
             return 1;
         }
     }
@@ -608,5 +708,283 @@ mod tests {
         // JSON mode emits an empty registry object.
         assert_eq!(cmd_list(&base, true), 0);
         let _ = fs::remove_dir_all(&base);
+    }
+
+    /// `save_registry` must refuse to write when `<base>/plugins.json`
+    /// is already a symlink: an attacker with write access to the cmux
+    /// data dir could plant such a symlink pointing at a sensitive
+    /// file, and `fs::write` would silently follow it. We assert the
+    /// error is reported AND the symlink target's contents are
+    /// untouched.
+    #[test]
+    fn save_registry_refuses_symlink_at_plugins_json() {
+        let base = tmp_base("save_sym");
+        // Symlink target the attacker is trying to clobber.
+        let target = base.join("victim.txt");
+        fs::write(&target, "do-not-touch").unwrap();
+        // Pre-place a symlink at <base>/plugins.json -> target.
+        std::os::unix::fs::symlink(&target, registry_path(&base)).unwrap();
+        let reg = Registry::default();
+        let err = save_registry(&base, &reg).expect_err("must refuse symlink target");
+        assert!(
+            err.contains("symlink"),
+            "error should mention symlink: {err}"
+        );
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "do-not-touch",
+            "symlink target must remain untouched"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// `install` must refuse when `<base>/plugins/<name>` is itself a
+    /// symlink. `create_dir_all` would otherwise treat the symlink-to-
+    /// directory as a present directory and the manifest write below
+    /// would land inside the symlink target. Assert the install fails,
+    /// the registry is not populated, and the symlink target is
+    /// untouched.
+    #[test]
+    fn install_refuses_symlink_at_plugin_dir() {
+        let base = tmp_base("install_sym_dir");
+        fs::create_dir_all(plugins_dir(&base)).unwrap();
+        // Symlink target is a sensitive-looking directory.
+        let target = base.join("sensitive");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("passwords.txt"), "do-not-touch").unwrap();
+        // Pre-place the symlink at the plugin slot.
+        let plugin_link = plugins_dir(&base).join("fleet");
+        std::os::unix::fs::symlink(&target, &plugin_link).unwrap();
+
+        // Stage a real manifest in a separate temp dir.
+        let manifest_dir = std::env::temp_dir().join(format!(
+            "cmux-plugin-test-manifest-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&manifest_dir).unwrap();
+        let manifest_file = manifest_dir.join("cmux-plugin.toml");
+        fs::write(
+            &manifest_file,
+            manifest("fleet", "bin/fleet.wasm", &["deploy"]),
+        )
+        .unwrap();
+        let path_str = manifest_file.to_str().unwrap();
+
+        assert_eq!(cmd_install(&base, &[path_str]), 1);
+        assert_eq!(
+            load_registry(&base).unwrap().plugins.len(),
+            0,
+            "registry must not be populated when install is refused"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("passwords.txt")).unwrap(),
+            "do-not-touch",
+            "symlink target contents must remain untouched"
+        );
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&manifest_dir);
+    }
+
+    /// `install` must also refuse when the manifest slot
+    /// `<base>/plugins/<name>/cmux-plugin.toml` is itself a symlink,
+    /// even if the parent directory is regular. Defence in depth: an
+    /// attacker who could replace just the manifest file inside an
+    /// otherwise-normal plugin directory must not be able to redirect
+    /// the write into a sensitive file.
+    #[test]
+    fn install_refuses_symlink_at_manifest_dest() {
+        let base = tmp_base("install_sym_dest");
+        fs::create_dir_all(plugins_dir(&base)).unwrap();
+        let plugin_dir = plugins_dir(&base).join("fleet");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        // Pre-place a symlink at the manifest slot.
+        let target = base.join("victim.txt");
+        fs::write(&target, "do-not-touch").unwrap();
+        std::os::unix::fs::symlink(&target, plugin_dir.join("cmux-plugin.toml")).unwrap();
+
+        let manifest_dir = std::env::temp_dir().join(format!(
+            "cmux-plugin-test-manifest-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&manifest_dir).unwrap();
+        let manifest_file = manifest_dir.join("cmux-plugin.toml");
+        fs::write(
+            &manifest_file,
+            manifest("fleet", "bin/fleet.wasm", &["deploy"]),
+        )
+        .unwrap();
+        let path_str = manifest_file.to_str().unwrap();
+
+        assert_eq!(cmd_install(&base, &[path_str]), 1);
+        assert_eq!(
+            load_registry(&base).unwrap().plugins.len(),
+            0,
+            "registry must not be populated when install is refused"
+        );
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "do-not-touch",
+            "symlink target contents must remain untouched"
+        );
+        // The plugin dir we just created (above the symlink) should be
+        // rolled back by the symlink check path so we do not leave a
+        // dangling empty directory behind.
+        assert!(
+            !plugin_dir.exists(),
+            "plugin dir should be cleaned up after a refused install, found {}",
+            plugin_dir.display()
+        );
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&manifest_dir);
+    }
+
+    /// `uninstall` must refuse when the plugin directory itself is a
+    /// symlink. `fs::remove_dir_all` would otherwise walk through the
+    /// symlink and delete the target's contents, which is exactly the
+    /// damage the warning is about. Assert the symlink target survives
+    /// AND the registry is left untouched (the round-1 ordering is
+    /// "remove dir, then rewrite registry", so on refusal we never
+    /// reach the registry write). That keeps the on-disk state
+    /// consistent: if the user fixes the symlink and retries, the
+    /// plugin still shows in `list`.
+    #[test]
+    fn uninstall_refuses_symlink_at_plugin_dir() {
+        let base = tmp_base("uninstall_sym_dir");
+        // Symlink target is a sensitive directory.
+        let target = base.join("sensitive");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("do-not-delete.txt"), "do-not-touch").unwrap();
+        // Pre-place a symlink at the plugin slot. Parent dir must exist
+        // for the symlink(2) call to succeed.
+        fs::create_dir_all(plugins_dir(&base)).unwrap();
+        let plugin_dir = plugins_dir(&base).join("fleet");
+        std::os::unix::fs::symlink(&target, &plugin_dir).unwrap();
+        // Seed the registry so the plugin is "installed" from cmux's POV.
+        let mut reg = Registry::default();
+        reg.plugins.push(PluginEntry {
+            name: "fleet".to_string(),
+            enabled: true,
+            entry: "bin/fleet.wasm".to_string(),
+            verbs: vec!["deploy".to_string()],
+        });
+        save_registry(&base, &reg).unwrap();
+
+        assert_eq!(cmd_uninstall(&base, &["fleet"]), 1);
+        assert!(
+            target.join("do-not-delete.txt").exists(),
+            "symlink target contents must remain untouched"
+        );
+        let reg_after = load_registry(&base).unwrap();
+        assert_eq!(
+            reg_after.plugins.len(),
+            1,
+            "registry must not be rewritten when dir removal is refused"
+        );
+        assert_eq!(reg_after.plugins[0].name, "fleet");
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// `uninstall` must also refuse when a symlink exists anywhere
+    /// inside the plugin directory tree. `fs::remove_dir_all` would
+    /// happily walk through such a symlink and delete the target.
+    /// Assert the registry is rolled back to its pre-removal state
+    /// (the round-1 code writes the registry after the dir removal, so
+    /// on refusal the registry still shows the plugin) and the
+    /// symlink target survives.
+    #[test]
+    fn uninstall_refuses_symlink_inside_plugin_dir() {
+        let base = tmp_base("uninstall_sym_inside");
+        let plugin_dir = plugins_dir(&base).join("fleet");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("cmux-plugin.toml"),
+            manifest("fleet", "bin/fleet.wasm", &["deploy"]),
+        )
+        .unwrap();
+        // Plant a symlink inside the plugin dir at a sensitive target.
+        let target = base.join("victim.txt");
+        fs::write(&target, "do-not-touch").unwrap();
+        std::os::unix::fs::symlink(&target, plugin_dir.join("evil-link")).unwrap();
+
+        // Seed the registry so the plugin is "installed" from cmux's POV.
+        let mut reg = Registry::default();
+        reg.plugins.push(PluginEntry {
+            name: "fleet".to_string(),
+            enabled: true,
+            entry: "bin/fleet.wasm".to_string(),
+            verbs: vec!["deploy".to_string()],
+        });
+        save_registry(&base, &reg).unwrap();
+
+        assert_eq!(cmd_uninstall(&base, &["fleet"]), 1);
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "do-not-touch",
+            "symlink target contents must remain untouched"
+        );
+        // The registry should still show the plugin because the round-1
+        // ordering writes the updated registry AFTER the dir removal.
+        let reg_after = load_registry(&base).unwrap();
+        assert_eq!(
+            reg_after.plugins.len(),
+            1,
+            "registry should not be rewritten when dir removal is refused"
+        );
+        assert_eq!(reg_after.plugins[0].name, "fleet");
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The `--json` output of `cmd_list` (via `format_list_output`) must
+    /// sort plugin entries by name so a script reading JSON sees the
+    /// same order a human reading the plain output sees. The
+    /// round-1 code sorted only the plain branch.
+    #[test]
+    fn list_json_output_is_sorted_by_name() {
+        // Insert in non-alphabetical order so a sort bug is observable.
+        let mut reg = Registry::default();
+        reg.plugins.push(PluginEntry {
+            name: "gamma".to_string(),
+            enabled: true,
+            entry: "x".to_string(),
+            verbs: vec!["a".to_string()],
+        });
+        reg.plugins.push(PluginEntry {
+            name: "alpha".to_string(),
+            enabled: true,
+            entry: "x".to_string(),
+            verbs: vec!["a".to_string()],
+        });
+        reg.plugins.push(PluginEntry {
+            name: "beta".to_string(),
+            enabled: true,
+            entry: "x".to_string(),
+            verbs: vec!["a".to_string()],
+        });
+        let json = format_list_output(&reg, true).expect("serialise sorted JSON");
+        let a = json.find("\"alpha\"").expect("alpha must be present");
+        let b = json.find("\"beta\"").expect("beta must be present");
+        let c = json.find("\"gamma\"").expect("gamma must be present");
+        assert!(
+            a < b && b < c,
+            "JSON output must sort by name; got: {json}"
+        );
+
+        // Plain output must use the same order.
+        let plain = format_list_output(&reg, false).expect("format plain");
+        let lines: Vec<&str> = plain.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].starts_with("alpha "), "plain line 0: {}", lines[0]);
+        assert!(lines[1].starts_with("beta "), "plain line 1: {}", lines[1]);
+        assert!(lines[2].starts_with("gamma "), "plain line 2: {}", lines[2]);
     }
 }
