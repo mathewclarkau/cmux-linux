@@ -522,6 +522,7 @@ fn pane_json(state: &State, id: PaneId, short_ids: &HashMap<u64, String>) -> Val
                 "title": surface.map(|s| s.title()).unwrap_or_default(),
                 "cwd": surface.and_then(|s| s.cwd()),
                 "agent_state": surface.and_then(|s| s.agent_report()).map(|r| r.state.as_str()),
+                "agent_session": surface.and_then(|s| s.agent_report()).and_then(|r| r.session.clone()),
                 "size": surface.map(|s| {
                     let (c, r) = s.size();
                     json!({"cols": c, "rows": r})

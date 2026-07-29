@@ -1450,11 +1450,13 @@ impl App {
                 return Ok(RenderAction::Draw);
             }
             KeyCode::Up => {
-                finder.move_cursor(-1);
+                let rows = crate::finder::FinderState::rows_visible(self.screen);
+                finder.move_cursor(-1, rows);
                 return Ok(RenderAction::Draw);
             }
             KeyCode::Down => {
-                finder.move_cursor(1);
+                let rows = crate::finder::FinderState::rows_visible(self.screen);
+                finder.move_cursor(1, rows);
                 return Ok(RenderAction::Draw);
             }
             KeyCode::Enter => {
@@ -1486,8 +1488,9 @@ impl App {
                 crate::ui::input::InputEvent::Changed | crate::ui::input::InputEvent::None => {}
             },
         }
-        // Typing or a filter change resets the cursor to the top row.
+        // Typing or a filter change resets the viewport to the top row.
         finder.cursor = 0;
+        finder.scroll = 0;
         Ok(RenderAction::Draw)
     }
 
@@ -1530,7 +1533,8 @@ impl App {
     /// entirely is a no-op so the user keeps their typed query.
     fn handle_finder_click(&mut self, x: u16, y: u16) -> anyhow::Result<RenderAction> {
         let screen = self.screen;
-        let Some(row) = crate::finder::finder_row_at(screen, x, y) else {
+        let scroll = self.finder.as_ref().map(|f| f.scroll).unwrap_or(0);
+        let Some(row) = crate::finder::finder_row_at(screen, x, y, scroll) else {
             return Ok(RenderAction::None);
         };
         let target = match self.finder.as_mut() {

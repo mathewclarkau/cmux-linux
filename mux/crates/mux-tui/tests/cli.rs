@@ -195,6 +195,57 @@ fn report_agent_and_list_agents_round_trip() {
 }
 
 #[test]
+fn agent_session_round_trips_through_list_workspaces_json() {
+    // AC2 fix: `pane_json` serialises `agent_session` per tab (alongside
+    // `agent_state`) so a remote-attach client reading `list-workspaces`
+    // sees the session id, not `None`. The client tree-parsing test in
+    // `session/tree.rs` covers the read-back; this test pins the server
+    // half of the round trip end to end through the real control socket.
+    let server = HeadlessServer::start("agent-session-rpc");
+    let workspace = cli(&server, &["new-workspace", "--name", "agent-rpc"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout)
+        .unwrap()
+        .trim()
+        .parse::<u64>()
+        .unwrap();
+
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "working",
+            "--source",
+            "hook",
+            "--agent-session",
+            "sess-rpc-42",
+        ],
+    );
+    assert_success(&report);
+
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+
+    // Walk every tab's JSON to find the surface we reported on and confirm
+    // both the state and the session id survived the round trip.
+    let tab = value["workspaces"]
+        .as_array()
+        .expect("workspaces array")
+        .iter()
+        .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+        .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+        .flat_map(|pane| pane["tabs"].as_array().into_iter().flatten())
+        .find(|tab| tab["surface"].as_u64() == Some(surface))
+        .expect("reported surface present in list-workspaces");
+    assert_eq!(tab["agent_state"].as_str(), Some("working"));
+    assert_eq!(tab["agent_session"].as_str(), Some("sess-rpc-42"));
+}
+
+#[test]
 fn set_workspace_color_sets_and_clears() {
     let server = HeadlessServer::start("workspace-color");
 

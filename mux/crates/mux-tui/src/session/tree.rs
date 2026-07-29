@@ -375,6 +375,7 @@ pub fn parse_tree(data: &Value) -> TreeView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mux_core::AgentState;
     use serde_json::json;
 
     #[test]
@@ -399,5 +400,47 @@ mod tests {
         });
         let tree = parse_tree(&data);
         assert_eq!(tree.workspaces[0].color, None);
+    }
+
+    #[test]
+    fn parse_tree_reads_agent_session_and_state_per_tab() {
+        // Mirrors the `list-workspaces` JSON shape the server serialises
+        // (server.rs `pane_json`): each tab carries `agent_state` AND
+        // `agent_session` alongside the chrome fields. The client's
+        // tree-parsing must read the session id back so a remote-attach
+        // client can index it for the fuzzy finder (AC2).
+        let data = json!({
+            "workspaces": [{
+                "id": 1, "name": "agents", "active": true,
+                "screens": [{
+                    "id": 2, "short_id": "2", "name": null, "active": true,
+                    "layout": {"type": "leaf", "pane": 3},
+                    "active_pane": 3,
+                    "panes": [{
+                        "id": 3, "short_id": "3", "name": null, "active_tab": 0,
+                        "tabs": [{
+                            "surface": 4, "short_id": "4", "name": null,
+                            "title": "shell", "cwd": "/tmp",
+                            "agent_state": "working",
+                            "agent_session": "sess-abc-123",
+                            "kind": "pty", "dead": false
+                        }, {
+                            "surface": 5, "short_id": "5", "name": null,
+                            "title": "editor", "cwd": "/tmp",
+                            "agent_state": null,
+                            "kind": "pty", "dead": false
+                        }]
+                    }]
+                }]
+            }]
+        });
+        let tree = parse_tree(&data);
+        let tabs = &tree.workspaces[0].screens[0].panes[0].tabs;
+        assert_eq!(tabs[0].surface, 4);
+        assert_eq!(tabs[0].agent_state, Some(AgentState::Working));
+        assert_eq!(tabs[0].agent_session.as_deref(), Some("sess-abc-123"));
+        // A tab with no agent session reported reads back as None.
+        assert_eq!(tabs[1].agent_state, None);
+        assert_eq!(tabs[1].agent_session, None);
     }
 }

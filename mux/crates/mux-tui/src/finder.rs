@@ -76,19 +76,40 @@ pub struct FinderItem {
 }
 
 /// Overlay state: the query input, the active state filter, the
-/// selection cursor, and the item list (built once on open and refreshed
-/// while the user types).
+/// selection cursor, the scroll offset of the first visible row, and the
+/// item list (built once on open and refreshed while the user types).
+/// `scroll` keeps `cursor` inside `[scroll, scroll + rows_visible)` so
+/// the selection is always drawn and the click hit-test (`finder_row_at`)
+/// and the draw path share one viewport, fixing off-screen selection and
+/// stale mouse hit-tests on lists longer than the overlay window.
 #[derive(Debug, Clone)]
 pub struct FinderState {
     pub input: TextInput,
     pub state_filter: StateFilter,
     pub cursor: usize,
+    pub scroll: usize,
     pub items: Vec<FinderItem>,
 }
 
 impl FinderState {
     pub fn new(items: Vec<FinderItem>) -> Self {
-        FinderState { input: TextInput::new(String::new()), state_filter: StateFilter::All, cursor: 0, items }
+        FinderState {
+            input: TextInput::new(String::new()),
+            state_filter: StateFilter::All,
+            cursor: 0,
+            scroll: 0,
+            items,
+        }
+    }
+
+    /// Number of result rows the overlay can show at once on `screen`.
+    /// Zero when the overlay does not fit. Shared by the draw path, the
+    /// cursor/scroll handling, and the click hit-test arithmetic so all
+    /// three agree on the viewport height.
+    pub fn rows_visible(screen: Rect) -> usize {
+        finder_rect(screen)
+            .map(|rect| (rect.height.saturating_sub((ROWS_TOP_OFFSET + 1) as u16)) as usize)
+            .unwrap_or(0)
     }
 
     /// Rows that pass the state filter and match the current query, kept
@@ -120,15 +141,43 @@ impl FinderState {
         out
     }
 
-    /// Move the cursor, clamped to the ranked list length.
-    pub fn move_cursor(&mut self, delta: isize) {
+    /// Move the cursor by `delta` rows through the ranked list, then
+    /// scroll the viewport so the cursor stays inside the visible window.
+    /// `rows_visible` is [`FinderState::rows_visible`] for the current
+    /// screen; passing it in (rather than re-deriving it) keeps the finder
+    /// a pure function of its arguments with no hidden screen dependency.
+    pub fn move_cursor(&mut self, delta: isize, rows_visible: usize) {
         let len = self.ranked().len();
         if len == 0 {
             self.cursor = 0;
+            self.scroll = 0;
             return;
         }
         let next = (self.cursor as isize + delta).rem_euclid(len as isize) as usize;
         self.cursor = next.min(len - 1);
+        self.clamp_scroll(rows_visible, len);
+    }
+
+    /// Keep `cursor` inside `[scroll, scroll + rows_visible)` so the
+    /// selection is always one of the drawn rows. When `rows_visible` is
+    /// 0 (screen too small for a results region) there is no window to
+    /// track, so the viewport stays at the top.
+    pub fn clamp_scroll(&mut self, rows_visible: usize, len: usize) {
+        if len == 0 {
+            self.scroll = 0;
+            return;
+        }
+        let visible = rows_visible.max(1).min(len);
+        let max_scroll = len - visible;
+        if self.cursor >= self.scroll + visible {
+            self.scroll = self.cursor + 1 - visible;
+        }
+        if self.cursor < self.scroll {
+            self.scroll = self.cursor;
+        }
+        if self.scroll > max_scroll {
+            self.scroll = max_scroll;
+        }
     }
 
     /// The selected row's target, if any.
@@ -232,10 +281,15 @@ pub fn finder_rect(screen: Rect) -> Option<Rect> {
 /// draw path uses.
 const ROWS_TOP_OFFSET: u16 = 4;
 
-/// Map a screen-space click to the 0-based results-row index it lands
-/// on, or `None` when the click is outside the overlay box or in its
-/// title/query/filter chrome (anything above the results region).
-pub fn finder_row_at(screen: Rect, x: u16, y: u16) -> Option<usize> {
+/// Map a screen-space click to the ranked-row index it lands on,
+/// accounting for the viewport `scroll` so what's drawn and what's
+/// clickable always agree (the off-screen selection fix). Returns `None`
+/// when the click is outside the overlay box or in its title/query/filter
+/// chrome (anything above the results region). Callers index the ranked
+/// list with the returned value, so a click on a row beyond the ranked
+/// list simply yields no target (the caller's `ranked().get(row)` is
+/// `None`).
+pub fn finder_row_at(screen: Rect, x: u16, y: u16, scroll: usize) -> Option<usize> {
     let rect = finder_rect(screen)?;
     if !rect.contains(x, y) {
         return None;
@@ -245,7 +299,8 @@ pub fn finder_row_at(screen: Rect, x: u16, y: u16) -> Option<usize> {
     if y < rows_y || y >= rows_y + rows_h {
         return None;
     }
-    Some((y - rows_y) as usize)
+    let visible_row = (y - rows_y) as usize;
+    Some(scroll + visible_row)
 }
 
 /// Draw the finder overlay: a bordered box centered on the frame with
@@ -303,13 +358,19 @@ pub fn draw(app: &mut crate::app::App, frame: &mut Frame) {
     }
     frame.set_cursor_position(Position::new(cursor_x, y + 2));
 
-    // Ranked rows beneath the query input.
+    // Ranked rows beneath the query input, scrolled so the cursor row
+    // stays inside the visible window. `ranked_i` is the position in the
+    // ranked list (the cursor indexes the same list), and the screen row
+    // is `ranked_i - scroll`. What's drawn here is exactly what
+    // `finder_row_at` maps a click on the same screen row back to.
     {
         let buf = frame.buffer_mut();
-        for (row, &(item_i, _)) in ranked.iter().enumerate().take(rows_h as usize) {
-            let row_y = rows_y + row as u16;
+        for (ranked_i, &(item_i, _)) in
+            ranked.iter().enumerate().skip(finder.scroll).take(rows_h as usize)
+        {
+            let row_y = rows_y + (ranked_i - finder.scroll) as u16;
             let item = &finder.items[item_i];
-            let style = if row == finder.cursor { selected } else { base };
+            let style = if ranked_i == finder.cursor { selected } else { base };
             let label = truncate(&item.label, (width as usize).saturating_sub(4));
             let prefix = match item.agent_state {
                 Some(AgentState::Working) => "W",
@@ -519,19 +580,74 @@ mod tests {
 
         // Clicking on the title row (y == rect.y + 1) does NOT select a
         // results row: it is chrome, not a results row.
-        assert_eq!(finder_row_at(screen, rect.x + 5, rect.y + 1), None);
+        assert_eq!(finder_row_at(screen, rect.x + 5, rect.y + 1, 0), None);
         // Clicking on the query input row (y == rect.y + 2) likewise.
-        assert_eq!(finder_row_at(screen, rect.x + 5, rect.y + 2), None);
+        assert_eq!(finder_row_at(screen, rect.x + 5, rect.y + 2, 0), None);
         // The first results row maps to index 0.
-        assert_eq!(finder_row_at(screen, rect.x + 5, rows_y), Some(0));
+        assert_eq!(finder_row_at(screen, rect.x + 5, rows_y, 0), Some(0));
         // The second results row maps to index 1.
-        assert_eq!(finder_row_at(screen, rect.x + 5, rows_y + 1), Some(1));
+        assert_eq!(finder_row_at(screen, rect.x + 5, rows_y + 1, 0), Some(1));
         // A click outside the box entirely selects nothing.
-        assert_eq!(finder_row_at(screen, 0, 0), None);
+        assert_eq!(finder_row_at(screen, 0, 0, 0), None);
         // A click on the bottom border row (rect.y + height - 1) is past
         // the results region (the last row is reserved for the border) and
         // so maps to no row.
         let bottom_border = rect.y + rect.height - 1;
-        assert_eq!(finder_row_at(screen, rect.x + 5, bottom_border), None);
+        assert_eq!(finder_row_at(screen, rect.x + 5, bottom_border, 0), None);
+    }
+
+    #[test]
+    fn scroll_keeps_cursor_visible_and_clicks_account_for_offset() {
+        // A list longer than the overlay window. The 100x40 screen shows
+        // `rows_visible` rows at once (height 14 minus chrome); a cursor
+        // moved past that window must scroll the viewport, and a click on
+        // the first visible screen row must map to the scrolled item, not
+        // to ranked index 0 (the off-screen-selection / stale hit-test
+        // fix).
+        let screen = Rect { x: 0, y: 0, width: 100, height: 40 };
+        let rect = finder_rect(screen).unwrap();
+        let rows_y = rect.y + ROWS_TOP_OFFSET;
+        let rows_visible = FinderState::rows_visible(screen);
+        assert!(rows_visible >= 1, "overlay should show at least one row");
+
+        // Build a list strictly longer than the viewport.
+        let total = rows_visible + 4;
+        let items: Vec<FinderItem> = (0..total as u64)
+            .map(|i| item(&format!("row-{i}"), None, surf(i)))
+            .collect();
+        let mut finder = FinderState::new(items);
+
+        // Move the cursor down past the bottom of the first page. After
+        // each move the cursor must stay inside `[scroll, scroll +
+        // rows_visible)`, so the selection is always drawn.
+        for _ in 0..(rows_visible + 1) {
+            finder.move_cursor(1, rows_visible);
+        }
+        assert_eq!(finder.cursor, rows_visible + 1);
+        // The viewport followed: the cursor sits on the last visible row.
+        assert_eq!(finder.scroll, 2, "viewport scrolls so cursor stays visible");
+        assert!(finder.cursor >= finder.scroll);
+        assert!(finder.cursor < finder.scroll + rows_visible);
+
+        // A click on the first visible screen row maps to the ranked row at
+        // the top of the viewport (scroll), NOT ranked index 0, so what's
+        // drawn and what's clickable agree.
+        let clicked = finder_row_at(screen, rect.x + 5, rows_y, finder.scroll).unwrap();
+        assert_eq!(clicked, finder.scroll, "first visible row maps to top of viewport");
+        assert_eq!(finder.items[finder.ranked()[clicked].0].target, surf(2));
+
+        // A click on the cursor's own screen row maps back to the cursor.
+        let cursor_screen_row = rows_y + (finder.cursor - finder.scroll) as u16;
+        let clicked_cursor =
+            finder_row_at(screen, rect.x + 5, cursor_screen_row, finder.scroll).unwrap();
+        assert_eq!(clicked_cursor, finder.cursor);
+
+        // Moving back up to the top scrolls the viewport back to 0.
+        for _ in 0..(finder.cursor) {
+            finder.move_cursor(-1, rows_visible);
+        }
+        assert_eq!(finder.cursor, 0);
+        assert_eq!(finder.scroll, 0);
+        assert_eq!(finder_row_at(screen, rect.x + 5, rows_y, finder.scroll), Some(0));
     }
 }
