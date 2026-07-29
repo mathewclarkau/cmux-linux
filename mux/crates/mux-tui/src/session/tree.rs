@@ -23,6 +23,8 @@ pub struct WorkspaceView {
     pub name: String,
     /// User-assigned sidebar rail color, if any.
     pub color: Option<Color>,
+    /// User-assigned status icon glyph, if any.
+    pub icon: Option<String>,
     pub screens: Vec<ScreenView>,
     pub active_screen: usize,
 }
@@ -199,7 +201,11 @@ pub fn tree_from_state(state: &State) -> TreeView {
                     name: state.surfaces.get(sid).and_then(|s| s.name()),
                     title: state.surfaces.get(sid).map(|s| s.title()).unwrap_or_default(),
                     cwd: state.surfaces.get(sid).and_then(|s| s.cwd()),
-                    agent_state: state.surfaces.get(sid).and_then(|s| s.agent_report()).map(|r| r.state),
+                    agent_state: state
+                        .surfaces
+                        .get(sid)
+                        .and_then(|s| s.agent_report())
+                        .map(|r| r.state),
                     agent_session: state
                         .surfaces
                         .get(sid)
@@ -226,6 +232,7 @@ pub fn tree_from_state(state: &State) -> TreeView {
                 short_id: short_ids.get(&ws.id).cloned().unwrap_or_default(),
                 name: ws.name.clone(),
                 color: ws.color.map(|c| Color::Rgb(c.r, c.g, c.b)),
+                icon: ws.icon.as_ref().map(|icon| icon.as_str().to_string()),
                 active_screen: ws.active_screen,
                 screens: ws
                     .screens
@@ -354,6 +361,7 @@ pub fn parse_tree(data: &Value) -> TreeView {
             short_id: ws.get("short_id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
             name: ws.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
             color: ws.get("color").and_then(|v| v.as_str()).and_then(parse_color),
+            icon: ws.get("icon").and_then(|v| v.as_str()).map(str::to_string),
             screens: Vec::new(),
             active_screen: 0,
         };
@@ -388,7 +396,16 @@ mod tests {
         });
         let tree = parse_tree(&data);
         assert_eq!(tree.workspaces[0].color, Some(Color::Rgb(0xff, 0x00, 0x00)));
+        assert_eq!(tree.workspaces[0].icon, None);
         assert_eq!(tree.workspaces[1].color, None);
+    }
+
+    #[test]
+    fn parse_tree_reads_workspace_icon() {
+        let tree = parse_tree(&json!({
+            "workspaces": [{"id": 1, "name": "bot", "icon": "🤖", "screens": []}]
+        }));
+        assert_eq!(tree.workspaces[0].icon.as_deref(), Some("🤖"));
     }
 
     #[test]

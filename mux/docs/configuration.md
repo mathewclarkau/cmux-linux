@@ -4,7 +4,34 @@
 
 A TOML config file is also supported: `~/.config/cmux/mux.toml` (or `$XDG_CONFIG_HOME/cmux/mux.toml`) is loaded when `mux.json` is absent. When both files exist, `mux.json` wins (it is the explicit override, kept for tooling compatibility). `CMUX_MUX_CONFIG` may point at either a `.toml` or `.json` file; files with no recognised extension are sniffed by content (a leading `{` means JSON, otherwise TOML). Every documented `mux.json` key has an identical TOML equivalent; see the TOML example below.
 
-Colors accept `#rrggbb`, `#rgb`, an xterm-256 number, or a numeric string.
+Colors accept `#rrggbb`, `#rgb`, an xterm-256 number, or a numeric string. Workspace colours additionally accept the named presets `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `cyan`, and `grey`/`gray`.
+
+## Workspaces
+
+Define named workspaces that cmux creates or updates when the server starts. Each entry requires `name`; `color` and `icon` are optional. Icons accept `folder`, `robot`, `eye`, `gear`, `search`, `magnifier`, `lock`, `check`, one Unicode character, or a `\\u{HEX}` escape.
+
+```toml
+[[workspaces]]
+name = "Production Line"
+color = "purple"
+icon = "robot"
+
+[[workspaces]]
+name = "Quality Control"
+color = "#00aaff"
+icon = "eye"
+```
+
+The equivalent JSON shape is:
+
+```json
+{
+  "workspaces": [
+    {"name": "Production Line", "color": "purple", "icon": "robot"},
+    {"name": "Quality Control", "color": "#00aaff", "icon": "eye"}
+  ]
+}
+```
 
 ## Theme
 

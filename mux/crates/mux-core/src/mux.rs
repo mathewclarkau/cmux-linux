@@ -7,8 +7,10 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use crate::browser::{self, BrowserBootstrap, BrowserRuntime};
-use crate::model::{Node, Pane, Screen, State, Workspace};
-use crate::surface::{AgentReport, AgentState, AgentStateSource, DefaultColors, Surface, SurfaceOptions};
+use crate::model::{IconName, Node, Pane, Screen, State, Workspace};
+use crate::surface::{
+    AgentReport, AgentState, AgentStateSource, DefaultColors, Surface, SurfaceOptions,
+};
 use crate::{PaneId, Rgb, ScreenId, SplitDir, SurfaceId, WorkspaceId};
 
 /// Events pushed to subscribed frontends.
@@ -336,6 +338,9 @@ impl Mux {
         if let Some(color) = ws.color {
             self.set_workspace_color(ws_id, Some(color));
         }
+        if let Some(icon) = ws.icon.clone() {
+            self.set_workspace_icon(ws_id, Some(icon));
+        }
         let (screen_id, pane_id) = self.with_state(|s| {
             let pane_id = s.pane_of(first_surface.id).unwrap();
             let (wi, si) = s.screen_of(pane_id).unwrap();
@@ -431,9 +436,7 @@ impl Mux {
         root: PaneId,
     ) -> anyhow::Result<HashMap<usize, PaneId>> {
         match layout {
-            crate::persist::RestoreLayout::Leaf(index) => {
-                Ok(HashMap::from([(*index, root)]))
-            }
+            crate::persist::RestoreLayout::Leaf(index) => Ok(HashMap::from([(*index, root)])),
             crate::persist::RestoreLayout::Split { dir, ratio, a, b } => {
                 // `split()` keeps `root` as the "a" side and puts a new
                 // pane on the "b" side - see `Node::split_leaf`.
@@ -575,7 +578,11 @@ impl Mux {
     /// pane and makes it active. Shared by [`Self::new_workspace`] and
     /// [`Self::new_remote_workspace`], which only differ in how the
     /// surface itself gets spawned.
-    fn attach_new_workspace(self: &Arc<Self>, surface: Arc<Surface>, name: Option<String>) -> Arc<Surface> {
+    fn attach_new_workspace(
+        self: &Arc<Self>,
+        surface: Arc<Surface>,
+        name: Option<String>,
+    ) -> Arc<Surface> {
         let (pane_id, pane) = self.make_pane(surface.id);
         let screen_id = self.next_id();
         let ws_id = self.next_id();
@@ -594,6 +601,7 @@ impl Mux {
                 }],
                 active_screen: 0,
                 color: None,
+                icon: None,
             });
             state.active_workspace = state.workspaces.len() - 1;
         }
@@ -757,6 +765,7 @@ impl Mux {
                     }],
                     active_screen: 0,
                     color: None,
+                    icon: None,
                 });
                 state.active_workspace = state.workspaces.len() - 1;
             }
@@ -1014,6 +1023,23 @@ impl Mux {
             match state.workspaces.iter_mut().find(|ws| ws.id == target) {
                 Some(ws) => {
                     ws.color = color;
+                    true
+                }
+                None => false,
+            }
+        };
+        if changed {
+            self.emit(MuxEvent::TreeChanged);
+        }
+        changed
+    }
+
+    pub fn set_workspace_icon(&self, target: WorkspaceId, icon: Option<IconName>) -> bool {
+        let changed = {
+            let mut state = self.state.lock().unwrap();
+            match state.workspaces.iter_mut().find(|ws| ws.id == target) {
+                Some(ws) => {
+                    ws.icon = icon;
                     true
                 }
                 None => false,
@@ -1544,6 +1570,7 @@ mod tests {
                 }],
                 active_screen: 0,
                 color: None,
+                icon: None,
             }],
             active_workspace: 0,
             panes: HashMap::from([
@@ -1827,9 +1854,8 @@ mod tests {
 
         assert!(mux.list_agents(None, None).is_empty());
 
-        let report = mux
-            .report_agent(surface, AgentState::Working, AgentStateSource::Socket, None)
-            .unwrap();
+        let report =
+            mux.report_agent(surface, AgentState::Working, AgentStateSource::Socket, None).unwrap();
         assert_eq!(report.state, AgentState::Working);
         assert_eq!(report.source, AgentStateSource::Socket);
 
@@ -1846,10 +1872,13 @@ mod tests {
         assert_eq!(report.source, AgentStateSource::Hook);
 
         // A socket report cannot override an existing hook report.
-        let report = mux
-            .report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None)
-            .unwrap();
-        assert_eq!(report.state, AgentState::Blocked, "socket report should not downgrade a hook report");
+        let report =
+            mux.report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None).unwrap();
+        assert_eq!(
+            report.state,
+            AgentState::Blocked,
+            "socket report should not downgrade a hook report"
+        );
         assert_eq!(report.source, AgentStateSource::Hook);
 
         // A newer hook report still applies.

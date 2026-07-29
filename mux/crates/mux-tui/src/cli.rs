@@ -195,8 +195,22 @@ const VERBS: &[VerbSpec] = &[
     },
     VerbSpec {
         name: "set-workspace-color",
-        allowed: &["workspace", "colour"],
+        allowed: &["workspace", "color", "colour"],
         build: build_set_workspace_color,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
+        name: "set-status",
+        allowed: &["icon", "workspace"],
+        build: build_set_status,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
+        name: "workspace-color",
+        allowed: &["name", "color"],
+        build: build_workspace_color,
         print: print_empty,
         stream: false,
     },
@@ -722,15 +736,27 @@ fn build_rename_workspace(flags: &FlagMap) -> Result<Value, UsageError> {
     Ok(json!({ "workspace": flags.required_u64("workspace")?, "name": flags.required("name")? }))
 }
 
-/// `--colour` is required so an omitted flag never silently clears the
-/// workspace color (the wire command treats an absent/`null` `colour` as
-/// "clear"). An explicit empty value (`--colour ""`) is how you clear it;
-/// any non-empty value must be a `#rrggbb` hex string (validated server-side).
+/// A colour value is required so an omitted flag never silently clears
+/// the workspace colour. `--color` is primary; `--colour` remains an alias.
 fn build_set_workspace_color(flags: &FlagMap) -> Result<Value, UsageError> {
     let workspace = flags.required_u64("workspace")?;
-    let colour = flags.required("colour")?;
-    let colour = if colour.is_empty() { Value::Null } else { json!(colour) };
+    let color = match (flags.optional("color"), flags.optional("colour")) {
+        (Some(_), Some(_)) => return Err(UsageError("use only one of --color or --colour".into())),
+        (Some(value), None) | (None, Some(value)) => value,
+        (None, None) => return Err(UsageError("missing --color".into())),
+    };
+    let colour = if color.is_empty() { Value::Null } else { json!(color) };
     Ok(json!({ "workspace": workspace, "colour": colour }))
+}
+
+fn build_set_status(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({ "icon": flags.required("icon")? });
+    flags.insert_optional_u64(&mut value, "workspace")?;
+    Ok(value)
+}
+
+fn build_workspace_color(flags: &FlagMap) -> Result<Value, UsageError> {
+    Ok(json!({ "name": flags.required("name")?, "color": flags.required("color")? }))
 }
 
 fn build_trigger_flash(flags: &FlagMap) -> Result<Value, UsageError> {

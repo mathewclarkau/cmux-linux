@@ -22,6 +22,27 @@ impl HeadlessServer {
         let child = Command::new(bin())
             .args(["--headless", "--socket"])
             .arg(&socket)
+            .env("XDG_STATE_HOME", &dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let server = Self { child, socket, dir };
+        server.wait_for_socket();
+        server
+    }
+
+    fn start_with_config(name: &str, contents: &str) -> Self {
+        let dir = unique_temp_dir(name);
+        fs::create_dir_all(&dir).unwrap();
+        let socket = dir.join("mux.sock");
+        let config = dir.join("mux.toml");
+        fs::write(&config, contents).unwrap();
+        let child = Command::new(bin())
+            .args(["--headless", "--socket"])
+            .arg(&socket)
+            .env("CMUX_MUX_CONFIG", &config)
+            .env("XDG_STATE_HOME", &dir)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -255,7 +276,7 @@ fn set_workspace_color_sets_and_clears() {
     // (2026-07-10, issue #16).
     let created = cli(&server, &["new-workspace", "--name", "color-test"]);
     assert_success(&created);
-    let created_id: u64 = String::from_utf8(created.stdout)
+    let _created_id: u64 = String::from_utf8(created.stdout)
         .unwrap()
         .trim()
         .parse()
@@ -269,7 +290,7 @@ fn set_workspace_color_sets_and_clears() {
 
     let set = cli(
         &server,
-        &["set-workspace-color", "--workspace", &workspace_id.to_string(), "--colour", "#ff8800"],
+        &["set-workspace-color", "--workspace", &workspace_id.to_string(), "--color", "#ff8800"],
     );
     assert_success(&set);
     assert!(set.stdout.is_empty(), "set-workspace-color should be quiet on success");
@@ -278,6 +299,21 @@ fn set_workspace_color_sets_and_clears() {
     assert_success(&list);
     let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
     assert_eq!(value["workspaces"][0]["color"].as_str(), Some("#ff8800"));
+
+    let preset = cli(
+        &server,
+        &["set-workspace-color", "--workspace", &workspace_id.to_string(), "--color", "blue"],
+    );
+    assert_success(&preset);
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(value["workspaces"][0]["color"].as_str(), Some("#0000ff"));
+
+    // Restore the colour used by the plain-output assertion below.
+    assert_success(&cli(
+        &server,
+        &["set-workspace-color", "--workspace", &workspace_id.to_string(), "--color", "#ff8800"],
+    ));
 
     // Plain (non-JSON) output surfaces the color too.
     let plain = cli(&server, &["list-workspaces"]);
@@ -309,6 +345,68 @@ fn set_workspace_color_sets_and_clears() {
         &["set-workspace-color", "--workspace", &workspace_id.to_string(), "--colour", "nope"],
     );
     assert_eq!(bad.status.code(), Some(1));
+}
+
+#[test]
+fn status_icon_round_trips_and_rejects_unknown_names() {
+    let server = HeadlessServer::start("workspace-icon");
+    assert_success(&cli(&server, &["new-workspace", "--name", "first"]));
+    assert_success(&cli(&server, &["new-workspace", "--name", "active"]));
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let first = value["workspaces"][0]["id"].as_u64().unwrap().to_string();
+
+    assert_success(&cli(&server, &["set-status", "--workspace", &first, "--icon", "robot"]));
+    assert_success(&cli(&server, &["set-status", "--icon", "eye"]));
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(value["workspaces"][0]["icon"].as_str(), Some("🤖"));
+    assert_eq!(value["workspaces"][1]["icon"].as_str(), Some("👁"));
+
+    let bad = cli(&server, &["set-status", "--icon", "bogus"]);
+    assert_eq!(bad.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown workspace icon"));
+}
+
+#[test]
+fn workspace_color_shorthand_creates_named_workspace() {
+    let server = HeadlessServer::start("workspace-color-short");
+    let output = Command::new(bin())
+        .arg("--socket")
+        .arg(&server.socket)
+        .args(["workspace-color", "Build Team", "green"])
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_success(&output);
+
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(value["workspaces"][0]["name"].as_str(), Some("Build Team"));
+    assert_eq!(value["workspaces"][0]["color"].as_str(), Some("#00ff00"));
+}
+
+#[test]
+fn configured_workspaces_apply_color_and_icon_at_startup() {
+    let server = HeadlessServer::start_with_config(
+        "workspace-config",
+        "[[workspaces]]\nname = \"Configured\"\ncolor = \"purple\"\nicon = \"gear\"\n",
+    );
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(value["workspaces"][0]["name"].as_str(), Some("Configured"));
+    assert_eq!(value["workspaces"][0]["color"].as_str(), Some("#800080"));
+    assert_eq!(value["workspaces"][0]["icon"].as_str(), Some("⚙"));
+}
+
+#[test]
+fn set_default_colors_regression_keeps_working() {
+    let server = HeadlessServer::start("default-colors-regression");
+    assert_success(&cli(&server, &["new-workspace", "--name", "colours"]));
+    let set = cli(&server, &["set-default-colors", "--fg", "#112233", "--bg", "#445566"]);
+    assert_success(&set);
+    assert_success(&cli(&server, &["new-tab"]));
 }
 
 // Refuses when the install target is a symlink; exit non-zero, message

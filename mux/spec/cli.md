@@ -72,7 +72,8 @@ The generated CLI requires one of `--index` or `--delta` for `select-tab`, `sele
 | `rename-surface` | implemented | `--surface <id> --name <name>` | none | none |
 | `rename-screen` | implemented | `--screen <id> --name <name>` | none | none |
 | `rename-workspace` | implemented | `--workspace <id> --name <name>` | none | none |
-| `set-workspace-color` | implemented | `--workspace <id> --colour <hex-or-empty-string>` | none | none |
+| `set-workspace-color` | implemented | `--workspace <id> --color <hex-or-preset>` | `--colour <hex-or-empty-string>` is a back-compatible alias | none |
+| `set-status` | implemented | `--icon <name>` | `--workspace <id>` (active workspace when omitted) | none |
 | `trigger-flash` | implemented | `--workspace <id>` | `--surface <id>` | none |
 | `resize-surface` | implemented | `--surface <id> --cols <n> --rows <n>` | none | none |
 | `focus-pane` | implemented | `--pane <id>` | none | none |
@@ -163,7 +164,18 @@ cmux subscribe |
   done
 ```
 
-10. Use short ids when protocol v6 is available:
+10. Set a workspace colour or status icon:
+
+```bash
+cmux set-workspace-color --workspace 4 --color blue
+cmux set-status --workspace 4 --icon robot
+cmux set-status --icon '🔍'  # active workspace
+cmux workspace-color "Production Line" purple
+```
+
+The `workspace-color` positional shorthand updates the named workspace and creates it when missing. Named colour presets are `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `cyan`, and `grey`/`gray`.
+
+11. Use short ids when protocol v6 is available:
 
 ```bash
 sid=$(cmux ids --kind surface | awk 'NR == 1 {print $3}')

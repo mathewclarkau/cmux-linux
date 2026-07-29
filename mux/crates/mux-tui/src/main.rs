@@ -62,6 +62,7 @@ USAGE:
   cmux [OPTIONS]           Start a session (TUI + control socket)
   cmux attach [OPTIONS]    Attach to an existing session's socket
   cmux <verb> [OPTIONS]    Run one control-socket command
+  cmux workspace-color <name> <color>  Set a named workspace colour
   cmux claude <subcommand> Claude Code hook integration (see below)
   cmux antigravity install-hooks  Antigravity CLI hook integration (see below)
   cmux codex install-hooks        Codex CLI hook integration (see below)
@@ -113,7 +114,8 @@ CLI VERBS
   new-browser-tab, new-workspace, new-screen, split, set-ratio,
   set-default-colors, close-surface, close-pane, close-screen,
   close-workspace, rename-pane, rename-surface, rename-screen,
-  rename-workspace, set-workspace-color, trigger-flash, resize-surface,
+  rename-workspace, set-workspace-color, set-status, workspace-color,
+  trigger-flash, resize-surface,
   focus-pane, select-tab, select-screen, select-workspace, move-tab,
   move-workspace, scroll-surface, subscribe, attach-surface, report-agent,
   list-agents, browser-reload, list-sessions, kill-session, kill-stale,
@@ -227,11 +229,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
             "--show-local-config-resolution" => out.show_local_config_resolution = true,
             "--print-resolved-config" => out.print_resolved_config = true,
             "--config" => {
-                out.config = Some(
-                    args.next()
-                        .unwrap_or_else(|| usage_exit("--config needs a value"))
-                        .into(),
-                )
+                out.config =
+                    Some(args.next().unwrap_or_else(|| usage_exit("--config needs a value")).into())
             }
             "-h" | "--help" => {
                 print!("{USAGE}");
@@ -283,6 +282,29 @@ fn main() {
     if raw_args.first().map(|arg| arg.as_str()) == Some("socket-watchdog") {
         std::process::exit(socket_watchdog::run(&raw_args[1..]));
     }
+    let mut command_index = 0;
+    while command_index < raw_args.len() {
+        match raw_args[command_index].as_str() {
+            "--session" | "--socket" => command_index += 2,
+            "--json" => command_index += 1,
+            _ => break,
+        }
+    }
+    if raw_args.get(command_index).map(String::as_str) == Some("workspace-color") {
+        if raw_args.len() != command_index + 3 {
+            eprintln!("cmux: usage: cmux workspace-color <name> <color>");
+            std::process::exit(2);
+        }
+        let mut args = raw_args[..command_index].to_vec();
+        args.extend([
+            "workspace-color".to_string(),
+            "--name".to_string(),
+            raw_args[command_index + 1].clone(),
+            "--color".to_string(),
+            raw_args[command_index + 2].clone(),
+        ]);
+        std::process::exit(cli::run(&args, USAGE));
+    }
     if cli::is_cli_invocation(&raw_args) {
         std::process::exit(cli::run(&raw_args, USAGE));
     }
@@ -298,11 +320,8 @@ fn main() {
 }
 
 fn run_attach(args: Args) -> anyhow::Result<()> {
-    let overlay = if args.apply_local_config {
-        resolve_local_overlay(args.config.as_deref())
-    } else {
-        None
-    };
+    let overlay =
+        if args.apply_local_config { resolve_local_overlay(args.config.as_deref()) } else { None };
     let socket_path =
         args.socket.unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
     let remote = RemoteSession::connect(&socket_path)?;
@@ -414,6 +433,24 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     // server-side truth and are not published here.
     mux.set_resolved_chrome(config.resolved_chrome_value());
     mux.restore_session();
+    for workspace in &config.workspaces {
+        let id = mux.with_state(|state| {
+            state.workspaces.iter().find(|ws| ws.name == workspace.name).map(|ws| ws.id)
+        });
+        let id = match id {
+            Some(id) => id,
+            None => {
+                mux.new_workspace(Some(workspace.name.clone()), None)?;
+                mux.with_state(|state| state.workspaces.last().unwrap().id)
+            }
+        };
+        if let Some(color) = &workspace.color {
+            mux.set_workspace_color(id, Some(mux_core::server::parse_workspace_color(color)?));
+        }
+        if let Some(icon) = &workspace.icon {
+            mux.set_workspace_icon(id, Some(mux_core::server::parse_workspace_icon(icon)?));
+        }
+    }
     mux.enable_persistence();
     mux_core::server::serve(mux.clone(), Some(socket_path.clone()))?;
     // Issue #27: detached companion that unlinks .sock/.pid if we die via

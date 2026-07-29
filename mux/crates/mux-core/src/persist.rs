@@ -105,6 +105,8 @@ struct WorkspaceSnapshot {
     active_screen: usize,
     #[serde(default)]
     color: Option<String>,
+    #[serde(default)]
+    icon: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -148,6 +150,7 @@ pub fn capture(state: &State) -> SessionSnapshot {
                 active_screen: ws.active_screen,
                 screens: ws.screens.iter().map(|screen| capture_screen(state, screen)).collect(),
                 color: ws.color.map(|c| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)),
+                icon: ws.icon.as_ref().map(|icon| icon.as_str().to_string()),
             })
             .collect(),
     }
@@ -219,6 +222,7 @@ pub(crate) struct RestoreWorkspace<'a> {
     pub screens: Vec<RestoreScreen<'a>>,
     pub active_screen: usize,
     pub color: Option<Rgb>,
+    pub icon: Option<crate::IconName>,
 }
 
 pub(crate) struct RestoreScreen<'a> {
@@ -256,6 +260,7 @@ pub(crate) fn workspaces(snapshot: &SessionSnapshot) -> (Vec<RestoreWorkspace<'_
             name: &ws.name,
             active_screen: ws.active_screen,
             color: ws.color.as_deref().and_then(|s| crate::server::parse_hex_color(s).ok()),
+            icon: ws.icon.as_deref().and_then(|s| crate::server::parse_workspace_icon(s).ok()),
             screens: ws
                 .screens
                 .iter()
@@ -323,6 +328,7 @@ mod tests {
                 name: "work".into(),
                 active_screen: 0,
                 color: None,
+                icon: None,
                 screens: vec![ScreenSnapshot {
                     name: None,
                     active_pane_index: 1,
