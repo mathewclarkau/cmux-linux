@@ -128,6 +128,23 @@ Exit codes follow the global convention: `0` success, `1` command error
 (missing/malformed manifest, name collision, unknown plugin), `2` usage
 error (missing/extra positional argument, unknown subcommand).
 
+## Agents Verb Group
+
+`cmux agents` is a local verb group (no control-socket traffic). It manages
+hooks for the six registered agents: `claude`, `antigravity`, `codex`,
+`aider`, `pi`, and `grok`.
+
+| Subcommand | Required args | Optional flags | Human stdout |
+| --- | --- | --- | --- |
+| `cmux agents list` | none | `--global` | header plus one tab-separated row per agent: name, status, version, last-installed epoch seconds, install path |
+| `cmux agents install --all` | `--all` | `--uninstall`, `--global` | one result per agent; all agents are attempted even after a failure |
+| `cmux agents install --only <agent>` | `--only <agent>` | `--uninstall`, `--global` | one result for the selected agent |
+
+`--global` is forwarded to each agent installer. `--uninstall` removes the
+managed hook instead of installing it. Install returns exit code `1` when any
+agent fails after all selected agents have been attempted. Unknown agents and
+invalid flag combinations return exit code `2`.
+
 ## Worked Examples
 
 1. Identify a session:

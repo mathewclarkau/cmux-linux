@@ -8,6 +8,41 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mux_core::platform::transport;
 
+#[test]
+fn agents_list_reports_only_claude_as_installed_after_claude_install() {
+    let project = unique_temp_dir("agents-list-project");
+    let home = unique_temp_dir("agents-list-home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let install = Command::new(bin())
+        .args(["claude", "install-hooks"])
+        .current_dir(&project)
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    assert_success(&install);
+
+    let listed = Command::new(bin())
+        .args(["agents", "list"])
+        .current_dir(&project)
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    assert_success(&listed);
+    let output = String::from_utf8(listed.stdout).unwrap();
+    let rows = output.lines().skip(1).collect::<Vec<_>>();
+    assert_eq!(rows.len(), 6);
+    assert!(rows.iter().any(|row| row.starts_with("claude\tinstalled\tv0.2.0\t")));
+    for agent in ["antigravity", "codex", "aider", "pi", "grok"] {
+        let row = rows.iter().find(|row| row.starts_with(&format!("{agent}\t"))).unwrap();
+        assert!(row.contains("\tnot-installed\t-\t-\t"), "unexpected row: {row}");
+    }
+
+    fs::remove_dir_all(project).unwrap();
+    fs::remove_dir_all(home).unwrap();
+}
+
 struct HeadlessServer {
     child: Child,
     socket: PathBuf,
