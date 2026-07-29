@@ -409,6 +409,11 @@ pub struct App {
     sidebar_width_override: Option<u16>,
     /// Pane region of the current frame (screen minus sidebar/status).
     pub content_area: Rect,
+    /// Full terminal rect of the current frame (the area `ui::draw`
+    /// renders into). Cached here so the finder click hit-test can map a
+    /// screen-space click to a results row without re-reading the
+    /// terminal between events.
+    pub screen: Rect,
     /// Clickable regions of the current frame, rebuilt by the renderers.
     pub hits: Vec<(Rect, Hit)>,
     /// Per-pane tab-bar scroll offset (first visible tab index), for
@@ -420,6 +425,9 @@ pub struct App {
     pub menu: Option<ContextMenu>,
     pub prompt: Option<Prompt>,
     pub omnibar: Option<OmnibarState>,
+    /// Fuzzy finder overlay (`leader G`). Open mutably borrows the tree
+    /// to build its item list, so it holds no `Session` of its own.
+    pub finder: Option<crate::finder::FinderState>,
     pub toast: Option<Toast>,
     pub(crate) shake_frames: u8,
     /// Workspaces with an active manual flash pulse, keyed by when it
@@ -664,12 +672,14 @@ pub fn run(session: Session, session_label: String) -> anyhow::Result<()> {
         sidebar_width: 0,
         sidebar_width_override: None,
         content_area: Rect::default(),
+        screen: Rect::default(),
         hits: Vec::new(),
         tab_scroll: HashMap::new(),
         hover: None,
         menu: None,
         prompt: None,
         omnibar: None,
+        finder: None,
         toast: None,
         shake_frames: 0,
         flashing: HashMap::new(),
@@ -870,6 +880,7 @@ impl App {
     /// content sizes to surfaces.
     fn sync_layout(&mut self, size: (u16, u16)) {
         let (width, height) = size;
+        self.screen = Rect { x: 0, y: 0, width, height };
         self.sidebar_width = sidebar_width_for(
             &self.config,
             self.sidebar_visible,
@@ -979,6 +990,9 @@ impl App {
                 self.reassert_visible_surface_sizes();
                 if let Some(prompt) = self.prompt.as_mut() {
                     prompt.input.insert_str(&text);
+                    Ok(RenderAction::Draw)
+                } else if let Some(finder) = self.finder.as_mut() {
+                    finder.input.insert_str(&text);
                     Ok(RenderAction::Draw)
                 } else if let Some(state) = self.omnibar.as_mut() {
                     clear_omnibar_selection(state);
@@ -1133,6 +1147,9 @@ impl App {
         self.status_message = None;
         if self.prompt.is_some() {
             return self.handle_prompt_key(key);
+        }
+        if self.finder.is_some() {
+            return self.handle_finder_key(key);
         }
         if self.menu.is_some() {
             return self.handle_menu_key(key);
@@ -1402,6 +1419,10 @@ impl App {
                 self.quit = true;
                 return Ok(RenderAction::None);
             }
+            Action::OpenFuzzyFinder => {
+                self.open_finder();
+                return Ok(RenderAction::Draw);
+            }
         }
         self.status_message = None;
         Ok(RenderAction::Draw)
@@ -1409,6 +1430,124 @@ impl App {
 
     fn set_status_from_browser_result(&mut self, result: anyhow::Result<()>) {
         self.status_message = result.err().map(|err| err.to_string());
+    }
+
+    /// Open the fuzzy finder overlay, seeding it from the current tree
+    /// snapshot. Closing on Escape or focus sets it back to `None`.
+    fn open_finder(&mut self) {
+        let items = crate::finder::build_items(&self.tree);
+        self.finder = Some(crate::finder::FinderState::new(items));
+    }
+
+    /// Keys while the finder is open: typing edits the query, Up/Down
+    /// move the cursor, `B`/`W`/`I`/`D`/`A` set the state filter, Enter
+    /// focuses the selected target, Escape closes.
+    fn handle_finder_key(&mut self, key: KeyEvent) -> anyhow::Result<RenderAction> {
+        let Some(finder) = self.finder.as_mut() else { return Ok(RenderAction::None) };
+        match key.code {
+            KeyCode::Esc => {
+                self.finder = None;
+                return Ok(RenderAction::Draw);
+            }
+            KeyCode::Up => {
+                let rows = crate::finder::FinderState::rows_visible(self.screen);
+                finder.move_cursor(-1, rows);
+                return Ok(RenderAction::Draw);
+            }
+            KeyCode::Down => {
+                let rows = crate::finder::FinderState::rows_visible(self.screen);
+                finder.move_cursor(1, rows);
+                return Ok(RenderAction::Draw);
+            }
+            KeyCode::Enter => {
+                let target = finder.selected();
+                self.finder = None;
+                if let Some(target) = target {
+                    self.focus_finder_target(target);
+                }
+                return Ok(RenderAction::Draw);
+            }
+            KeyCode::Char('B') => finder.state_filter = crate::finder::StateFilter::Blocked,
+            KeyCode::Char('W') => finder.state_filter = crate::finder::StateFilter::Working,
+            KeyCode::Char('I') => finder.state_filter = crate::finder::StateFilter::Idle,
+            KeyCode::Char('D') => finder.state_filter = crate::finder::StateFilter::Done,
+            KeyCode::Char('A') => finder.state_filter = crate::finder::StateFilter::All,
+            _ => match finder.input.handle_key(&key) {
+                crate::ui::input::InputEvent::Cancel => {
+                    self.finder = None;
+                    return Ok(RenderAction::Draw);
+                }
+                crate::ui::input::InputEvent::Commit => {
+                    let target = finder.selected();
+                    self.finder = None;
+                    if let Some(target) = target {
+                        self.focus_finder_target(target);
+                    }
+                    return Ok(RenderAction::Draw);
+                }
+                crate::ui::input::InputEvent::Changed | crate::ui::input::InputEvent::None => {}
+            },
+        }
+        // Typing or a filter change resets the viewport to the top row.
+        finder.cursor = 0;
+        finder.scroll = 0;
+        Ok(RenderAction::Draw)
+    }
+
+    /// Resolve a finder target to a focus action against the session.
+    /// Focusing a surface also activates its workspace, screen, pane,
+    /// and tab so the user lands on the agent they picked.
+    fn focus_finder_target(&self, target: crate::finder::FinderTarget) {
+        use crate::finder::FinderTarget;
+        match target {
+            FinderTarget::Workspace(id) => {
+                if let Some(index) = self.tree.workspaces.iter().position(|ws| ws.id == id) {
+                    self.session.select_workspace(Some(index), None);
+                }
+            }
+            FinderTarget::Pane(id) => {
+                self.session.focus_pane(id);
+            }
+            FinderTarget::Surface(id) => {
+                for ws in &self.tree.workspaces {
+                    for screen in &ws.screens {
+                        for pane in &screen.panes {
+                            if let Some(tab_index) =
+                                pane.tabs.iter().position(|tab| tab.surface == id)
+                            {
+                                self.session.focus_pane(pane.id);
+                                self.session.select_tab(Some(pane.id), Some(tab_index), None);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Left-click while the finder overlay is open. A click that lands on
+    /// a results row focuses that row's target and closes the finder, the
+    /// same outcome as pressing Enter on it; a click anywhere else in the
+    /// overlay (border, title, query input, filter label) or off it
+    /// entirely is a no-op so the user keeps their typed query.
+    fn handle_finder_click(&mut self, x: u16, y: u16) -> anyhow::Result<RenderAction> {
+        let screen = self.screen;
+        let scroll = self.finder.as_ref().map(|f| f.scroll).unwrap_or(0);
+        let Some(row) = crate::finder::finder_row_at(screen, x, y, scroll) else {
+            return Ok(RenderAction::None);
+        };
+        let target = match self.finder.as_mut() {
+            Some(finder) => finder
+                .ranked()
+                .get(row)
+                .map(|(item_i, _)| finder.items[*item_i].target),
+            None => None,
+        };
+        let Some(target) = target else { return Ok(RenderAction::None) };
+        self.finder = None;
+        self.focus_finder_target(target);
+        Ok(RenderAction::Draw)
     }
 
     fn open_rename_tab_prompt(&mut self, pane: Option<PaneId>) {
@@ -2046,6 +2185,14 @@ impl App {
     fn handle_left_down(&mut self, x: u16, y: u16) -> anyhow::Result<RenderAction> {
         self.selection = None;
         self.drag = None;
+
+        // An open finder overlay captures the click: a click on a results
+        // row focuses that target and closes the finder; a click in the
+        // overlay chrome or off it leaves the finder open so an errant
+        // click does not discard the typed query.
+        if self.finder.is_some() {
+            return self.handle_finder_click(x, y);
+        }
 
         // An open rename dialog captures the click.
         if self.prompt.is_some() {

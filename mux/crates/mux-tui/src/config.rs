@@ -317,6 +317,7 @@ pub enum Action {
     BrowserReload,
     BrowserEditUrl,
     Detach,
+    OpenFuzzyFinder,
 }
 
 impl Action {
@@ -354,6 +355,7 @@ impl Action {
             Action::BrowserReload => "browser-reload",
             Action::BrowserEditUrl => "browser-edit-url",
             Action::Detach => "detach",
+            Action::OpenFuzzyFinder => "open-fuzzy-finder",
         }
     }
 }
@@ -440,6 +442,7 @@ impl Default for Keys {
                 bind(KeyCode::Char('r'), Action::BrowserReload),
                 bind(KeyCode::Char('u'), Action::BrowserEditUrl),
                 bind(KeyCode::Char('d'), Action::Detach),
+                bind(KeyCode::Char('G'), Action::OpenFuzzyFinder),
             ],
         }
     }
@@ -551,6 +554,7 @@ fn all_actions() -> &'static [Action] {
         Action::BrowserReload,
         Action::BrowserEditUrl,
         Action::Detach,
+        Action::OpenFuzzyFinder,
     ]
 }
 
@@ -1259,6 +1263,19 @@ sidebar_rail = 77
 
         std::env::remove_var("CMUX_MUX_CONFIG");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn default_g_opens_fuzzy_finder() {
+        let keys = Keys::default();
+        // Shift+G chord (KeyCode::Char('G') with no modifiers, since the
+        // `bind` helper drops shift for char chords) opens the finder. The
+        // configurable set contains the binding's action and its key maps
+        // back to "open-fuzzy-finder", so users can rebind it.
+        assert_eq!(
+            keys.action_for(&KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE)),
+            Some(Action::OpenFuzzyFinder)
+        );
     }
 
     #[test]
