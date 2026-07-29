@@ -570,8 +570,38 @@ fn pane_parts_for_rect(
     (bar, omnibar, content, track)
 }
 
-pub fn run(session: Session, session_label: String) -> anyhow::Result<()> {
-    let config = crate::config::load();
+/// Fetch the server's resolved presentation chrome for a thin-client
+/// attach and rebuild a base `Config` from it (issue #40 blocker 1).
+/// Returns `None` for a local session, or when the remote does not
+/// expose a `get-resolved-config` verb / the fetch fails, so the caller
+/// can fall back to the laptop's local `config::load()`. Browser and
+/// scrollbar are not in the server payload; they stay at `Config`'s
+/// defaults here and the server keeps the truth for them.
+fn server_base_config(session: &Session) -> Option<crate::config::Config> {
+    let remote = match session {
+        Session::Remote(remote) => remote,
+        Session::Local(_) => return None,
+    };
+    let data = remote.request(serde_json::json!({ "cmd": "get-resolved-config" })).ok()?;
+    Some(crate::config::Config::from_server_chrome(&data))
+}
+
+pub fn run(session: Session, session_label: String, overlay: Option<crate::config::Overlay>) -> anyhow::Result<()> {
+    // For a thin-client attach (issue #40 blocker 1) the local `Overlay`
+    // must layer on top of the *server's* resolved config, not the
+    // laptop's own `config::load()`. So a remote attach fetches the
+    // server's resolved chrome via the `get-resolved-config` verb and
+    // rebuilds a base `Config` from it; only if that fetch fails does it
+    // fall back to the laptop's local config so the attach still degrades
+    // rather than dying. A local (in-process) session still loads its own
+    // `config::load()`, exactly as before.
+    let mut config = match server_base_config(&session) {
+        Some(base) => base,
+        None => crate::config::load(),
+    };
+    if let Some(o) = overlay {
+        o.apply(&mut config);
+    }
     // First workspace before the terminal switches modes, so a spawn
     // failure prints a normal error. Spawn at the size the first pane
     // will actually render at (a post-spawn resize makes shells like zsh

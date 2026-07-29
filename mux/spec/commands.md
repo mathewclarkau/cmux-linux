@@ -168,6 +168,74 @@ Example:
 {"id":2,"ok":true,"data":{"workspaces":[{"id":4,"name":"1","color":null,"active":true,"screens":[{"id":3,"name":null,"active":true,"active_pane":2,"layout":{"type":"leaf","pane":2},"panes":[{"id":2,"name":null,"active_tab":0,"tabs":[{"surface":1,"kind":"pty","browser_source":null,"name":null,"title":"","size":{"cols":80,"rows":24},"dead":false}]}]}]}]}}
 ```
 
+### get-resolved-config
+
+| Field | Value |
+| --- | --- |
+| name | `get-resolved-config` |
+| status | implemented |
+| since | protocol 6 |
+
+Returns the server process's resolved presentation chrome (theme, tabs, sidebar, keys) so a thin-client `cmux attach --apply-local-config` can fetch it and layer the laptop's local `Overlay` on top of the *server* config rather than replacing it with the laptop's own `config::load()` (issue #40). Browser and scrollbar are server-side truth and intentionally omitted: the server keeps them, the attach client does not spawn browsers or scrollbars locally. The shape matches `mux-tui`'s `Config::resolved_chrome_value`; a client rebuilds a base `Config` from it via `Config::from_server_chrome` and then applies the local `Overlay`. A server that has registered no chrome (e.g. a `mux-core`-only host with no TUI) returns an empty object `{}`.
+
+Params: none.
+
+Result:
+
+```text
+object{
+  theme: object{
+    selection_background: ColorHex?,
+    selection_foreground: ColorHex?|null?,
+    sidebar_rail: ColorHex?,
+    sidebar_active_bg: ColorHex?,
+    tab_rail: ColorHex?,
+    tab_bg: ColorHex?,
+    tab_active_bg: ColorHex?,
+    border_active: ColorHex?,
+    border_inactive: ColorHex?
+  }?,
+  tabs: object{
+    min_width: uint16?,
+    solid_background: boolean?,
+    show_titles: boolean?,
+    agents: array<string>?
+  }?,
+  sidebar: object{
+    width: uint16?,
+    max_width: uint16?
+  }?,
+  keys: object<string, string|array<string>>  // Raw keys map; see `Keys::apply` in mux-tui
+}
+```
+
+Colours are `#rrggbb` for true colour, a bare integer for an xterm-256 index, or `null` when they have no portable raw form (named/reset colours). `keys` carries the same raw shape the config loader consumes: `prefix`, `alt_shortcuts`, and one entry per action config key mapped to a chord string or array of chord strings.
+
+Errors:
+
+| Error | Condition |
+| --- | --- |
+| `bad request: ...` | Malformed request envelope (e.g. extra fields) |
+
+CLI mapping:
+
+| Item | Value |
+| --- | --- |
+| Verb | `get-resolved-config` |
+| Flags | none (read-only metadata verb; supports global `--session`/`--socket` and `--json`) |
+| Plain stdout | pretty JSON object, the server's resolved chrome |
+| JSON stdout | exact result object |
+| Exit codes | common |
+
+The same verb is invoked internally by `cmux attach --apply-local-config`, which fetches the chrome, rebuilds a base `Config`, layers the local `Overlay`, and starts the TUI. `cmux attach --print-resolved-config` (issue #40) prints the *merged* chrome (server base + local overlay) as JSON without attaching, for inspecting layering without a live terminal.
+
+Example:
+
+```json
+{"id":3,"cmd":"get-resolved-config"}
+{"id":3,"ok":true,"data":{"theme":{"sidebar_rail":"#112233"},"tabs":{"min_width":8,"solid_background":true,"show_titles":true,"agents":[]},"sidebar":{"width":24,"max_width":40},"keys":{"alt_shortcuts":false,"prefix":"ctrl+b"}}}
+```
+
 ### send
 
 | Field | Value |
@@ -1620,6 +1688,64 @@ Example:
 {"id":28,"cmd":"attach-surface","surface":1}
 {"event":"vt-state","surface":1,"cols":80,"rows":24,"data":"G1s/bA=="}
 {"id":28,"ok":true,"data":{}}
+```
+
+### get-resolved-config
+
+| Field | Value |
+| --- | --- |
+| name | `get-resolved-config` |
+| status | implemented |
+| since | protocol 6 |
+
+Returns the server process's resolved presentation chrome (the keys relevant to a thin-client `Overlay`: theme, tabs, sidebar, keys) so a `cmux attach --apply-local-config` client can layer its local overlay on top of the *server's* config rather than replacing it with the laptop's own (issue #40). Browser and scrollbar are server-side truth and are intentionally not part of the payload. The shape matches what `mux-tui`'s `Config::resolved_chrome_value()` emits and `Config::from_server_chrome()` consumes, so the client round-trips it back through the same `apply_*` resolution helpers `load()` uses.
+
+The server publishes this from its own `config::load()` at startup; if it has not registered any chrome (for example a `mux-core`-only host with no TUI), it returns an empty object `{}` and the client falls back to its local config.
+
+Params: none.
+
+Result:
+
+```text
+object{
+  theme: object{
+    selection_background: ColorHex|uint16,
+    selection_foreground: ColorHex|uint16|null,
+    sidebar_rail: ColorHex|uint16,
+    sidebar_active_bg: ColorHex|uint16,
+    tab_rail: ColorHex|uint16,
+    tab_bg: ColorHex|uint16,
+    tab_active_bg: ColorHex|uint16|null,
+    border_active: ColorHex|uint16,
+    border_inactive: ColorHex|uint16
+  },
+  tabs: object{min_width:uint16,solid_background:boolean,show_titles:boolean,agents:array<string>},
+  sidebar: object{width:uint16,max_width:uint16},
+  keys: object<string,string|boolean|array<string>>
+}
+```
+
+Errors:
+
+| Error | Condition |
+| --- | --- |
+| `bad request: ...` | Wrong JSON type |
+
+CLI mapping:
+
+| Item | Value |
+| --- | --- |
+| Verb | `get-resolved-config` (also consumed internally by `cmux attach --print-resolved-config` and `cmux attach --apply-local-config`) |
+| Flags | n/a |
+| Plain stdout | n/a |
+| JSON stdout | n/a |
+| Exit codes | n/a |
+
+Example:
+
+```json
+{"id":32,"cmd":"get-resolved-config"}
+{"id":32,"ok":true,"data":{"theme":{"sidebar_rail":"#778899",...},"tabs":{...},"sidebar":{...},"keys":{...}}}
 ```
 
 ## Proposed Commands

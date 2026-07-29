@@ -75,6 +75,20 @@ OPTIONS:
   --socket <path>    Explicit control socket path.
   --headless         Run only the control socket, no TUI.
   --term <value>     TERM for child shells (default: xterm-256color).
+  --apply-local-config
+                    Attach only: overlay the local mux.local.toml/mux.json
+                    (theme, tabs, sidebar, keys) on top of the server config.
+  --config <path>    Attach only: explicit local overlay file (overrides
+                    $CMUX_LOCAL_CONFIG and the XDG defaults).
+  --show-local-config-resolution
+                    Attach only: print which local config would apply and
+                    how many keys it overrides, then exit without attaching.
+  --print-resolved-config
+                    Attach only: fetch the server's resolved presentation
+                    chrome, layer the local overlay on top (requires
+                    --apply-local-config), print the merged chrome as JSON,
+                    and exit without starting the TUI. For inspecting
+                    overlay layering without a live terminal.
   -h, --help         Show this help.
 
 KEYS (prefix: Ctrl-b)
@@ -173,6 +187,10 @@ struct Args {
     socket: Option<PathBuf>,
     headless: bool,
     term: Option<String>,
+    apply_local_config: bool,
+    show_local_config_resolution: bool,
+    print_resolved_config: bool,
+    config: Option<PathBuf>,
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
@@ -182,6 +200,10 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
         socket: None,
         headless: false,
         term: None,
+        apply_local_config: false,
+        show_local_config_resolution: false,
+        print_resolved_config: false,
+        config: None,
     };
     let mut args = args.into_iter().peekable();
     if args.peek().map(|s| s.as_str()) == Some("attach") {
@@ -200,6 +222,16 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
             "--headless" => out.headless = true,
             "--term" => {
                 out.term = Some(args.next().unwrap_or_else(|| usage_exit("--term needs a value")))
+            }
+            "--apply-local-config" => out.apply_local_config = true,
+            "--show-local-config-resolution" => out.show_local_config_resolution = true,
+            "--print-resolved-config" => out.print_resolved_config = true,
+            "--config" => {
+                out.config = Some(
+                    args.next()
+                        .unwrap_or_else(|| usage_exit("--config needs a value"))
+                        .into(),
+                )
             }
             "-h" | "--help" => {
                 print!("{USAGE}");
@@ -255,6 +287,9 @@ fn main() {
         std::process::exit(cli::run(&raw_args, USAGE));
     }
     let args = parse_args(raw_args);
+    if args.show_local_config_resolution {
+        return show_local_config_resolution(args);
+    }
     let result = if args.attach { run_attach(args) } else { run_server(args) };
     if let Err(e) = result {
         eprintln!("cmux: {e}");
@@ -263,10 +298,88 @@ fn main() {
 }
 
 fn run_attach(args: Args) -> anyhow::Result<()> {
+    let overlay = if args.apply_local_config {
+        resolve_local_overlay(args.config.as_deref())
+    } else {
+        None
+    };
     let socket_path =
         args.socket.unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
     let remote = RemoteSession::connect(&socket_path)?;
-    run_tui(Session::Remote(remote), args.session)
+    // `--print-resolved-config` is an inspection escape for thin-client
+    // attaches (issue #40 blocker 1): fetch the server's resolved chrome,
+    // layer the local overlay on top, print the merged chrome as JSON,
+    // and exit without starting the TUI. Used by the integration test
+    // that proves the overlay layers over the *server* config.
+    if args.print_resolved_config {
+        return print_resolved_config(remote, overlay);
+    }
+    run_tui(Session::Remote(remote), args.session, overlay)
+}
+
+/// Print the merged resolved chrome (server base + local overlay) as a
+/// JSON object to stdout and exit 0 without attaching the TUI. The shape
+/// matches `Config::resolved_chrome_value` so a caller can assert the
+/// server's theme survived alongside the local overlay's key bindings.
+fn print_resolved_config(
+    remote: Arc<RemoteSession>,
+    overlay: Option<config::Overlay>,
+) -> anyhow::Result<()> {
+    let data = remote.request(serde_json::json!({ "cmd": "get-resolved-config" }))?;
+    let mut config = config::Config::from_server_chrome(&data);
+    if let Some(o) = &overlay {
+        o.apply(&mut config);
+    }
+    let json = serde_json::to_string_pretty(&config.resolved_chrome_value())?;
+    println!("{json}");
+    Ok(())
+}
+
+/// Resolve the local overlay for an attach: log which file applies (or that
+/// none was found) and return the parsed `Overlay`. Returns `None` when no
+/// path resolves or the file fails to parse, so the attach degrades to the
+/// server-side config instead of failing.
+fn resolve_local_overlay(explicit: Option<&std::path::Path>) -> Option<config::Overlay> {
+    match config::local_config_path(explicit) {
+        Some(path) => match config::load_overlay_file(&path) {
+            Some(overlay) => {
+                eprintln!(
+                    "cmux: applying local config from {} (overrides {} keys)",
+                    path.display(),
+                    overlay.override_count()
+                );
+                Some(overlay)
+            }
+            None => {
+                eprintln!("cmux: no local config found at {}", path.display());
+                None
+            }
+        },
+        None => {
+            eprintln!("cmux: no local config found");
+            None
+        }
+    }
+}
+
+/// Dry-run for `--show-local-config-resolution`: print which local file
+/// would apply and how many keys it overrides, then exit without
+/// attaching. Exits 0 whether or not a file resolved.
+fn show_local_config_resolution(args: Args) {
+    if let Some(path) = config::local_config_path(args.config.as_deref()) {
+        if let Some(overlay) = config::load_overlay_file(&path) {
+            println!(
+                "cmux: local config resolves to {} (overrides {} keys)",
+                path.display(),
+                overlay.override_count()
+            );
+        } else {
+            eprintln!("cmux: no local config found at {}", path.display());
+        }
+    } else {
+        eprintln!("cmux: no local config found");
+    }
+    std::process::exit(0);
 }
 
 fn run_server(args: Args) -> anyhow::Result<()> {
@@ -293,6 +406,13 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     surface_options.extra_env.push(("CMUX_MUX_SOCKET".into(), socket_path.display().to_string()));
 
     let mux = Mux::new(args.session.clone(), surface_options);
+    // Issue #40 blocker 1: publish this server's resolved presentation
+    // chrome (theme/tabs/sidebar/keys) so a thin-client `cmux attach
+    // --apply-local-config` can fetch it via the `get-resolved-config`
+    // verb and layer its local overlay on top instead of replacing the
+    // server config with the laptop's own. Browser and scrollbar stay
+    // server-side truth and are not published here.
+    mux.set_resolved_chrome(config.resolved_chrome_value());
     mux.restore_session();
     mux.enable_persistence();
     mux_core::server::serve(mux.clone(), Some(socket_path.clone()))?;
@@ -303,7 +423,7 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     let result = if args.headless {
         run_headless(&mux, &socket_path)
     } else {
-        run_tui(Session::Local(mux.clone()), args.session)
+        run_tui(Session::Local(mux.clone()), args.session, None)
     };
     mux.shutdown();
     // Issue #28: after known surfaces are killed, sweep anything that
@@ -317,7 +437,11 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     result
 }
 
-fn run_tui(session: Session, session_label: String) -> anyhow::Result<()> {
+fn run_tui(
+    session: Session,
+    session_label: String,
+    overlay: Option<config::Overlay>,
+) -> anyhow::Result<()> {
     crossterm::terminal::enable_raw_mode()?;
     let colors = host_colors::probe_default_colors();
     let color_result = session.set_default_colors(colors);
@@ -326,7 +450,7 @@ fn run_tui(session: Session, session_label: String) -> anyhow::Result<()> {
         eprintln!("cmux: failed to set default colors: {err}");
     }
     raw_result?;
-    app::run(session, session_label)
+    app::run(session, session_label, overlay)
 }
 
 fn run_headless(mux: &Arc<Mux>, socket_path: &std::path::Path) -> anyhow::Result<()> {

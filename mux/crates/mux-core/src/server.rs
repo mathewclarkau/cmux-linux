@@ -249,6 +249,13 @@ enum Command {
         #[serde(default)]
         rows: Option<u16>,
     },
+    /// Return the server's resolved presentation chrome (theme/tabs/
+    /// sidebar/keys) so a thin-client `cmux attach --apply-local-config`
+    /// can layer its local `Overlay` on top of the server config rather
+    /// than replacing it with the laptop's own config (issue #40,
+    /// blocker 1). See `mux-tui`'s `Config::resolved_chrome_value`/
+    /// `Config::from_server_chrome` for the round-trip shape.
+    GetResolvedConfig,
     /// New screen in a workspace (default: the active one).
     NewScreen {
         #[serde(default)]
@@ -671,6 +678,9 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             "pid": std::process::id(),
         })),
         Command::ListWorkspaces => Ok(mux.with_state(workspaces_json)),
+        Command::GetResolvedConfig => {
+            Ok(mux.resolved_chrome().unwrap_or_else(|| json!({})))
+        }
         Command::Send { surface, text, bytes, send_cr } => {
             let surface = get_surface(mux, surface)?;
             require_pty(&surface)?;

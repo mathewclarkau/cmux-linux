@@ -52,6 +52,7 @@ The generated CLI requires one of `--index` or `--delta` for `select-tab`, `sele
 | --- | --- | --- | --- | --- |
 | `identify` | implemented | none | global flags | one metadata line |
 | `list-workspaces` | implemented | none | global flags | tree lines |
+| `get-resolved-config` | implemented | none | global flags | pretty JSON chrome object |
 | `send` | implemented | `--surface <id>` | `--text <text>`, `--bytes <base64>` | none |
 | `read-screen` | implemented | `--surface <id>` | none | screen text |
 | `vt-state` | implemented | `--surface <id>` | none | `cols=<n> rows=<n> data=<base64>` |
@@ -62,6 +63,7 @@ The generated CLI requires one of `--index` or `--delta` for `select-tab`, `sele
 | `split` | implemented | `--pane <id> --dir right|down` | `--cols <n> --rows <n>` | surface id |
 | `set-ratio` | implemented | `--pane <id> --dir right|down --ratio <n>` | none | none |
 | `set-default-colors` | implemented | none | `--fg #rrggbb`, `--bg #rrggbb` | none |
+| `get-resolved-config` | implemented | none | global flags | JSON chrome (theme/tabs/sidebar/keys); used by `cmux attach --apply-local-config`/`--print-resolved-config` to layer the local overlay over the server config |
 | `close-surface` | implemented | `--surface <id>` | none | none |
 | `close-pane` | implemented | `--pane <id>` | none | none |
 | `close-screen` | implemented | `--screen <id>` | none | none |

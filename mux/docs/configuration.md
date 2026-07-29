@@ -239,3 +239,35 @@ alt_shortcuts = false
 "close-pane" = "none"
 detach = "d"
 ```
+
+## Local config overlay (attach)
+
+`cmux attach --apply-local-config` layers the *local* `mux.local.toml`/`mux.json`
+on top of the server-side session config, so the laptop acts as a thin client:
+the server keeps the truth for the workspace tree (panes, browser, session
+name), while the client wins for presentation chrome and key bindings (theme,
+tabs, sidebar, keys). Per-key override, not replace: only the fields present in
+the local file are applied, everything else stays server-side.
+
+Resolution order for the overlay file:
+
+1. explicit `--config <path>`
+2. `$CMUX_LOCAL_CONFIG`
+3. `~/.config/cmux/mux.local.toml`
+4. `~/.config/cmux/mux.json`
+5. server-side config (no overlay applied)
+
+A local overlay is a typed subset of the full config: `theme`, `tabs`,
+`sidebar`, and `keys` only. Browser panes, scrollbar, and the session name are
+server-side truth and are rejected at parse time with a clear error (a stale
+server-side `browser` block copied into the overlay will not be silently
+ignored). When an overlay applies, attach logs:
+
+```text
+cmux: applying local config from /home/me/.config/cmux/mux.local.toml (overrides 2 keys)
+```
+
+`cmux attach --show-local-config-resolution` is a dry run: it resolves and loads
+the local file the same way, prints the resolved path plus the override count,
+then exits without attaching. Use it to sanity check which config travels to a
+remote box before connecting.
