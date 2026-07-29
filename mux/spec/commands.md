@@ -1806,6 +1806,34 @@ WASM/WASI sandboxing, the permission model) is out of scope for this
 PR. These verbs only manage manifest state and must not be read as
 implying that any plugin code runs.
 
+### agents
+
+| Field | Value |
+| --- | --- |
+| name | `agents` (verb group: `cmux agents <subcommand>`) |
+| status | implemented |
+| transport | local filesystem only; no control-socket request |
+
+The registry contains `claude`, `antigravity`, `codex`, `aider`, `pi`, and
+`grok`. Hook install paths are resolved from the current project for local
+installs and from the user's home directory for `--global` installs.
+
+CLI mappings:
+
+| Subcommand | Required args | Optional flags | Plain stdout |
+| --- | --- | --- | --- |
+| `agents list` | none | `--global` | `agent<TAB>status<TAB>version<TAB>last-installed<TAB>install-path`, followed by one row per registered agent |
+| `agents install --all` | `--all` | `--uninstall`, `--global` | one per-agent result; processing continues after failures |
+| `agents install --only <agent>` | `--only <agent>` | `--uninstall`, `--global` | one result for the selected agent |
+
+A listed agent is `installed` when its registered install path exists. The
+version is the managed hook version and `last-installed` is the install path's
+modification time in Unix epoch seconds. Missing values are printed as `-`.
+`--uninstall` is passed to each selected installer. If an installer returns a
+non-zero code, its failure is printed and the remaining selected installers
+still run; the umbrella command then returns exit code `1`. Invalid command
+shapes and unknown agent names return exit code `2`.
+
 ## Proposed Commands
 
 ### wait-for

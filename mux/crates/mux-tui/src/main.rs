@@ -6,6 +6,7 @@
 //! `cmux attach` connects the same TUI to an existing (usually
 //! headless) session over that socket, which is how detach/reattach works.
 
+mod agents;
 mod aider_hook;
 mod antigravity_hook;
 mod app;
@@ -69,6 +70,7 @@ USAGE:
   cmux pi install-hooks           Pi agent extension integration (see below)
   cmux aider install-hooks        Aider wrapper integration (see below)
   cmux grok install-hooks         Grok CLI hook integration (see below)
+  cmux agents <list|install>     Manage all agent hook integrations (see below)
   cmux plugin <subcommand> Manage cmux-plugin.toml manifests (see below)
   cmux ssh <host> [OPTS]   Open a remote workspace over SSH (see below)
 
@@ -172,6 +174,14 @@ GROK CLI INTEGRATION
   cmux grok install-skill [--uninstall] [--global]
       Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
       (or ~/.grok/skills/cmux-orchestration/SKILL.md if --global).
+
+AGENT HOOK INTEGRATION
+  cmux agents list [--global]
+      Lists installed status, version, timestamp, and path for all six agents.
+  cmux agents install --all [--uninstall] [--global]
+      Installs or removes every registered agent hook, continuing after failures.
+  cmux agents install --only <agent> [--uninstall] [--global]
+      Installs or removes one registered agent hook.
 
 PLUGIN LOADER (manifest + registry only; no execution yet)
   cmux plugin list                       List installed plugins (read-only)
@@ -291,6 +301,9 @@ fn main() {
                 std::process::exit(2);
             }
         }
+    }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("agents") {
+        std::process::exit(agents::run(&raw_args[1..]));
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("plugin") {
         std::process::exit(plugin::run(&raw_args[1..]));
