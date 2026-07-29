@@ -1482,14 +1482,11 @@ impl App {
 
     /// Keys while the finder is open: typing edits the query, Up/Down
     /// move the cursor, `B`/`W`/`I`/`D`/`A` set the state filter, Enter
-    /// focuses the selected target, Escape closes.
+    /// focuses the selected target, Escape clears an active filter first
+    /// and only closes the finder when the filter is already `All`.
     fn handle_finder_key(&mut self, key: KeyEvent) -> anyhow::Result<RenderAction> {
         let Some(finder) = self.finder.as_mut() else { return Ok(RenderAction::None) };
         match key.code {
-            KeyCode::Esc => {
-                self.finder = None;
-                return Ok(RenderAction::Draw);
-            }
             KeyCode::Up => {
                 let rows = crate::finder::FinderState::rows_visible(self.screen);
                 finder.move_cursor(-1, rows);
@@ -1515,7 +1512,13 @@ impl App {
             KeyCode::Char('A') => finder.set_state_filter(crate::finder::StateFilter::All),
             _ => match finder.input.handle_key(&key) {
                 crate::ui::input::InputEvent::Cancel => {
-                    self.finder = None;
+                    // Esc clears an active state filter first; only a second
+                    // Esc (filter already All) closes the finder (AC3).
+                    let close =
+                        finder.cancel() == crate::finder::FinderCancel::CloseFinder;
+                    if close {
+                        self.finder = None;
+                    }
                     return Ok(RenderAction::Draw);
                 }
                 crate::ui::input::InputEvent::Commit => {
