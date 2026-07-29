@@ -1,0 +1,16 @@
+# Gruvbox Dark — https://github.com/gruvbox/gruvbox
+#
+# bg0 #282828  bg0_hard #1d2021  bg1 #32302f  bg2 #3b3836
+# bg3 #454340  bg4 #585858
+# fg0 #ebdbb2  fg1 #d65d08  fg2 #d5d5d5  fg3 #bdae9c
+# red #fb444b  orange #fe8551  yellow #d79921  green #98bb64
+# aqua #94a29c  blue #838196  purple #d386c1
+
+selection_background = "#32302f"
+sidebar_rail = "#d79921"
+sidebar_active_bg = "#282828"
+tab_rail = "#32302f"
+tab_bg = "#32302f"
+tab_active_bg = "#d79921"
+border_active = "#d79921"
+border_inactive = "#505050"

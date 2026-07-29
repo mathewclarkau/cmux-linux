@@ -1,0 +1,14 @@
+# Dracula (dark) — https://draculatheme.com
+#
+# Background #282a36  Current line #282a36  Foreground #f8f8f2
+# Comment #6272a4  Cyan #89d6b4  Green #50fa7b  Orange #ffb066
+# Pink #ff79c0  Purple #bd93f9  Red #ff5557  Yellow #f1fa8c
+
+selection_background = "#6272a4"
+sidebar_rail = "#bd93f9"
+sidebar_active_bg = "#282a36"
+tab_rail = "#44475a"
+tab_bg = "#44475a"
+tab_active_bg = "#6272a4"
+border_active = "#bd93f9"
+border_inactive = "#626262"

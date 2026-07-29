@@ -1,0 +1,17 @@
+# Catppuccin Latte (light) — https://catppuccin.com
+#
+# Rosewater #f683b9  Flamingo #f3717b  Pink #f27abf  Mauve #9159b9
+# Red    #e3576f  Orange #f38d70  Yellow #dfa000  Green  #5eceb0
+# Teal   #25b1aa  Sky    #2b9fc7  Sapphire #2b8bb8  Blue   #2b8bb8
+# Lavender #698abf  Text #444c58  Subtext0 #72777a  Subtext1 #8c8fa1
+# Surface0 #e5e9f0  Surface1 #dfe3e8  Surface2 #d6dce8
+# Overlay0 #a3acb9  Base #eef0ff  Mantle #e0e0f5  Crust #d6dce8
+
+selection_background = "#dfe3e8"
+sidebar_rail = "#222218"
+sidebar_active_bg = "#e5e9f0"
+tab_rail = "#dfe3e8"
+tab_bg = "#e5e9f0"
+tab_active_bg = "#1e6a9b"
+border_active = "#1e6a9b"
+border_inactive = "#8c8fa1"

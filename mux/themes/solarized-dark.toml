@@ -1,0 +1,16 @@
+# Solarized Dark — http://ethanschooner.com/projects/solarized
+#
+# Base00 #002b36  Base0 #132b34  Base1 #333
+# Base2 #eee8d5  Base3 #fdf6e3
+# Yellow #b58900  Orange #cb4b16  Red #dc322f
+# Magenta #d30154  Violet #6c71c4  Blue #268bd2
+# Cyan #2aa198  Green #859900
+
+selection_background = "#073642"
+sidebar_rail = "#268bd2"
+sidebar_active_bg = "#002b36"
+tab_rail = "#003745"
+tab_bg = "#073642"
+tab_active_bg = "#268bd2"
+border_active = "#268bd2"
+border_inactive = "#586e75"
