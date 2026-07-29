@@ -45,35 +45,64 @@ Detach from an attached TUI with prefix `d`. With default keys, that is `Ctrl-b 
 
 For a remote box, run the server headless there, then attach from your
 laptop carrying your local colours and key bindings onto the remote
-session. The point is that the *laptop's* cmux process does the attaching,
-so the laptop's `~/.config/cmux/mux.local.toml` (not the remote host's)
-is what applies. Run the cmux **client** locally and forward the remote
-control socket back to the laptop over SSH:
+session. The point is that the *laptop's* cmux process does the
+attaching, so the laptop's `~/.config/cmux/mux.local.toml` (not the
+remote host's) is what applies. Run the cmux **client** locally and
+forward the remote control socket back to the laptop over SSH, so the
+local cmux process attaches to the forwarded socket and layers the
+local overlay on top of the *server's* resolved config.
+
+The remote `cmux --headless` server is reached over an OpenSSH Unix
+domain socket forward: `-L <local-path>:<remote-path>`. The remote
+path must be a concrete filesystem path: OpenSSH does not expand
+environment variables or command substitution in the forward target
+(the remote sshd connects to the path directly, no shell). The
+easiest way to keep the two ends in sync is to start the headless
+server with an explicit `--socket <path>`, then forward that exact
+path:
 
 ```bash
-# on the remote box: serve headless, no TUI
-remotehost$ cmux --headless --session agents
+# on the remote box: serve headless on a known socket, no TUI
+remotehost$ cmux --headless --session agents \
+            --socket /run/user/$(id -u)/cmux-agents.sock
 
-# on the laptop: forward the remote control socket to a local path,
-# then run cmux attach LOCALLY against the forwarded socket with
-# --apply-local-config so the laptop's config overlays the server's.
-# The remote socket path is the documented default (see Sessions and
-# sockets below), e.g. $XDG_RUNTIME_DIR/cmux-<uid>/agents.sock.
-laptop$ ssh -Nf -L /tmp/cmux-agents.sock:'"$XDG_RUNTIME_DIR/cmux-$(id -u)/agents.sock"' remotehost
+# on the laptop: forward that remote socket to a local path (-Nf runs
+# ssh in the background with no shell), then run cmux attach LOCALLY
+# against the forwarded socket with --apply-local-config so the
+# laptop's config overlays the server's resolved config.
+laptop$ ssh -Nf -L /tmp/cmux-agents.sock:/run/user/1000/cmux-agents.sock remotehost
 laptop$ cmux attach --socket /tmp/cmux-agents.sock --apply-local-config
 ```
 
-The local `~/.config/cmux/mux.local.toml` (or `mux.json`, or `$CMUX_LOCAL_CONFIG`,
-or an explicit `--config <path>`) is layered on top of the server config the
-laptop reads back over that forwarded socket: the server keeps the truth for
-the workspace tree; your laptop wins for theme, tabs, sidebar, and keys. So
-your preferred leader key and colour scheme work the same way they do locally.
+If the remote server was started without `--socket` (so its socket lives
+at the default `$XDG_RUNTIME_DIR/cmux-<uid>/<session>.sock`, e.g.
+`/run/user/1000/cmux-1000/agents.sock`), sub that path into both the
+remote command above and the `-L` target. `ssh remotehost 'cmux
+get-sessions'` (or the session's startup log) reports the live socket.
+
+Inspecting layering without a live terminal:
+
+```bash
+# fetch the server chrome, layer the local overlay, print merged JSON, exit
+laptop$ cmux attach --socket /tmp/cmux-agents.sock \
+            --apply-local-config --print-resolved-config
+# server chrome only (no overlay), for ops scripts
+laptop$ cmux --socket /tmp/cmux-agents.sock get-resolved-config
+```
+
+The local `~/.config/cmux/mux.local.toml` (or `mux.json`, or
+`$CMUX_LOCAL_CONFIG`, or an explicit `--config <path>`) is layered on
+top of the server config the laptop fetches over that forwarded socket
+via the `get-resolved-config` verb: the server keeps the truth for the
+workspace tree, browser, and scrollbar; your laptop wins for theme,
+tabs, sidebar, and keys. So your preferred leader key and colour
+scheme work the same way they do locally.
 
 Do NOT run `cmux attach` inside the SSH command string (e.g.
-`ssh remotehost 'cmux attach ... --apply-local-config'`): that executes cmux
-on the remote host and resolves the *remote* `~/.config/cmux/mux.local.toml`,
-the opposite of what this feature is for. The laptop cmux process must be the
-one that loads the overlay.
+`ssh remotehost 'cmux attach ... --apply-local-config'`): that executes
+cmux on the remote host and resolves the *remote*
+`~/.config/cmux/mux.local.toml`, the opposite of what this feature is
+for. The laptop cmux process must be the one that loads the overlay.
 
 Check which local file would apply before connecting with the dry run:
 
