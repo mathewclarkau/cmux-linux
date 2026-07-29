@@ -1,0 +1,17 @@
+# Nord (dark) — https://nordtheme.com
+#
+# Polar Night (dark bg):
+# Snow Foreground #d8dee9  Snow Comment #81a2be  Snow Primary #eceef4
+# Snow Secondary #dfe4ea  Snow Tertiary #d4d9e0
+# Frost #88a0b8  Coral #ff8a7a  Fog #c0cad0  Cream #cdd4e0
+# Ice #b3c8d2  Thunder #8d96a5  Night #2e3440
+# Night One #3b4252  Night Two #444b58  Night Three #485264
+
+selection_background = "#444b58"
+sidebar_rail = "#88a0b8"
+sidebar_active_bg = "#2e3440"
+tab_rail = "#3b4252"
+tab_bg = "#3b4252"
+tab_active_bg = "#eceff4"
+border_active = "#88a0b8"
+border_inactive = "#444b58"

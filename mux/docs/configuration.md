@@ -10,6 +10,24 @@ Colors accept `#rrggbb`, `#rgb`, an xterm-256 number, or a numeric string.
 
 Selection colors are resolved in this order: explicit `mux.json`, Ghostty config keys `selection-background` and `selection-foreground`, then built-in defaults. Ghostty configs are read from `$XDG_CONFIG_HOME/ghostty/config` (when set), `~/.config/ghostty/config`, and on macOS `~/Library/Application Support/com.mitchellh.ghostty/config`; later entries in the file win.
 
+The `theme` key accepts either a string preset name or the nested table below. A string selects a bundled preset (all table fields populated from that preset); `"none"` disables preset loading and falls back to the built-in defaults. An explicit table overrides individual fields while leaving unspecified fields at their defaults.
+
+### Presets
+
+Bundled presets live in `mux/themes/`. Each `.toml` file supplies values for the theme fields it can map; any field the preset does not set falls back to the built-in default.
+
+| Preset | Variant | Source |
+| --- | --- | --- |
+| `catpuccin-mocha` | dark | `mux/themes/catpuccin-mocha.toml` |
+| `catpuccin-latte` | light | `mux/themes/catpuccin-latte.toml` |
+| `dracula` | dark | `mux/themes/dracula.toml` |
+| `solarized-dark` | dark | `mux/themes/solarized-dark.toml` |
+| `solarized-light` | light | `mux/themes/solarized-light.toml` |
+| `nord` | dark | `mux/themes/nord.toml` |
+| `gruvbox-dark` | dark | `mux/themes/gruvbox-dark.toml` |
+
+Use `cmux theme list` to print available preset names and their bundled paths.
+
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `theme.selection_background` | color | `#3a3a3a`, seeded from Ghostty when present | Selection background in PTY panes |

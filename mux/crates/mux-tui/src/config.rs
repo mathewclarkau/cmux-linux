@@ -75,11 +75,24 @@ where
     Deserialize::deserialize(deserializer).map(Some)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ThemeValue {
+    String(String),
+    Table(RawTheme),
+}
+
+impl Default for ThemeValue {
+    fn default() -> Self {
+        ThemeValue::Table(RawTheme::default())
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConfig {
     #[serde(default)]
-    theme: RawTheme,
+    theme: ThemeValue,
     #[serde(default)]
     tabs: RawTabs,
     #[serde(default)]
@@ -95,7 +108,7 @@ struct RawConfig {
     keys: HashMap<String, Value>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawTheme {
     selection_background: Option<ColorValue>,
@@ -167,7 +180,7 @@ impl Default for Scrollbar {
 }
 
 /// A color in the config file: "#rrggbb", "#rgb", or an xterm-256 index.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
 enum ColorValue {
     Index(u8),
@@ -624,39 +637,50 @@ pub fn load() -> Config {
     }
 
     let raw = load_raw_config();
-    let t = &raw.theme;
-    if let Some(c) = t.selection_background.as_ref().and_then(ColorValue::to_color) {
-        config.theme.selection_bg = c;
-    }
-    match t.selection_foreground.as_ref() {
-        None => {}
-        Some(None) => config.theme.selection_fg = None,
-        Some(Some(c)) => {
-            if let Some(color) = c.to_color() {
-                config.theme.selection_fg = Some(color);
+    let raw_theme = match &raw.theme {
+        ThemeValue::String(name) => {
+            if name == "none" {
+                None
+            } else {
+                load_preset(name)
             }
         }
-    }
-    if let Some(c) = t.sidebar_rail.as_ref().and_then(ColorValue::to_color) {
-        config.theme.sidebar_rail = c;
-    }
-    if let Some(c) = t.sidebar_active_bg.as_ref().and_then(ColorValue::to_color) {
-        config.theme.sidebar_active_bg = c;
-    }
-    if let Some(c) = t.tab_rail.as_ref().and_then(ColorValue::to_color) {
-        config.theme.tab_rail = c;
-    }
-    if let Some(c) = t.tab_bg.as_ref().and_then(ColorValue::to_color) {
-        config.theme.tab_bg = c;
-    }
-    if let Some(c) = t.tab_active_bg.as_ref().and_then(ColorValue::to_color) {
-        config.theme.tab_active_bg = Some(c);
-    }
-    if let Some(c) = t.border_active.as_ref().and_then(ColorValue::to_color) {
-        config.theme.border_active = c;
-    }
-    if let Some(c) = t.border_inactive.as_ref().and_then(ColorValue::to_color) {
-        config.theme.border_inactive = c;
+        ThemeValue::Table(t) => Some(t.clone()),
+    };
+    if let Some(t) = raw_theme {
+        if let Some(c) = t.selection_background.as_ref().and_then(ColorValue::to_color) {
+            config.theme.selection_bg = c;
+        }
+        match t.selection_foreground.as_ref() {
+            None => {}
+            Some(None) => config.theme.selection_fg = None,
+            Some(Some(c)) => {
+                if let Some(color) = c.to_color() {
+                    config.theme.selection_fg = Some(color);
+                }
+            }
+        }
+        if let Some(c) = t.sidebar_rail.as_ref().and_then(ColorValue::to_color) {
+            config.theme.sidebar_rail = c;
+        }
+        if let Some(c) = t.sidebar_active_bg.as_ref().and_then(ColorValue::to_color) {
+            config.theme.sidebar_active_bg = c;
+        }
+        if let Some(c) = t.tab_rail.as_ref().and_then(ColorValue::to_color) {
+            config.theme.tab_rail = c;
+        }
+        if let Some(c) = t.tab_bg.as_ref().and_then(ColorValue::to_color) {
+            config.theme.tab_bg = c;
+        }
+        if let Some(c) = t.tab_active_bg.as_ref().and_then(ColorValue::to_color) {
+            config.theme.tab_active_bg = Some(c);
+        }
+        if let Some(c) = t.border_active.as_ref().and_then(ColorValue::to_color) {
+            config.theme.border_active = c;
+        }
+        if let Some(c) = t.border_inactive.as_ref().and_then(ColorValue::to_color) {
+            config.theme.border_inactive = c;
+        }
     }
     if let Some(w) = raw.tabs.min_width {
         config.tabs.min_width = w.clamp(3, 40);
@@ -711,6 +735,15 @@ pub fn load() -> Config {
     }
     config.keys.apply(&raw.keys);
     config
+}
+
+/// Load a preset by name from the bundled themes directory.
+/// Returns `None` if the preset is not found or cannot be parsed.
+fn load_preset(name: &str) -> Option<RawTheme> {
+    let themes_dir = std::env::current_dir().unwrap_or_else(|_| std::path::Path::new(".").into());
+    let theme_file = themes_dir.join("themes").join(format!("{name}.toml"));
+    let text = std::fs::read_to_string(theme_file).ok()?;
+    toml::from_str::<RawTheme>(&text).ok()
 }
 
 /// The label for a tab: user name if set, otherwise its 1-based number
@@ -961,12 +994,20 @@ mod tests {
         // Absent key: `Option<Option<_>>` outer is None, meaning "no
         // override" (the Ghostty-seeded value, if any, is kept).
         let absent: RawConfig = serde_json::from_str(r##"{"theme": {}}"##).unwrap();
-        assert!(absent.theme.selection_foreground.is_none());
+        let RawTheme { selection_foreground, .. } = match &absent.theme {
+            ThemeValue::Table(t) => t,
+            _ => panic!("expected table theme"),
+        };
+        assert!(selection_foreground.is_none());
 
         // Explicit `null`: outer is `Some(None)`, meaning "clear it".
         let explicit_null: RawConfig =
             serde_json::from_str(r##"{"theme": {"selection_foreground": null}}"##).unwrap();
-        assert!(matches!(explicit_null.theme.selection_foreground, Some(None)));
+        let RawTheme { selection_foreground, .. } = match &explicit_null.theme {
+            ThemeValue::Table(t) => t,
+            _ => panic!("expected table theme"),
+        };
+        assert!(matches!(selection_foreground, Some(None)));
     }
 
     #[test]
@@ -1307,5 +1348,184 @@ sidebar_rail = 55
 
         std::env::remove_var("CMUX_MUX_CONFIG");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- Theme presets (issue #39) ---
+
+    /// Helper: extract the color string from a ColorValue::Text variant.
+    fn cv_text(s: &Option<ColorValue>) -> Option<&str> {
+        s.as_ref().and_then(|cv| match cv {
+            ColorValue::Text(s) => Some(s.as_str()),
+            _ => None,
+        })
+    }
+
+    /// Helper: build the path to the bundled themes directory from the
+    /// crate's CARGO_MANIFEST_DIR.
+    fn themes_dir() -> std::path::PathBuf {
+        let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.push("..");
+        p.push("..");
+        p.push("themes");
+        p
+    }
+
+    #[test]
+    fn theme_string_preset_deserializes() {
+        // Claim 1: a string preset name deserializes as ThemeValue::String.
+        let cfg: RawConfig = serde_json::from_str(r#"{"theme": "catpuccin-mocha"}"#).unwrap();
+        match &cfg.theme {
+            ThemeValue::String(s) if s == "catpuccin-mocha" => {}
+            _ => panic!("expected ThemeValue::String(\"catpuccin-mocha\"), got {:?}", cfg.theme),
+        }
+    }
+
+    #[test]
+    fn theme_table_preset_deserializes() {
+        // Claim 2: a table theme deserializes as ThemeValue::Table.
+        let cfg: RawConfig =
+            serde_json::from_str(r##"{"theme": {"sidebar_rail": "#87dcbf"}}"##).unwrap();
+        match &cfg.theme {
+            ThemeValue::Table(t) => {
+                assert_eq!(cv_text(&t.sidebar_rail), Some("#87dcbf"));
+            }
+            _ => panic!("expected ThemeValue::Table, got {:?}", cfg.theme),
+        }
+    }
+
+    #[test]
+    fn theme_none_disables_preset() {
+        // Claim 4 + 13: theme=\"none\" produces Theme::default() in load().
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap();
+        let dir = unique_dir("theme-none");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mux.json");
+        std::fs::write(&path, r#"{"theme": "none"}"#).unwrap();
+        std::env::set_var("CMUX_MUX_CONFIG", &path);
+        let config = load();
+        std::env::remove_var("CMUX_MUX_CONFIG");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Theme::default() values.
+        assert_eq!(config.theme.sidebar_rail, Color::Indexed(110));
+        assert_eq!(config.theme.tab_bg, Color::Indexed(236));
+        assert_eq!(config.theme.border_inactive, Color::Indexed(238));
+    }
+
+    #[test]
+    fn preset_catpuccin_mocha_deserializes() {
+        // Claim 5: catpuccin-mocha.toml deserializes with correct colors.
+        let themes_dir = themes_dir();
+        let text = std::fs::read_to_string(themes_dir.join("catpuccin-mocha.toml")).unwrap();
+        let raw: RawTheme = toml::from_str(&text).unwrap();
+        assert_eq!(cv_text(&raw.sidebar_rail), Some("#cba6f7"));
+        assert_eq!(cv_text(&raw.tab_bg), Some("#313244"));
+    }
+
+    #[test]
+    fn preset_dracula_deserializes() {
+        // Claim 6: dracula.toml deserializes with correct colors.
+        let themes_dir = themes_dir();
+        let text = std::fs::read_to_string(themes_dir.join("dracula.toml")).unwrap();
+        let raw: RawTheme = toml::from_str(&text).unwrap();
+        assert_eq!(cv_text(&raw.sidebar_rail), Some("#bd93f9"));
+        assert_eq!(cv_text(&raw.border_inactive), Some("#626262"));
+    }
+
+    #[test]
+    fn preset_nord_deserializes() {
+        // Claim 7: nord.toml deserializes with correct colors.
+        let themes_dir = themes_dir();
+        let text = std::fs::read_to_string(themes_dir.join("nord.toml")).unwrap();
+        let raw: RawTheme = toml::from_str(&text).unwrap();
+        assert_eq!(cv_text(&raw.sidebar_rail), Some("#88a0b8"));
+        assert_eq!(cv_text(&raw.tab_active_bg), Some("#eceff4"));
+    }
+
+    #[test]
+    fn preset_gruvbox_dark_deserializes() {
+        // Claim 8: gruvbox-dark.toml deserializes with correct colors.
+        let themes_dir = themes_dir();
+        let text = std::fs::read_to_string(themes_dir.join("gruvbox-dark.toml")).unwrap();
+        let raw: RawTheme = toml::from_str(&text).unwrap();
+        assert_eq!(cv_text(&raw.sidebar_rail), Some("#d79921"));
+        assert_eq!(cv_text(&raw.border_inactive), Some("#505050"));
+    }
+
+    #[test]
+    fn preset_solarized_dark_deserializes() {
+        // Claim 9: solarized-dark.toml deserializes with correct colors.
+        let themes_dir = themes_dir();
+        let text = std::fs::read_to_string(themes_dir.join("solarized-dark.toml")).unwrap();
+        let raw: RawTheme = toml::from_str(&text).unwrap();
+        assert_eq!(cv_text(&raw.sidebar_rail), Some("#268bd2"));
+        assert_eq!(cv_text(&raw.border_inactive), Some("#586e75"));
+    }
+
+    #[test]
+    fn preset_solarized_light_deserializes() {
+        // Claim 10: solarized-light.toml deserializes with correct colors.
+        let themes_dir = themes_dir();
+        let text = std::fs::read_to_string(themes_dir.join("solarized-light.toml")).unwrap();
+        let raw: RawTheme = toml::from_str(&text).unwrap();
+        assert_eq!(cv_text(&raw.selection_background), Some("#fdf6e3"));
+        assert_eq!(cv_text(&raw.tab_active_bg), Some("#073642"));
+    }
+
+    #[test]
+    fn preset_catpuccin_latte_deserializes() {
+        // Claim 11: catpuccin-latte.toml deserializes with correct colors.
+        let themes_dir = themes_dir();
+        let text = std::fs::read_to_string(themes_dir.join("catpuccin-latte.toml")).unwrap();
+        let raw: RawTheme = toml::from_str(&text).unwrap();
+        assert_eq!(cv_text(&raw.sidebar_rail), Some("#222218"));
+        assert_eq!(cv_text(&raw.border_inactive), Some("#8c8fa1"));
+    }
+
+    #[test]
+    fn preset_catpuccin_mocha_loads_via_load() {
+        // Claim 12: theme=\"catpuccin-mocha\" in config resolves to preset colors.
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap();
+        let dir = unique_dir("theme-preset-load");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mux.json");
+        std::fs::write(&path, r#"{"theme": "catpuccin-mocha"}"#).unwrap();
+        std::env::set_var("CMUX_MUX_CONFIG", &path);
+        // load_preset() resolves themes/ relative to current_dir(); cd to the
+        // workspace root so it can find the bundled themes.
+        let orig = std::env::current_dir().unwrap();
+        let ws = orig.parent().unwrap().parent().unwrap().to_owned();
+        std::env::set_current_dir(&ws).unwrap();
+        let config = load();
+        std::env::set_current_dir(&orig).unwrap();
+        std::env::remove_var("CMUX_MUX_CONFIG");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(config.theme.sidebar_rail, Color::Rgb(0xcb, 0xa6, 0xf7));
+        assert_eq!(config.theme.tab_bg, Color::Rgb(0x31, 0x32, 0x44));
+    }
+
+    #[test]
+    fn theme_table_override_keeps_defaults() {
+        // Claim 14: explicit table override keeps Theme::default() for unset fields.
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap();
+        let dir = unique_dir("theme-table-override");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mux.json");
+        std::fs::write(
+            &path,
+            r##"{"theme": {"sidebar_rail": "#87dcbf"}}"##,
+        )
+        .unwrap();
+        std::env::set_var("CMUX_MUX_CONFIG", &path);
+        let config = load();
+        std::env::remove_var("CMUX_MUX_CONFIG");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(config.theme.sidebar_rail, Color::Rgb(0x87, 0xdc, 0xbf));
+        assert_eq!(config.theme.border_inactive, Color::Indexed(238));
     }
 }

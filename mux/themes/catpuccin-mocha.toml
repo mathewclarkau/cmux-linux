@@ -1,0 +1,17 @@
+# Catppuccin Mocha (dark) — https://catppuccin.com
+#
+# Rosewater #f5e0dc  Flamingo #f28eaa  Pink #f6c2d7  Mauve #cba6f7
+# Red    #f38ba8  Orange #fab387  Yellow #f9e79f  Green  #a6e3a1
+# Teal   #94e2d4  Sky    #89dceb  Sapphire #89b4fa  Blue   #89b4fa
+# Lavender #b4befe  Text #cdd6f4  Subtext0 #a6adc8
+# Surface0 #313244  Surface1 #45475a  Surface2 #585b74
+# Overlay0 #6c7086  Base #1e1e2e  Mantle #1d1e2a  Crust #1b1b27
+
+selection_background = "#45475a"
+sidebar_rail = "#cba6f7"
+sidebar_active_bg = "#313244"
+tab_rail = "#45475a"
+tab_bg = "#313244"
+tab_active_bg = "#89b4fa"
+border_active = "#89b4fa"
+border_inactive = "#6c7086"

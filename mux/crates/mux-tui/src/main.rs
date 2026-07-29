@@ -27,6 +27,7 @@ mod session;
 mod skill_content;
 mod socket_watchdog;
 mod ssh_bootstrap;
+mod theme;
 mod ui;
 
 use std::path::PathBuf;
@@ -101,7 +102,8 @@ CLI VERBS
   rename-workspace, set-workspace-color, trigger-flash, resize-surface,
   focus-pane, select-tab, select-screen, select-workspace, move-tab,
   move-workspace, scroll-surface, subscribe, attach-surface, report-agent,
-  list-agents, browser-reload, list-sessions, kill-session, kill-stale
+  list-agents, browser-reload, list-sessions, kill-session, kill-stale,
+  theme list
 
 CLAUDE CODE HOOK INTEGRATION
   cmux claude install-hooks [--uninstall]
@@ -233,6 +235,15 @@ fn main() {
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("grok") {
         std::process::exit(grok_hook::run(&raw_args[1..]));
+    }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("theme") {
+        match raw_args.get(1).map(String::as_str) {
+            Some("list") => std::process::exit(theme::run_list()),
+            _ => {
+                eprintln!("cmux: usage: cmux theme list");
+                std::process::exit(2);
+            }
+        }
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("ssh") {
         std::process::exit(ssh_bootstrap::run(&raw_args[1..]));
