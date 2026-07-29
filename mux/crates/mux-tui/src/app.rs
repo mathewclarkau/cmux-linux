@@ -1005,6 +1005,17 @@ impl App {
                 self.flashing.insert(workspace, Instant::now());
                 Ok(RenderAction::Draw)
             }
+            // An agent reported a new state; refresh the tree snapshot and,
+            // when the finder overlay is open, rebuild its item list so the
+            // filtered view updates in real time (AC4). The query, active
+            // state filter, and cursor are preserved by set_items.
+            AppEvent::Mux(MuxEvent::AgentStateChanged { .. }) => {
+                self.tree = self.session.tree();
+                if let Some(finder) = self.finder.as_mut() {
+                    finder.set_items(crate::finder::build_items(&self.tree));
+                }
+                Ok(RenderAction::Draw)
+            }
             AppEvent::Mux(_) => Ok(RenderAction::Draw),
             AppEvent::Input(Event::Key(key)) => {
                 if key.kind != KeyEventKind::Release {
@@ -1497,11 +1508,11 @@ impl App {
                 }
                 return Ok(RenderAction::Draw);
             }
-            KeyCode::Char('B') => finder.state_filter = crate::finder::StateFilter::Blocked,
-            KeyCode::Char('W') => finder.state_filter = crate::finder::StateFilter::Working,
-            KeyCode::Char('I') => finder.state_filter = crate::finder::StateFilter::Idle,
-            KeyCode::Char('D') => finder.state_filter = crate::finder::StateFilter::Done,
-            KeyCode::Char('A') => finder.state_filter = crate::finder::StateFilter::All,
+            KeyCode::Char('B') => finder.set_state_filter(crate::finder::StateFilter::Blocked),
+            KeyCode::Char('W') => finder.set_state_filter(crate::finder::StateFilter::Working),
+            KeyCode::Char('I') => finder.set_state_filter(crate::finder::StateFilter::Idle),
+            KeyCode::Char('D') => finder.set_state_filter(crate::finder::StateFilter::Done),
+            KeyCode::Char('A') => finder.set_state_filter(crate::finder::StateFilter::All),
             _ => match finder.input.handle_key(&key) {
                 crate::ui::input::InputEvent::Cancel => {
                     self.finder = None;

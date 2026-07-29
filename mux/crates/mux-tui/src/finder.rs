@@ -102,6 +102,40 @@ impl FinderState {
         }
     }
 
+    /// Apply `next` as the active state filter, toggling back to `All`
+    /// when the same filter key is pressed again (so `B` then `B`
+    /// returns to the unfiltered list). Pressing `A` always collapses to
+    /// `All` (it is the explicit "no filter" key), which is a no-op when
+    /// the filter is already `All`. The cursor and scroll are clamped to
+    /// the new (smaller or larger) ranked list so the selection never
+    /// points past the end.
+    pub fn set_state_filter(&mut self, next: StateFilter) {
+        self.state_filter = if self.state_filter == next { StateFilter::All } else { next };
+        let len = self.ranked().len();
+        if len == 0 {
+            self.cursor = 0;
+            self.scroll = 0;
+        } else if self.cursor >= len {
+            self.cursor = len - 1;
+        }
+    }
+
+    /// Replace the snapshot of finder items built on open. Used when an
+    /// `agent-state-changed` event arrives while the finder is open so the
+    /// live agent states refresh without losing the current query, state
+    /// filter, or cursor position. The cursor is clamped to the new ranked
+    /// list length in case the refresh shrank the matching set.
+    pub fn set_items(&mut self, items: Vec<FinderItem>) {
+        self.items = items;
+        let len = self.ranked().len();
+        if len == 0 {
+            self.cursor = 0;
+            self.scroll = 0;
+        } else if self.cursor >= len {
+            self.cursor = len - 1;
+        }
+    }
+
     /// Number of result rows the overlay can show at once on `screen`.
     /// Zero when the overlay does not fit. Shared by the draw path, the
     /// cursor/scroll handling, and the click hit-test arithmetic so all
@@ -649,5 +683,68 @@ mod tests {
         assert_eq!(finder.cursor, 0);
         assert_eq!(finder.scroll, 0);
         assert_eq!(finder_row_at(screen, rect.x + 5, rows_y, finder.scroll), Some(0));
+    }
+
+    /// Pressing the same state-filter key twice clears the filter back to
+    /// the full list (AC3 same-key toggle, AC6 unit test). A fixture list
+    /// spans every agent state plus two stateless rows.
+    #[test]
+    fn pressing_same_state_key_twice_clears_filter() {
+        let items = vec![
+            item("working-agent", Some(AgentState::Working), surf(1)),
+            item("blocked-agent", Some(AgentState::Blocked), surf(2)),
+            item("idle-agent", Some(AgentState::Idle), surf(3)),
+            item("done-agent", Some(AgentState::Done), surf(4)),
+            item("workspace-one", None, FinderTarget::Workspace(1)),
+            item("pane-one", None, FinderTarget::Pane(1)),
+        ];
+        let mut finder = FinderState::new(items.clone());
+        // Start unfiltered: every row shows.
+        assert_eq!(finder.state_filter, StateFilter::All);
+        assert_eq!(finder.ranked().len(), items.len());
+
+        // Press B: only the blocked agent remains (stateless rows drop out).
+        finder.set_state_filter(StateFilter::Blocked);
+        let ranked = finder.ranked();
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(finder.items[ranked[0].0].label, "blocked-agent");
+
+        // Press B again: the same-key toggle reverts to All, restoring the
+        // full list including the stateless workspace and pane rows.
+        finder.set_state_filter(StateFilter::Blocked);
+        assert_eq!(finder.state_filter, StateFilter::All);
+        assert_eq!(finder.ranked().len(), items.len());
+    }
+
+    /// `set_items` rebuilds the snapshot from a fresh tree without losing
+    /// the active query, state filter, or cursor window, so an
+    /// `agent-state-changed` event while the finder is open updates the
+    /// list in real time (AC4 live refresh).
+    #[test]
+    fn set_items_refreshes_snapshot_preserving_filter() {
+        let items = vec![
+            item("blocked-agent", Some(AgentState::Blocked), surf(1)),
+            item("working-agent", Some(AgentState::Working), surf(2)),
+            item("workspace-one", None, FinderTarget::Workspace(1)),
+        ];
+        let mut finder = FinderState::new(items.clone());
+        finder.set_state_filter(StateFilter::Blocked);
+        assert_eq!(finder.ranked().len(), 1);
+
+        // The server reports the blocked agent transitioned to working; the
+        // refreshed snapshot drops the blocked row, so the active Blocked
+        // filter now yields zero matches while the filter itself is kept.
+        let refreshed = vec![
+            item("working-agent", Some(AgentState::Working), surf(2)),
+            item("workspace-one", None, FinderTarget::Workspace(1)),
+        ];
+        finder.set_items(refreshed);
+        assert_eq!(finder.state_filter, StateFilter::Blocked);
+        assert_eq!(finder.ranked().len(), 0);
+
+        // Clearing the filter shows the refreshed full list.
+        finder.set_state_filter(StateFilter::Blocked);
+        assert_eq!(finder.state_filter, StateFilter::All);
+        assert_eq!(finder.ranked().len(), 2);
     }
 }
