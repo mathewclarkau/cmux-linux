@@ -19,6 +19,7 @@ mod desktop_notify;
 mod finder;
 mod git_info;
 mod grok_hook;
+mod help;
 mod hook_merge;
 mod host_colors;
 mod keys;
@@ -102,6 +103,7 @@ KEYS (prefix: Ctrl-b)
   h/j/k/l or arrows    move focus              d    quit (attach: detach)
   w  next workspace    W    new workspace       s    toggle sidebar
   <  browser back      >    browser forward     r/u  browser reload/edit URL
+  ?  show key binding help
   Ctrl-b  send a literal Ctrl-b
 
 MOUSE
