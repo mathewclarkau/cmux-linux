@@ -428,6 +428,8 @@ pub struct App {
     /// Fuzzy finder overlay (`leader G`). Open mutably borrows the tree
     /// to build its item list, so it holds no `Session` of its own.
     pub finder: Option<crate::finder::FinderState>,
+    /// Key binding help overlay (`leader ?`), generated from the live keys.
+    pub help: Option<crate::help::HelpState>,
     pub toast: Option<Toast>,
     pub(crate) shake_frames: u8,
     /// Workspaces with an active manual flash pulse, keyed by when it
@@ -710,6 +712,7 @@ pub fn run(session: Session, session_label: String, overlay: Option<crate::confi
         prompt: None,
         omnibar: None,
         finder: None,
+        help: None,
         toast: None,
         shake_frames: 0,
         flashing: HashMap::new(),
@@ -1032,6 +1035,11 @@ impl App {
                 if let Some(prompt) = self.prompt.as_mut() {
                     prompt.input.insert_str(&text);
                     Ok(RenderAction::Draw)
+                } else if let Some(help) = self.help.as_mut() {
+                    help.input.insert_str(&text);
+                    help.cursor = 0;
+                    help.scroll = 0;
+                    Ok(RenderAction::Draw)
                 } else if let Some(finder) = self.finder.as_mut() {
                     finder.input.insert_str(&text);
                     Ok(RenderAction::Draw)
@@ -1188,6 +1196,9 @@ impl App {
         self.status_message = None;
         if self.prompt.is_some() {
             return self.handle_prompt_key(key);
+        }
+        if self.help.is_some() {
+            return self.handle_help_key(key);
         }
         if self.finder.is_some() {
             return self.handle_finder_key(key);
@@ -1464,6 +1475,10 @@ impl App {
                 self.open_finder();
                 return Ok(RenderAction::Draw);
             }
+            Action::ShowHelp => {
+                self.open_help();
+                return Ok(RenderAction::Draw);
+            }
         }
         self.status_message = None;
         Ok(RenderAction::Draw)
@@ -1478,6 +1493,73 @@ impl App {
     fn open_finder(&mut self) {
         let items = crate::finder::build_items(&self.tree);
         self.finder = Some(crate::finder::FinderState::new(items));
+    }
+
+    /// Open the help overlay from the current resolved bindings.
+    fn open_help(&mut self) {
+        let entries = crate::help::build_entries(&self.config.keys);
+        self.help = Some(crate::help::HelpState::new(entries));
+    }
+
+    /// Handle keys captured by the help overlay. Typeable input is fed to the
+    /// filter after `/`; navigation keys never reach the active pane.
+    fn handle_help_key(&mut self, key: KeyEvent) -> anyhow::Result<RenderAction> {
+        if key.code == KeyCode::Esc
+            || (key.code == KeyCode::Char('q') && key.modifiers == KeyModifiers::NONE)
+        {
+            self.help = None;
+            return Ok(RenderAction::Draw);
+        }
+        let rows = crate::help::HelpState::rows_visible(self.screen).max(1);
+        let Some(help) = self.help.as_mut() else { return Ok(RenderAction::None) };
+        match key.code {
+            KeyCode::Char('/') if key.modifiers == KeyModifiers::NONE => {
+                help.set_query(String::new());
+            }
+            KeyCode::Char('j') if key.modifiers == KeyModifiers::NONE => {
+                help.move_cursor(1, rows);
+            }
+            KeyCode::Char('k') if key.modifiers == KeyModifiers::NONE => {
+                help.move_cursor(-1, rows);
+            }
+            KeyCode::Down if key.modifiers == KeyModifiers::NONE => {
+                help.move_cursor(1, rows);
+            }
+            KeyCode::Up if key.modifiers == KeyModifiers::NONE => {
+                help.move_cursor(-1, rows);
+            }
+            KeyCode::PageDown if key.modifiers == KeyModifiers::NONE => {
+                help.move_cursor(rows as isize, rows);
+            }
+            KeyCode::PageUp if key.modifiers == KeyModifiers::NONE => {
+                help.move_cursor(-(rows as isize), rows);
+            }
+            _ => match help.input.handle_key(&key) {
+                InputEvent::Changed => {
+                    help.cursor = 0;
+                    help.scroll = 0;
+                }
+                InputEvent::Commit | InputEvent::Cancel | InputEvent::None => {}
+            },
+        }
+        help.clamp(rows);
+        Ok(RenderAction::Draw)
+    }
+
+    /// A help click selects a row but never forwards the click to a pane.
+    fn handle_help_click(&mut self, x: u16, y: u16) -> anyhow::Result<RenderAction> {
+        let scroll = self.help.as_ref().map(|help| help.scroll).unwrap_or(0);
+        let Some(row) = crate::help::help_row_at(self.screen, x, y, scroll) else {
+            return Ok(RenderAction::Draw);
+        };
+        let rows = crate::help::rows_visible(self.screen).max(1);
+        if let Some(help) = self.help.as_mut() {
+            if row < help.ranked().len() {
+                help.cursor = row;
+                help.clamp(rows);
+            }
+        }
+        Ok(RenderAction::Draw)
     }
 
     /// Keys while the finder is open: typing edits the query, Up/Down
@@ -2230,17 +2312,22 @@ impl App {
         self.selection = None;
         self.drag = None;
 
+        // An open rename dialog captures the click.
+        if self.prompt.is_some() {
+            return self.handle_prompt_click(x, y);
+        }
+
+        // The help overlay sits above the finder and captures every click.
+        if self.help.is_some() {
+            return self.handle_help_click(x, y);
+        }
+
         // An open finder overlay captures the click: a click on a results
         // row focuses that target and closes the finder; a click in the
         // overlay chrome or off it leaves the finder open so an errant
         // click does not discard the typed query.
         if self.finder.is_some() {
             return self.handle_finder_click(x, y);
-        }
-
-        // An open rename dialog captures the click.
-        if self.prompt.is_some() {
-            return self.handle_prompt_click(x, y);
         }
 
         // An open menu captures the click: activate or dismiss. Clicks on
@@ -2771,6 +2858,18 @@ impl App {
     }
 
     fn handle_scroll(&mut self, x: u16, y: u16, down: bool) -> anyhow::Result<RenderAction> {
+        if self.help.is_some() {
+            let screen = self.screen;
+            let inside = crate::help::help_rect(screen).is_some_and(|rect| rect.contains(x, y));
+            if inside {
+                let rows = crate::help::rows_visible(screen).max(1);
+                if let Some(help) = self.help.as_mut() {
+                    help.scroll_by(if down { 3 } else { -3 }, rows);
+                }
+                return Ok(RenderAction::Draw);
+            }
+            return Ok(RenderAction::None);
+        }
         let Some(area) = self.pane_area_at(x, y).copied() else { return Ok(RenderAction::None) };
         if self.active_pane() != Some(area.pane) {
             self.session.focus_pane(area.pane);

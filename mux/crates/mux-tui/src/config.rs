@@ -305,6 +305,43 @@ impl Default for Browser {
     }
 }
 
+/// Categories used to group key bindings in the help overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum HelpCategory {
+    Window,
+    Workspace,
+    Pane,
+    Tab,
+    Browser,
+    Agent,
+    Misc,
+}
+
+impl HelpCategory {
+    /// Categories in the display order used by the help overlay.
+    pub const ALL: [Self; 7] = [
+        Self::Window,
+        Self::Workspace,
+        Self::Pane,
+        Self::Tab,
+        Self::Browser,
+        Self::Agent,
+        Self::Misc,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Window => "Window",
+            Self::Workspace => "Workspace",
+            Self::Pane => "Pane",
+            Self::Tab => "Tab",
+            Self::Browser => "Browser",
+            Self::Agent => "Agent",
+            Self::Misc => "Misc",
+        }
+    }
+}
+
 /// Every prefix-key action, so bindings are configurable end to end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Action {
@@ -341,10 +378,11 @@ pub enum Action {
     BrowserEditUrl,
     Detach,
     OpenFuzzyFinder,
+    ShowHelp,
 }
 
 impl Action {
-    fn config_key(&self) -> &'static str {
+    pub fn config_key(&self) -> &'static str {
         match self {
             Action::NewTab => "new-tab",
             Action::NewBrowserTab => "new-browser-tab",
@@ -379,6 +417,126 @@ impl Action {
             Action::BrowserEditUrl => "browser-edit-url",
             Action::Detach => "detach",
             Action::OpenFuzzyFinder => "open-fuzzy-finder",
+            Action::ShowHelp => "show-help",
+        }
+    }
+
+    /// Human-readable action name shown in the help overlay.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Action::NewTab => "New tab",
+            Action::NewBrowserTab => "New browser tab",
+            Action::NewPaneSmart => "New pane",
+            Action::NextTab => "Next tab",
+            Action::PrevTab => "Previous tab",
+            Action::SplitRight => "Split right",
+            Action::SplitDown => "Split down",
+            Action::CloseTab => "Close tab",
+            Action::ClosePane => "Close pane",
+            Action::RenameTab => "Rename tab",
+            Action::RenameScreen => "Rename screen",
+            Action::RenameWorkspace => "Rename workspace",
+            Action::CloseScreen => "Close screen",
+            Action::PrevScreen => "Previous screen",
+            Action::NextScreen => "Next screen",
+            Action::NewScreen => "New screen",
+            Action::NextWorkspace => "Next workspace",
+            Action::NewWorkspace => "New workspace",
+            Action::ToggleSidebar => "Toggle sidebar",
+            Action::FocusLeft => "Focus left",
+            Action::FocusRight => "Focus right",
+            Action::FocusUp => "Focus up",
+            Action::FocusDown => "Focus down",
+            Action::ResizeGrow => "Grow pane",
+            Action::ResizeShrink => "Shrink pane",
+            Action::ScrollUp => "Scroll up",
+            Action::ScrollDown => "Scroll down",
+            Action::BrowserBack => "Browser back",
+            Action::BrowserForward => "Browser forward",
+            Action::BrowserReload => "Reload browser",
+            Action::BrowserEditUrl => "Edit browser URL",
+            Action::Detach => "Detach",
+            Action::OpenFuzzyFinder => "Open fuzzy finder",
+            Action::ShowHelp => "Show help",
+        }
+    }
+
+    /// One-line explanation of the action for the help overlay.
+    pub fn description(self) -> &'static str {
+        match self {
+            Action::NewTab => "Create a new terminal tab",
+            Action::NewBrowserTab => "Open a new browser tab",
+            Action::NewPaneSmart => "Create a smartly placed pane",
+            Action::NextTab => "Select the next tab",
+            Action::PrevTab => "Select the previous tab",
+            Action::SplitRight => "Split the pane to the right",
+            Action::SplitDown => "Split the pane below",
+            Action::CloseTab => "Close the active tab",
+            Action::ClosePane => "Close the active pane",
+            Action::RenameTab => "Rename the active tab",
+            Action::RenameScreen => "Rename the active screen",
+            Action::RenameWorkspace => "Rename the active workspace",
+            Action::CloseScreen => "Close the active screen",
+            Action::PrevScreen => "Select the previous screen",
+            Action::NextScreen => "Select the next screen",
+            Action::NewScreen => "Create a new screen",
+            Action::NextWorkspace => "Select the next workspace",
+            Action::NewWorkspace => "Create a new workspace",
+            Action::ToggleSidebar => "Show or hide the sidebar",
+            Action::FocusLeft => "Focus the pane to the left",
+            Action::FocusRight => "Focus the pane to the right",
+            Action::FocusUp => "Focus the pane above",
+            Action::FocusDown => "Focus the pane below",
+            Action::ResizeGrow => "Grow the focused pane",
+            Action::ResizeShrink => "Shrink the focused pane",
+            Action::ScrollUp => "Scroll the active surface up",
+            Action::ScrollDown => "Scroll the active surface down",
+            Action::BrowserBack => "Go back in browser history",
+            Action::BrowserForward => "Go forward in browser history",
+            Action::BrowserReload => "Reload the browser page",
+            Action::BrowserEditUrl => "Edit the browser URL",
+            Action::Detach => "Detach from the current session",
+            Action::OpenFuzzyFinder => "Open the fuzzy finder",
+            Action::ShowHelp => "Show this key binding help",
+        }
+    }
+
+    pub fn category(self) -> HelpCategory {
+        match self {
+            Action::RenameScreen
+            | Action::CloseScreen
+            | Action::PrevScreen
+            | Action::NextScreen
+            | Action::NewScreen => HelpCategory::Window,
+            Action::RenameWorkspace
+            | Action::NextWorkspace
+            | Action::NewWorkspace
+            | Action::ToggleSidebar => HelpCategory::Workspace,
+            Action::NewPaneSmart
+            | Action::SplitRight
+            | Action::SplitDown
+            | Action::ClosePane
+            | Action::FocusLeft
+            | Action::FocusRight
+            | Action::FocusUp
+            | Action::FocusDown
+            | Action::ResizeGrow
+            | Action::ResizeShrink => HelpCategory::Pane,
+            Action::NewTab
+            | Action::NewBrowserTab
+            | Action::NextTab
+            | Action::PrevTab
+            | Action::CloseTab
+            | Action::RenameTab => HelpCategory::Tab,
+            Action::BrowserBack
+            | Action::BrowserForward
+            | Action::BrowserReload
+            | Action::BrowserEditUrl => HelpCategory::Browser,
+            Action::ScrollUp
+            | Action::ScrollDown
+            | Action::Detach
+            | Action::OpenFuzzyFinder
+            | Action::ShowHelp => HelpCategory::Misc,
         }
     }
 }
@@ -391,6 +549,11 @@ pub struct Chord {
 }
 
 impl Chord {
+    /// Render this chord in the same syntax accepted by the config parser.
+    pub fn display(self) -> String {
+        chord_to_string(self)
+    }
+
     pub fn matches(&self, key: &KeyEvent) -> bool {
         // Shift is implied by uppercase/symbol chars; compare it only
         // for non-char codes.
@@ -466,12 +629,18 @@ impl Default for Keys {
                 bind(KeyCode::Char('u'), Action::BrowserEditUrl),
                 bind(KeyCode::Char('d'), Action::Detach),
                 bind(KeyCode::Char('G'), Action::OpenFuzzyFinder),
+                bind(KeyCode::Char('?'), Action::ShowHelp),
             ],
         }
     }
 }
 
 impl Keys {
+    /// Return every resolved binding in registry order.
+    pub fn bindings(&self) -> &[(Chord, Action)] {
+        &self.bindings
+    }
+
     /// The action bound to a key event (after the prefix).
     pub fn action_for(&self, key: &KeyEvent) -> Option<Action> {
         self.bindings.iter().find(|(chord, _)| chord.matches(key)).map(|(_, a)| *a)
@@ -650,6 +819,7 @@ fn all_actions() -> &'static [Action] {
         Action::BrowserEditUrl,
         Action::Detach,
         Action::OpenFuzzyFinder,
+        Action::ShowHelp,
     ]
 }
 
@@ -1661,6 +1831,16 @@ sidebar_rail = 77
         assert_eq!(
             keys.action_for(&KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE)),
             Some(Action::OpenFuzzyFinder)
+        );
+    }
+
+    #[test]
+    fn default_question_mark_opens_help() {
+        let keys = Keys::default();
+        // The question mark is the unmodified suffix after the Ctrl-b prefix.
+        assert_eq!(
+            keys.action_for(&KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
+            Some(Action::ShowHelp)
         );
     }
 
