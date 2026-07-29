@@ -69,6 +69,13 @@ pub struct Mux {
     browser_runtime: Mutex<Option<Arc<BrowserRuntime>>>,
     cell_pixels: Mutex<(u16, u16)>,
     default_colors: Mutex<DefaultColors>,
+    /// Resolved presentation chrome (theme/tabs/sidebar/keys) the server
+    /// process loaded, exposed to thin-client attaches via the
+    /// `get-resolved-config` verb so a local `Overlay` can layer on top
+    /// of the *server* config rather than the laptop's own config. Set
+    /// from `mux-tui`'s `run_server` after `config::load()`. `None` until
+    /// the server registers it (e.g. a `mux-core`-only host with no TUI).
+    resolved_chrome: Mutex<Option<serde_json::Value>>,
     /// Set only by `enable_persistence()`. Gates every snapshot write,
     /// including the one on `shutdown()` — without this, every ephemeral
     /// `Mux` a test or one-shot CLI invocation creates would write a
@@ -96,6 +103,7 @@ impl Mux {
             browser_runtime: Mutex::new(None),
             cell_pixels: Mutex::new((8, 16)),
             default_colors: Mutex::new(DefaultColors::default()),
+            resolved_chrome: Mutex::new(None),
             persistence_enabled: std::sync::atomic::AtomicBool::new(false),
             session,
         })
@@ -503,6 +511,21 @@ impl Mux {
             surface.set_default_colors(colors);
             self.emit(MuxEvent::SurfaceOutput(surface.id));
         }
+    }
+
+    /// The resolved presentation chrome this server process loaded, if it
+    /// has registered one. Returned to thin-client attaches by the
+    /// `get-resolved-config` control-socket verb so a local `Overlay` can
+    /// layer on top of the *server* config.
+    pub fn resolved_chrome(&self) -> Option<serde_json::Value> {
+        self.resolved_chrome.lock().unwrap().clone()
+    }
+
+    /// Register the resolved presentation chrome (theme/tabs/sidebar/keys)
+    /// for this server, exposed via `get-resolved-config`. Called from the
+    /// TUI's server entry point after `config::load()`.
+    pub fn set_resolved_chrome(&self, value: serde_json::Value) {
+        *self.resolved_chrome.lock().unwrap() = Some(value);
     }
 
     /// Resize a surface and broadcast the final clamped size when it

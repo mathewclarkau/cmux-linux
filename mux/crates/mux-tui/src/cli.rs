@@ -55,6 +55,19 @@ const VERBS: &[VerbSpec] = &[
         stream: false,
     },
     VerbSpec {
+        // Issue #40: returns the server's resolved presentation chrome
+        // (theme/tabs/sidebar/keys) for a thin-client attach to layer its
+        // local `Overlay` on top of. Read-only; `cmux attach
+        // --apply-local-config` invokes the same verb internally, and
+        // `cmux attach --print-resolved-config` shows the merged
+        // (server + local overlay) chrome for inspection.
+        name: "get-resolved-config",
+        allowed: &[],
+        build: build_no_args,
+        print: print_get_resolved_config,
+        stream: false,
+    },
+    VerbSpec {
         name: "send",
         allowed: &["surface", "text", "bytes", "send-cr"],
         build: build_send,
@@ -1087,6 +1100,16 @@ fn print_agents(data: &Value, out: &mut dyn Write) -> io::Result<()> {
         )?;
     }
     Ok(())
+}
+
+/// Human stdout for `cmux get-resolved-config`: pretty-print the
+/// server's resolved chrome as JSON (matches the shape that
+/// `Config::resolved_chrome_value` produces and `cmux attach
+/// --print-resolved-config` prints for the merged view). `--json`
+/// mode prints the same object compact via `print_response`.
+fn print_get_resolved_config(data: &Value, out: &mut dyn Write) -> io::Result<()> {
+    let pretty = serde_json::to_string_pretty(data).unwrap_or_else(|_| "{}".to_string());
+    writeln!(out, "{pretty}")
 }
 
 fn print_identify(data: &Value, out: &mut dyn Write) -> io::Result<()> {

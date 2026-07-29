@@ -43,23 +43,39 @@ Detach from an attached TUI with prefix `d`. With default keys, that is `Ctrl-b 
 
 ### SSH and remote attach with local config
 
-For a remote box, run the server headless there and attach from your laptop,
-carrying your local colours and key bindings onto the remote session:
+For a remote box, run the server headless there, then attach from your
+laptop carrying your local colours and key bindings onto the remote
+session. The point is that the *laptop's* cmux process does the attaching,
+so the laptop's `~/.config/cmux/mux.local.toml` (not the remote host's)
+is what applies. Run the cmux **client** locally and forward the remote
+control socket back to the laptop over SSH:
 
 ```bash
-# on the remote box
-cmux --headless --session agents
+# on the remote box: serve headless, no TUI
+remotehost$ cmux --headless --session agents
 
-# on the laptop, over SSH, overlaying the local config
-ssh remotehost 'cmux attach --session agents --apply-local-config'
+# on the laptop: forward the remote control socket to a local path,
+# then run cmux attach LOCALLY against the forwarded socket with
+# --apply-local-config so the laptop's config overlays the server's.
+# The remote socket path is the documented default (see Sessions and
+# sockets below), e.g. $XDG_RUNTIME_DIR/cmux-<uid>/agents.sock.
+laptop$ ssh -Nf -L /tmp/cmux-agents.sock:'"$XDG_RUNTIME_DIR/cmux-$(id -u)/agents.sock"' remotehost
+laptop$ cmux attach --socket /tmp/cmux-agents.sock --apply-local-config
 ```
 
 The local `~/.config/cmux/mux.local.toml` (or `mux.json`, or `$CMUX_LOCAL_CONFIG`,
-or an explicit `--config <path>`) is layered on top of the server config: the
-server keeps the truth for the workspace tree; your laptop wins for theme,
-tabs, sidebar, and keys. So your preferred leader key and colour scheme work
-the same way they do locally. Check which file would apply before connecting
-with the dry run:
+or an explicit `--config <path>`) is layered on top of the server config the
+laptop reads back over that forwarded socket: the server keeps the truth for
+the workspace tree; your laptop wins for theme, tabs, sidebar, and keys. So
+your preferred leader key and colour scheme work the same way they do locally.
+
+Do NOT run `cmux attach` inside the SSH command string (e.g.
+`ssh remotehost 'cmux attach ... --apply-local-config'`): that executes cmux
+on the remote host and resolves the *remote* `~/.config/cmux/mux.local.toml`,
+the opposite of what this feature is for. The laptop cmux process must be the
+one that loads the overlay.
+
+Check which local file would apply before connecting with the dry run:
 
 ```bash
 cmux attach --show-local-config-resolution

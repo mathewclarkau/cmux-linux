@@ -1038,3 +1038,194 @@ fn show_local_config_resolution_prints_path_without_attaching() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// Issue #40 round-2 blocker 1: a thin-client `cmux attach
+/// --apply-local-config` must layer the local overlay on top of the
+/// *server's* resolved config, not replace it with the laptop's own. We
+/// start a headless server whose `mux.json` sets a distinctive theme
+/// colour (server-side truth), then run `cmux attach --socket <sock>
+/// --apply-local-config --print-resolved-config` with a local overlay
+/// that overrides a key binding (NOT theme), and assert the merged
+/// chrome JSON carries the server's theme colour AND the local overlay's
+/// key binding — proving layering, not replacement. `--print-resolved-config`
+/// is the attach-only inspection escape added for this: it fetches the
+/// server chrome, applies the overlay, and prints the merged result as
+/// JSON without starting the TUI.
+#[test]
+fn attach_overlay_layers_over_server_config() {
+    let dir = unique_temp_dir("attach-overlay-layering");
+
+    // Server-side config: only a theme colour, so the local overlay (keys
+    // only) must NOT clobber it.
+    let server_cfg_root = dir.join("server-config");
+    let server_cmux_dir = server_cfg_root.join("cmux");
+    fs::create_dir_all(&server_cmux_dir).unwrap();
+    fs::write(
+        server_cmux_dir.join("mux.json"),
+        r##"{"theme": {"sidebar_rail": "#112233"}}"##,
+    )
+    .unwrap();
+
+    let socket = dir.join("mux.sock");
+    let mut server = Command::new(bin())
+        .args(["--headless", "--socket"])
+        .arg(&socket)
+        .env("XDG_CONFIG_HOME", &server_cfg_root)
+        .env_remove("CMUX_MUX_CONFIG")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if socket.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    if !socket.exists() {
+        let _ = server.kill();
+        let _ = server.wait();
+        panic!(
+            "headless server did not create socket at {}",
+            socket.display()
+        );
+    }
+    // Give the server a moment to register its resolved chrome (it is set
+    // before `serve()` binds, so a live socket implies it is published).
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Local laptop config dir: a local overlay that overrides a key
+    // binding only, not theme, so the server theme must survive.
+    let local_cfg_root = dir.join("local-config");
+    let local_cmux_dir = local_cfg_root.join("cmux");
+    fs::create_dir_all(&local_cmux_dir).unwrap();
+    fs::write(
+        local_cmux_dir.join("mux.local.toml"),
+        "[keys]\nprefix = \"ctrl+s\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(bin())
+        .args(["attach", "--socket"])
+        .arg(&socket)
+        .args(["--apply-local-config", "--print-resolved-config"])
+        .env("XDG_CONFIG_HOME", &local_cfg_root)
+        .env_remove("CMUX_LOCAL_CONFIG")
+        .env_remove("CMUX_MUX_CONFIG")
+        .output()
+        .unwrap();
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_dir_all(&dir);
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "attach --print-resolved-config failed: {combined}"
+    );
+
+    let merged: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+            panic!("expected merged chrome JSON on stdout, parse failed:{e}\n{combined}")
+        });
+
+    // Server's theme colour survived: the overlay layered, not replaced.
+    assert_eq!(
+        merged["theme"]["sidebar_rail"].as_str(),
+        Some("#112233"),
+        "server theme colour lost — overlay did not layer over server config: {merged}"
+    );
+    // Local overlay's key binding applied on top of the server config.
+    assert_eq!(
+        merged["keys"]["prefix"].as_str(),
+        Some("ctrl+s"),
+        "local overlay key binding missing from merged config: {merged}"
+    );
+}
+
+/// Issue #40 blocker 1: the `get-resolved-config` protocol verb is also
+/// exposed as a standalone read-only CLI verb (`cmux get-resolved-config`)
+/// so ops scripts can inspect the server's chrome without attaching. It
+/// must return the server's published chrome verbatim (no local overlay).
+/// We start a headless server whose config sets a distinctive theme
+/// colour, then call `cmux --json get-resolved-config` against its
+/// socket and assert the colour is present in the returned object.
+#[test]
+fn get_resolved_config_cli_verb_returns_server_chrome() {
+    let dir = unique_temp_dir("get-resolved-config");
+
+    // Server-side config: a distinctive theme colour only.
+    let server_cfg_root = dir.join("server-config");
+    let server_cmux_dir = server_cfg_root.join("cmux");
+    fs::create_dir_all(&server_cmux_dir).unwrap();
+    fs::write(
+        server_cmux_dir.join("mux.json"),
+        r##"{"theme": {"sidebar_rail": "#445566"}}"##,
+    )
+    .unwrap();
+
+    let socket = dir.join("mux.sock");
+    let mut server = Command::new(bin())
+        .args(["--headless", "--socket"])
+        .arg(&socket)
+        .env("XDG_CONFIG_HOME", &server_cfg_root)
+        .env_remove("CMUX_MUX_CONFIG")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if socket.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    if !socket.exists() {
+        let _ = server.kill();
+        let _ = server.wait();
+        panic!(
+            "headless server did not create socket at {}",
+            socket.display()
+        );
+    }
+    // `set_resolved_chrome` runs before `serve()` binds, so a live socket
+    // implies the chrome is published; still give it a beat to settle.
+    std::thread::sleep(Duration::from_millis(100));
+
+    let output = Command::new(bin())
+        .args(["--socket"])
+        .arg(&socket)
+        .args(["--json", "get-resolved-config"])
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_dir_all(&dir);
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "cmux get-resolved-config failed: {combined}"
+    );
+
+    let chrome: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|e| panic!("expected chrome JSON on stdout, parse failed:{e}\n{combined}"));
+    assert_eq!(
+        chrome["theme"]["sidebar_rail"].as_str(),
+        Some("#445566"),
+        "server theme colour missing from get-resolved-config output: {chrome}"
+    );
+}

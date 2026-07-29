@@ -62,7 +62,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use mux_core::platform;
 use ratatui::style::Color;
 use serde::{Deserialize, Deserializer};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// For a field typed `Option<Option<T>>`: makes an explicit `null` in the
 /// input deserialize to `Some(None)` rather than the `None` an absent key
@@ -523,6 +523,78 @@ impl Keys {
             }
         }
     }
+
+    /// Serialise the resolved bindings back into the raw `keys` map shape
+    /// (`"prefix"`, `"alt_shortcuts"`, one entry per action config key
+    /// mapped to a chord string or array) so that
+    /// `Config::resolved_chrome_value` can send the server's keys to a
+    /// thin client, which re-applies them via `Keys::apply` and reproduces
+    /// the same resolved state (issue #40 blocker 1). Every action that
+    /// still has a chord is emitted so the round-trip is whole, not just
+    /// the non-default ones.
+    pub fn to_raw_map(&self) -> HashMap<String, Value> {
+        let mut map: HashMap<String, Value> = HashMap::new();
+        let has_alt = self.bindings.iter().any(|(c, _)| c.mods.contains(KeyModifiers::ALT));
+        map.insert("alt_shortcuts".to_string(), Value::Bool(has_alt));
+        map.insert("prefix".to_string(), Value::String(chord_to_string(self.prefix)));
+        let mut by_action: HashMap<&str, Vec<Value>> = HashMap::new();
+        for (chord, action) in &self.bindings {
+            by_action
+                .entry(action.config_key())
+                .or_default()
+                .push(Value::String(chord_to_string(*chord)));
+        }
+        for (name, chords) in by_action {
+            map.insert(name.to_string(), Value::Array(chords));
+        }
+        map
+    }
+}
+
+/// Inverse of `parse_chord`: render a resolved `Chord` back as the chord
+/// string (`ctrl+b`, `alt+t`, `tab`, `B`, ...). Shift is implied by an
+/// uppercase/symbol char, so for `Char` we emit only ctrl/alt, matching
+/// how `parse_chord` interprets single characters (its shift branch only
+/// fires for non-char codes).
+fn chord_to_string(chord: Chord) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if chord.mods.contains(KeyModifiers::CONTROL) {
+        parts.push("ctrl");
+    }
+    if chord.mods.contains(KeyModifiers::ALT) {
+        parts.push("alt");
+    }
+    let is_char = matches!(chord.code, KeyCode::Char(_));
+    if chord.mods.contains(KeyModifiers::SHIFT) && !is_char {
+        parts.push("shift");
+    }
+    let code = match chord.code {
+        KeyCode::Tab => "tab",
+        KeyCode::BackTab => "backtab",
+        KeyCode::Enter => "enter",
+        KeyCode::Esc => "escape",
+        KeyCode::Left => "left",
+        KeyCode::Right => "right",
+        KeyCode::Up => "up",
+        KeyCode::Down => "down",
+        KeyCode::PageUp => "pageup",
+        KeyCode::PageDown => "pagedown",
+        KeyCode::Home => "home",
+        KeyCode::End => "end",
+        KeyCode::Char(c) => {
+            let joined = parts.join("+");
+            let mut buf = [0u8; 4];
+            let ch = c.encode_utf8(&mut buf);
+            return if joined.is_empty() { ch.to_string() } else { format!("{joined}+{ch}") };
+        }
+        other => return format!("{}{:?}", parts.join("+"), other),
+    };
+    let mut s = parts.join("+");
+    if !s.is_empty() {
+        s.push('+');
+    }
+    s.push_str(code);
+    s
 }
 
 fn key_values(value: &Value) -> Vec<&str> {
@@ -622,6 +694,85 @@ pub struct Config {
     pub browser: Browser,
     pub scrollbar: Scrollbar,
     pub keys: Keys,
+}
+
+impl Config {
+    /// Serialise the resolved chrome (theme/tabs/sidebar/keys) into the
+    /// same raw JSON shape that `RawConfig`/the `apply_*_raw` helpers
+    /// consume, so a thin-client attach can round-trip it back through
+    /// `Config::from_server_chrome` (issue #40 blocker 1). Browser and
+    /// scrollbar are server-side truth and intentionally omitted.
+    pub fn resolved_chrome_value(&self) -> Value {
+        let theme = json!({
+            "selection_background": color_to_value(&self.theme.selection_bg),
+            "selection_foreground": self.theme.selection_fg.as_ref().and_then(color_to_value),
+            "sidebar_rail": color_to_value(&self.theme.sidebar_rail),
+            "sidebar_active_bg": color_to_value(&self.theme.sidebar_active_bg),
+            "tab_rail": color_to_value(&self.theme.tab_rail),
+            "tab_bg": color_to_value(&self.theme.tab_bg),
+            "tab_active_bg": self.theme.tab_active_bg.as_ref().and_then(color_to_value),
+            "border_active": color_to_value(&self.theme.border_active),
+            "border_inactive": color_to_value(&self.theme.border_inactive),
+        });
+        let tabs = json!({
+            "min_width": self.tabs.min_width,
+            "solid_background": self.tabs.solid_background,
+            "show_titles": self.tabs.show_titles,
+            "agents": self.tabs.agents,
+        });
+        let sidebar = json!({
+            "width": self.sidebar.width,
+            "max_width": self.sidebar.max_width,
+        });
+        let keys = serde_json::to_value(self.keys.to_raw_map()).unwrap_or_else(|_| json!({}));
+        json!({ "theme": theme, "tabs": tabs, "sidebar": sidebar, "keys": keys })
+    }
+
+    /// Rebuild a `Config` from a server's `resolved_chrome_value` payload:
+    /// start from `Config::default()` and re-apply each present chrome
+    /// section through the same `apply_*_raw` helpers `load()` uses, so
+    /// the round-trip is byte-identical to the server's resolution. Used
+    /// as the base for a thin-client attach, then the local `Overlay` is
+    /// layered on top. Browser/scrollbar stay at defaults: the server
+    /// keeps the truth for them and the attach client does not spawn
+    /// browsers locally.
+    pub fn from_server_chrome(value: &Value) -> Config {
+        let mut config = Config::default();
+        if let Some(theme) = value.get("theme").filter(|v| !v.is_null()) {
+            if let Ok(raw) = serde_json::from_value::<RawTheme>(theme.clone()) {
+                apply_theme_raw(&mut config, &raw);
+            }
+        }
+        if let Some(tabs) = value.get("tabs").filter(|v| !v.is_null()) {
+            if let Ok(raw) = serde_json::from_value::<RawTabs>(tabs.clone()) {
+                apply_tabs_raw(&mut config, &raw);
+            }
+        }
+        if let Some(sidebar) = value.get("sidebar").filter(|v| !v.is_null()) {
+            if let Ok(raw) = serde_json::from_value::<RawSidebar>(sidebar.clone()) {
+                apply_sidebar_raw(&mut config, &raw);
+            }
+        }
+        if let Some(keys) = value.get("keys").filter(|v| v.is_object()) {
+            if let Ok(raw) = serde_json::from_value::<HashMap<String, Value>>(keys.clone()) {
+                config.keys.apply(&raw);
+            }
+        }
+        config
+    }
+}
+
+/// Serialise a resolved `Color` back into the raw config shape that
+/// `ColorValue`/`parse_color` accept: `#rrggbb` for true-colour, a bare
+/// number for an xterm-256 index. Named/reset colours have no portable
+/// raw form and yield `None` (which renders as `null` and is ignored on
+/// the client), matching the overlay's permissive overlay semantics.
+fn color_to_value(color: &Color) -> Option<Value> {
+    match color {
+        Color::Rgb(r, g, b) => Some(Value::String(format!("#{r:02x}{g:02x}{b:02x}"))),
+        Color::Indexed(i) => Some(Value::Number((*i).into())),
+        _ => None,
+    }
 }
 
 /// Apply a raw theme table onto a resolved config: every present colour

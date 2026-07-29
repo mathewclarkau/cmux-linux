@@ -83,6 +83,12 @@ OPTIONS:
   --show-local-config-resolution
                     Attach only: print which local config would apply and
                     how many keys it overrides, then exit without attaching.
+  --print-resolved-config
+                    Attach only: fetch the server's resolved presentation
+                    chrome, layer the local overlay on top (requires
+                    --apply-local-config), print the merged chrome as JSON,
+                    and exit without starting the TUI. For inspecting
+                    overlay layering without a live terminal.
   -h, --help         Show this help.
 
 KEYS (prefix: Ctrl-b)
@@ -183,6 +189,7 @@ struct Args {
     term: Option<String>,
     apply_local_config: bool,
     show_local_config_resolution: bool,
+    print_resolved_config: bool,
     config: Option<PathBuf>,
 }
 
@@ -195,6 +202,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
         term: None,
         apply_local_config: false,
         show_local_config_resolution: false,
+        print_resolved_config: false,
         config: None,
     };
     let mut args = args.into_iter().peekable();
@@ -217,6 +225,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
             }
             "--apply-local-config" => out.apply_local_config = true,
             "--show-local-config-resolution" => out.show_local_config_resolution = true,
+            "--print-resolved-config" => out.print_resolved_config = true,
             "--config" => {
                 out.config = Some(
                     args.next()
@@ -297,7 +306,33 @@ fn run_attach(args: Args) -> anyhow::Result<()> {
     let socket_path =
         args.socket.unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
     let remote = RemoteSession::connect(&socket_path)?;
+    // `--print-resolved-config` is an inspection escape for thin-client
+    // attaches (issue #40 blocker 1): fetch the server's resolved chrome,
+    // layer the local overlay on top, print the merged chrome as JSON,
+    // and exit without starting the TUI. Used by the integration test
+    // that proves the overlay layers over the *server* config.
+    if args.print_resolved_config {
+        return print_resolved_config(remote, overlay);
+    }
     run_tui(Session::Remote(remote), args.session, overlay)
+}
+
+/// Print the merged resolved chrome (server base + local overlay) as a
+/// JSON object to stdout and exit 0 without attaching the TUI. The shape
+/// matches `Config::resolved_chrome_value` so a caller can assert the
+/// server's theme survived alongside the local overlay's key bindings.
+fn print_resolved_config(
+    remote: Arc<RemoteSession>,
+    overlay: Option<config::Overlay>,
+) -> anyhow::Result<()> {
+    let data = remote.request(serde_json::json!({ "cmd": "get-resolved-config" }))?;
+    let mut config = config::Config::from_server_chrome(&data);
+    if let Some(o) = &overlay {
+        o.apply(&mut config);
+    }
+    let json = serde_json::to_string_pretty(&config.resolved_chrome_value())?;
+    println!("{json}");
+    Ok(())
 }
 
 /// Resolve the local overlay for an attach: log which file applies (or that
@@ -371,6 +406,13 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     surface_options.extra_env.push(("CMUX_MUX_SOCKET".into(), socket_path.display().to_string()));
 
     let mux = Mux::new(args.session.clone(), surface_options);
+    // Issue #40 blocker 1: publish this server's resolved presentation
+    // chrome (theme/tabs/sidebar/keys) so a thin-client `cmux attach
+    // --apply-local-config` can fetch it via the `get-resolved-config`
+    // verb and layer its local overlay on top instead of replacing the
+    // server config with the laptop's own. Browser and scrollbar stay
+    // server-side truth and are not published here.
+    mux.set_resolved_chrome(config.resolved_chrome_value());
     mux.restore_session();
     mux.enable_persistence();
     mux_core::server::serve(mux.clone(), Some(socket_path.clone()))?;
