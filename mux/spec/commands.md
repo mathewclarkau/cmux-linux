@@ -1748,6 +1748,64 @@ Example:
 {"id":32,"ok":true,"data":{"theme":{"sidebar_rail":"#778899",...},"tabs":{...},"sidebar":{...},"keys":{...}}}
 ```
 
+## Local Verb Groups (no wire protocol)
+
+These verb groups run entirely in the `cmux` client binary; they do not
+send JSON commands over the control socket and have no entry in the
+protocol command set. They are documented here so the surface has one
+home for every `cmux <verb> ...` invocation.
+
+### plugin
+
+| Field | Value |
+| --- | --- |
+| name | `plugin` (verb group: `cmux plugin <subcommand>`) |
+| status | implemented (manifest + registry only) |
+| since | local client surface, issue #42 scoped first PR |
+
+Manages `cmux-plugin.toml` manifests and a small JSON registry under the
+cmux data directory (`$XDG_DATA_HOME/cmux`, or `~/.local/share/cmux`
+by default). Layout:
+
+```text
+<base>/plugins.json          registry: {"plugins":[{name,enabled,entry,verbs}, ...]}
+<base>/plugins/<name>/         one directory per installed plugin
+                cmux-plugin.toml   manifest copied verbatim at install time
+```
+
+Manifest (`cmux-plugin.toml`):
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `[plugin] name` | string | yes | non-empty, single path component (used as the on-disk dir name) |
+| `[plugin] entry` | string | yes | non-empty; path to the plugin entry artefact, stored verbatim, not resolved or validated as executable in this PR |
+| `[plugin] verbs` | array of strings | yes | non-empty, each entry non-empty; the verbs this plugin claims, stored verbatim, not proxied in this PR |
+
+CLI mappings:
+
+| Subcommand | Required args | Optional flags | Plain stdout | JSON stdout |
+| --- | --- | --- | --- | --- |
+| `plugin list` | none | `--json` | one line per plugin `<name> <enabled|disabled> <entry> <verb,verb>`; `no plugins installed` when empty | the registry object `{"plugins":[...]}` |
+| `plugin install <manifest-path>` | `<manifest-path>` | none | `installed plugin <name> from <path>` | n/a (exit code only) |
+| `plugin uninstall <name>` | `<name>` | none | `uninstalled plugin <name>` | n/a (exit code only) |
+| `plugin enable <name>` | `<name>` | none | `plugin <name> enabled` (or `already enabled`) | n/a (exit code only) |
+| `plugin disable <name>` | `<name>` | none | `plugin <name> disabled` (or `already disabled`) | n/a (exit code only) |
+
+Errors:
+
+| Error | Condition |
+| --- | --- |
+| `malformed cmux-plugin.toml: ...` | manifest is not valid TOML or a required field is missing/empty |
+| `a plugin named "..." is already installed` | `install` against a name already in the registry (AC5 collision) |
+| `no plugin named "..." is installed` | `uninstall`/`enable`/`disable` against an unknown name |
+| `plugin name "..." must not be a path` | `install` where `name` contains a separator or is `.`/`..` |
+
+NOT IMPLEMENTED (deferred to a follow-up PR): plugin *execution*
+(proxying `cmux <plugin-name> <verb>` to a running plugin process,
+WASM/WASI sandboxing, the permission model) is out of scope for this
+PR. These verbs only manage manifest state and must not be read as
+implying that any plugin code runs.
+
 ## Proposed Commands
 
 ### wait-for

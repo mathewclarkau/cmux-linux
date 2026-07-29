@@ -1229,3 +1229,74 @@ fn get_resolved_config_cli_verb_returns_server_chrome() {
         "server theme colour missing from get-resolved-config output: {chrome}"
     );
 }
+
+/// Issue #42 (scoped first PR): the `cmux plugin` verb group manages
+/// `cmux-plugin.toml` manifests on disk only (no execution yet). We
+/// install a fixture manifest against a HeadlessServer-style temp env
+/// (an isolated XDG_DATA_HOME under the server's temp dir), then list
+/// it, then uninstall and confirm `list` reports empty. The server
+/// itself is idle for these verbs: the spec scopes this PR to manifest
+/// state only, no socket traffic.
+#[test]
+fn plugin_install_list_uninstall_round_trip() {
+    let server = HeadlessServer::start("plugin");
+    let data_home = server.dir.join("xdg-data");
+    fs::create_dir_all(&data_home).unwrap();
+    let manifest_dir = server.dir.join("manifest");
+    fs::create_dir_all(&manifest_dir).unwrap();
+    let manifest_path = manifest_dir.join("cmux-plugin.toml");
+    fs::write(
+        &manifest_path,
+        "[plugin]\nname = \"pifactory-fleet\"\nentry = \"bin/fleet.wasm\"\nverbs = [\"deploy\", \"rollback\"]\n",
+    )
+    .unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(bin())
+            .args(args)
+            .env("XDG_DATA_HOME", &data_home)
+            .env_remove("CMUX_MUX_SOCKET")
+            .output()
+            .unwrap()
+    };
+
+    let manifest_str = manifest_path.to_str().unwrap().to_string();
+    let install = run(&["plugin", "install", &manifest_str]);
+    assert_success(&install);
+    let install_out = String::from_utf8_lossy(&install.stdout);
+    assert!(
+        install_out.contains("pifactory-fleet"),
+        "install should report the plugin name: {install_out}"
+    );
+
+    let list = run(&["plugin", "list"]);
+    assert_success(&list);
+    let list_out = String::from_utf8_lossy(&list.stdout);
+    assert!(
+        list_out.contains("pifactory-fleet"),
+        "list should name the installed plugin: {list_out}"
+    );
+    assert!(
+        list_out.contains("enabled"),
+        "list should show the enabled state: {list_out}"
+    );
+    assert!(
+        list_out.contains("deploy,rollback"),
+        "list should show the claimed verbs: {list_out}"
+    );
+
+    let uninstall = run(&["plugin", "uninstall", "pifactory-fleet"]);
+    assert_success(&uninstall);
+    assert!(
+        String::from_utf8_lossy(&uninstall.stdout).contains("pifactory-fleet"),
+        "uninstall should echo the removed plugin name"
+    );
+
+    let list2 = run(&["plugin", "list"]);
+    assert_success(&list2);
+    let list2_out = String::from_utf8_lossy(&list2.stdout);
+    assert!(
+        list2_out.contains("no plugins installed"),
+        "after uninstall list should report empty: {list2_out}"
+    );
+}
