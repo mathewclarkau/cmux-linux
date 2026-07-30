@@ -491,6 +491,45 @@ pub fn invoke(
     func_result.map(|_| String::new())
 }
 
+/// Production `CmuxDispatcher` implementation that writes
+/// `cmux_call` requests to the real cmux control socket and reads
+/// back the response. Constructed per-invocation so the socket can be
+/// lazy-opened (errors surface as `PluginError::Trap` with the
+/// underlying connect/write/read error).
+pub struct SocketDispatcher {
+    pub socket_path: std::path::PathBuf,
+}
+
+impl SocketDispatcher {
+    pub fn new(socket_path: std::path::PathBuf) -> Self {
+        Self { socket_path }
+    }
+}
+
+impl CmuxDispatcher for SocketDispatcher {
+    fn dispatch(&self, request_json: String) -> Result<String, String> {
+        use std::io::{BufRead, BufReader, Write};
+        // Connect + write the request + read one line back. Modeled on
+        // ssh_bootstrap::send_request (see crates/mux-tui/src/ssh_bootstrap.rs).
+        let stream = mux_core::platform::transport::connect(&self.socket_path)
+            .map_err(|e| format!("connect to {}: {e}", self.socket_path.display()))?;
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(20)));
+        let mut writer = stream
+            .try_clone_box()
+            .map_err(|e| format!("clone stream: {e}"))?;
+        writer
+            .write_all(request_json.as_bytes())
+            .and_then(|_| writer.write_all(b"\n"))
+            .map_err(|e| format!("write request: {e}"))?;
+        let mut reader = BufReader::new(stream);
+        let mut response_line = String::new();
+        reader
+            .read_line(&mut response_line)
+            .map_err(|e| format!("read response: {e}"))?;
+        Ok(response_line)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

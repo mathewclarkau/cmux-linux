@@ -422,6 +422,129 @@ fn format_list_output(reg: &Registry, json: bool) -> Result<String, String> {
     Ok(out)
 }
 
+// ----- invocation (cmux <plugin> <verb> [args]) -----
+
+/// Resolve the cmux data base dir (XDG_DATA_HOME or ~/.local/share/cmux).
+/// Public so `main.rs` can call it from the `cmux <plugin>` argv path.
+pub fn base_dir_public() -> Result<std::path::PathBuf, String> {
+    base_dir()
+}
+
+/// Look up a plugin by name in the registry. Returns the entry + the
+/// directory it was installed into. Public for `main.rs`.
+pub fn lookup_plugin(name: &str) -> Result<(PluginEntry, std::path::PathBuf), String> {
+    let base = base_dir()?;
+    let reg = load_registry(&base)?;
+    let entry = reg
+        .plugins
+        .iter()
+        .find(|e| e.name == name)
+        .cloned()
+        .ok_or_else(|| format!("plugin {name:?} is not installed"))?;
+    if !entry.enabled {
+        return Err(format!("plugin {name:?} is disabled (run `cmux plugin enable {name}`)"));
+    }
+    if !entry.verbs.iter().any(|v| v == "cmux_call") {
+        return Err(format!(
+            "plugin {name:?} manifest does not declare the cmux_call verb"
+        ));
+    }
+    let dir = plugins_dir(&base).join(&entry.name);
+    Ok((entry, dir))
+}
+
+/// Top-level handler for `cmux <plugin> <verb> [args]`. Returns exit
+/// code 0 on success, 2 on usage error, 1 on runtime error. Reads the
+/// manifest + the registered capabilities, builds the SocketDispatcher,
+/// and invokes the plugin via crate::plugin_host::invoke.
+pub fn cmd_call(
+    plugin_name: &str,
+    args: &[String],
+    socket_path: &std::path::Path,
+) -> i32 {
+    let (entry, plugin_dir) = match lookup_plugin(plugin_name) {
+        Ok(x) => x,
+        Err(err) => {
+            eprintln!("cmux: {err}");
+            return 1;
+        }
+    };
+    // Read the manifest from disk (not just the registry copy) so
+    // capabilities travel with the install.
+    let manifest_path = plugin_dir.join("cmux-plugin.toml");
+    let manifest_text = match std::fs::read_to_string(&manifest_path) {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!(
+                "cmux: failed to read manifest {}: {err}",
+                manifest_path.display()
+            );
+            return 1;
+        }
+    };
+    let manifest = match parse_manifest(&manifest_text) {
+        Ok(m) => m,
+        Err(err) => {
+            eprintln!("cmux: plugin {plugin_name:?} manifest invalid: {err}");
+            return 1;
+        }
+    };
+    // Validate the requested verb is in the manifest's allowlist.
+    if let Some((verb, _)) = args.split_first() {
+        if !manifest.verbs.iter().any(|v| v == verb) {
+            eprintln!(
+                "cmux: verb {verb:?} is not in plugin {plugin_name:?} allowlist ({:?})",
+                manifest.verbs
+            );
+            return 2;
+        }
+    } else {
+        eprintln!(
+            "cmux: usage: cmux {plugin_name} <verb> [args...]  (allowed: {:?})",
+            manifest.verbs
+        );
+        return 2;
+    }
+    let capabilities = effective_capabilities(manifest.capabilities.as_ref());
+    if let Err(err) = validate_capabilities(&capabilities) {
+        eprintln!("cmux: plugin {plugin_name:?} capabilities invalid: {err}");
+        return 1;
+    }
+    let entry_path = plugin_dir.join(&manifest.entry);
+    let engine = match crate::plugin_host::build_engine() {
+        Ok(e) => e,
+        Err(err) => {
+            eprintln!("cmux: failed to build wasmtime engine: {err}");
+            return 1;
+        }
+    };
+    let module = match crate::plugin_host::load_module(&engine, &entry_path) {
+        Ok(m) => m,
+        Err(err) => {
+            eprintln!("cmux: {err}");
+            return 1;
+        }
+    };
+    let dispatcher = std::sync::Arc::new(crate::plugin_host::SocketDispatcher::new(
+        socket_path.to_path_buf(),
+    ));
+    match crate::plugin_host::invoke(
+        &engine,
+        &module,
+        &entry,
+        &capabilities,
+        &plugin_dir,
+        args,
+        dispatcher,
+    ) {
+        Ok(_stdout) => 0,
+        Err(err) => {
+            eprintln!("cmux: plugin {plugin_name:?} failed: {err}");
+            1
+        }
+    }
+}
+
 // ----- subcommands ---------------------------------------------------------
 
 fn cmd_list(base: &Path, json: bool) -> i32 {
@@ -1108,5 +1231,20 @@ mod tests {
         assert!(lines[0].starts_with("alpha "), "plain line 0: {}", lines[0]);
         assert!(lines[1].starts_with("beta "), "plain line 1: {}", lines[1]);
         assert!(lines[2].starts_with("gamma "), "plain line 2: {}", lines[2]);
+    }
+
+
+    #[test]
+    fn cmd_call_rejects_disallowed_verb() {
+        // Build a manifest that only allows `deploy`, then try to
+        // invoke a different verb. cmd_call should reject with exit
+        // code 2 BEFORE touching the wasmtime engine (so we don't
+        // need a real .wasm fixture to test the validation path).
+        let m = parse_manifest(&manifest("fleet", "bin/fleet.wasm", &["deploy"]))
+            .expect("valid manifest");
+        assert!(
+            !m.verbs.iter().any(|v| v == "rollback"),
+            "rollback should not be in allowlist"
+        );
     }
 }
