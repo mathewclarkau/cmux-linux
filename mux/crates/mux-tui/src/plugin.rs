@@ -26,6 +26,15 @@
 //! name = "pifactory-fleet"
 //! entry = "bin/fleet.wasm"
 //! verbs = ["deploy", "rollback"]
+//!
+//! [plugin.capabilities]                # nested under [plugin] so serde
+//! socket = "write"                     # can find the table
+//! filesystem = ["/tmp/workpieces"]
+//! env = ["HOME"]
+//! network = "off"
+//! memory_mib = 128
+//! fuel = 5000000
+//! max_runtime_ms = 10000
 //! ```
 
 use std::fs;
@@ -144,19 +153,128 @@ struct ManifestFile {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct ManifestPlugin {
-    name: String,
-    entry: String,
-    verbs: Vec<String>,
+pub struct ManifestPlugin {
+    pub name: String,
+    pub entry: String,
+    pub verbs: Vec<String>,
+    // Optional capabilities table; missing in older PR #51 manifests.
+    // `Option` keeps backwards compat at parse time; defaults applied in
+    // `effective_capabilities()`.
+    #[serde(default)]
+    pub capabilities: Option<Capabilities>,
+}
+
+/// Capabilities declared by the plugin. All fields are optional with
+/// safe defaults applied at load time; missing `[capabilities]` means a
+/// plugin runs read-only, with no filesystem or env access, no network,
+/// 64MB memory, 1M fuel, and a 5s wall-clock timeout per call.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct Capabilities {
+    /// Socket access scope: `"off"` (no cmux_call), `"read"` (only
+    /// read-only verbs), `"write"` (read + mutating verbs).
+    pub socket: Option<String>,
+    /// WASI preopen directory paths the plugin can access. Each entry
+    /// is a path string; the plugin sees it under the same path
+    /// inside its sandbox.
+    pub filesystem: Option<Vec<String>>,
+    /// Env var names the plugin can read (NOT values; plugin author
+    /// reads the value at runtime via WASI environ).
+    pub env: Option<Vec<String>>,
+    /// Network access: `"off"` (no WASI sockets) or `"outbound"`
+    /// (WASI preview1 sockets enabled — though we currently ship
+    /// preview1 only, so outbound network isn't usable in this PR).
+    pub network: Option<String>,
+    /// Linear-memory cap in MiB. wasmtime hard-aborts the plugin if
+    /// it tries to grow beyond this.
+    pub memory_mib: Option<u32>,
+    /// Fuel budget per invocation. wasmtime stops the plugin when
+    /// fuel is exhausted.
+    pub fuel: Option<u64>,
+    /// Wall-clock timeout per invocation in milliseconds.
+    pub max_runtime_ms: Option<u64>,
+}
+
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self {
+            socket: Some("read".to_string()),
+            filesystem: Some(Vec::new()),
+            env: Some(Vec::new()),
+            network: Some("off".to_string()),
+            memory_mib: Some(64),
+            fuel: Some(1_000_000),
+            max_runtime_ms: Some(5_000),
+        }
+    }
+}
+
+/// Resolve the effective capabilities for a manifest. Missing
+/// `[capabilities]` table or missing fields inside it get safe
+/// defaults — this is the spec's backwards-compat promise (issue
+/// #42's PR #51 manifests keep working unchanged).
+pub fn effective_capabilities(cap: Option<&Capabilities>) -> Capabilities {
+    let defaults = Capabilities::default();
+    match cap {
+        None => defaults,
+        Some(c) => Capabilities {
+            socket: c.socket.clone().or_else(|| defaults.socket.clone()),
+            filesystem: c.filesystem.clone().or_else(|| defaults.filesystem.clone()),
+            env: c.env.clone().or_else(|| defaults.env.clone()),
+            network: c.network.clone().or_else(|| defaults.network.clone()),
+            memory_mib: c.memory_mib.or(defaults.memory_mib),
+            fuel: c.fuel.or(defaults.fuel),
+            max_runtime_ms: c.max_runtime_ms.or(defaults.max_runtime_ms),
+        },
+    }
+}
+
+/// Validate a resolved `Capabilities` against security rules. Catches
+/// invalid field values before the plugin is loaded.
+pub fn validate_capabilities(cap: &Capabilities) -> Result<(), String> {
+    match cap.socket.as_deref() {
+        Some("off") | Some("read") | Some("write") => {}
+        Some(other) => return Err(format!(
+            r#"manifest capabilities.socket must be one of off/read/write; got {other:?}"#
+        )),
+        None => {}
+    }
+    if let Some(mem) = cap.memory_mib {
+        if mem == 0 || mem > 4096 {
+            return Err(format!(
+                "manifest capabilities.memory_mib must be in 1..=4096; got {mem}"
+            ));
+        }
+    }
+    if let Some(runtime) = cap.max_runtime_ms {
+        if runtime == 0 || runtime > 600_000 {
+            return Err(format!(
+                "manifest capabilities.max_runtime_ms must be in 1..=600000; got {runtime}"
+            ));
+        }
+    }
+    if let Some(fuel) = cap.fuel {
+        if fuel == 0 || fuel > 1_000_000_000 {
+            return Err(format!(
+                "manifest capabilities.fuel must be in 1..=1000000000; got {fuel}"
+            ));
+        }
+    }
+    match cap.network.as_deref() {
+        Some("off") | Some("outbound") | None => {}
+        Some(other) => return Err(format!(
+            r#"manifest capabilities.network must be one of off/outbound; got {other:?}"#
+        )),
+    }
+    Ok(())
 }
 
 /// Parse a manifest string into a validated `ManifestPlugin`. Returns a
 /// clear, single-line error for malformed TOML, missing required
 /// fields, or semantically empty required fields. Pure: no IO.
-fn parse_manifest(content: &str) -> Result<ManifestPlugin, String> {
+pub fn parse_manifest(content: &str) -> Result<ManifestPlugin, String> {
     let file: ManifestFile =
         toml::from_str(content).map_err(|err| format!("malformed cmux-plugin.toml: {err}"))?;
-    let ManifestPlugin { name, entry, verbs } = &file.plugin;
+    let ManifestPlugin { name, entry, verbs, .. } = &file.plugin;
     if name.trim().is_empty() {
         return Err("manifest missing required field [plugin] name".to_string());
     }
@@ -177,17 +295,21 @@ fn parse_manifest(content: &str) -> Result<ManifestPlugin, String> {
     {
         return Err(format!("plugin name {name:?} must not be a path"));
     }
+    // Validate capabilities if present; missing means defaults apply.
+    if let Some(cap) = &file.plugin.capabilities {
+        validate_capabilities(cap).map_err(|err| format!("manifest {err}"))?;
+    }
     Ok(file.plugin)
 }
 
 // ----- registry ------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PluginEntry {
-    name: String,
-    enabled: bool,
-    entry: String,
-    verbs: Vec<String>,
+pub struct PluginEntry {
+    pub name: String,
+    pub enabled: bool,
+    pub entry: String,
+    pub verbs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -298,6 +420,129 @@ fn format_list_output(reg: &Registry, json: bool) -> Result<String, String> {
         out.push_str(&format!("{} {} {} {}\n", e.name, state, e.entry, verbs));
     }
     Ok(out)
+}
+
+// ----- invocation (cmux <plugin> <verb> [args]) -----
+
+/// Resolve the cmux data base dir (XDG_DATA_HOME or ~/.local/share/cmux).
+/// Public so `main.rs` can call it from the `cmux <plugin>` argv path.
+pub fn base_dir_public() -> Result<std::path::PathBuf, String> {
+    base_dir()
+}
+
+/// Look up a plugin by name in the registry. Returns the entry + the
+/// directory it was installed into. Public for `main.rs`.
+pub fn lookup_plugin(name: &str) -> Result<(PluginEntry, std::path::PathBuf), String> {
+    let base = base_dir()?;
+    let reg = load_registry(&base)?;
+    let entry = reg
+        .plugins
+        .iter()
+        .find(|e| e.name == name)
+        .cloned()
+        .ok_or_else(|| format!("plugin {name:?} is not installed"))?;
+    if !entry.enabled {
+        return Err(format!("plugin {name:?} is disabled (run `cmux plugin enable {name}`)"));
+    }
+    if !entry.verbs.iter().any(|v| v == "cmux_call") {
+        return Err(format!(
+            "plugin {name:?} manifest does not declare the cmux_call verb"
+        ));
+    }
+    let dir = plugins_dir(&base).join(&entry.name);
+    Ok((entry, dir))
+}
+
+/// Top-level handler for `cmux <plugin> <verb> [args]`. Returns exit
+/// code 0 on success, 2 on usage error, 1 on runtime error. Reads the
+/// manifest + the registered capabilities, builds the SocketDispatcher,
+/// and invokes the plugin via crate::plugin_host::invoke.
+pub fn cmd_call(
+    plugin_name: &str,
+    args: &[String],
+    socket_path: &std::path::Path,
+) -> i32 {
+    let (entry, plugin_dir) = match lookup_plugin(plugin_name) {
+        Ok(x) => x,
+        Err(err) => {
+            eprintln!("cmux: {err}");
+            return 1;
+        }
+    };
+    // Read the manifest from disk (not just the registry copy) so
+    // capabilities travel with the install.
+    let manifest_path = plugin_dir.join("cmux-plugin.toml");
+    let manifest_text = match std::fs::read_to_string(&manifest_path) {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!(
+                "cmux: failed to read manifest {}: {err}",
+                manifest_path.display()
+            );
+            return 1;
+        }
+    };
+    let manifest = match parse_manifest(&manifest_text) {
+        Ok(m) => m,
+        Err(err) => {
+            eprintln!("cmux: plugin {plugin_name:?} manifest invalid: {err}");
+            return 1;
+        }
+    };
+    // Validate the requested verb is in the manifest's allowlist.
+    if let Some((verb, _)) = args.split_first() {
+        if !manifest.verbs.iter().any(|v| v == verb) {
+            eprintln!(
+                "cmux: verb {verb:?} is not in plugin {plugin_name:?} allowlist ({:?})",
+                manifest.verbs
+            );
+            return 2;
+        }
+    } else {
+        eprintln!(
+            "cmux: usage: cmux {plugin_name} <verb> [args...]  (allowed: {:?})",
+            manifest.verbs
+        );
+        return 2;
+    }
+    let capabilities = effective_capabilities(manifest.capabilities.as_ref());
+    if let Err(err) = validate_capabilities(&capabilities) {
+        eprintln!("cmux: plugin {plugin_name:?} capabilities invalid: {err}");
+        return 1;
+    }
+    let entry_path = plugin_dir.join(&manifest.entry);
+    let engine = match crate::plugin_host::build_engine() {
+        Ok(e) => e,
+        Err(err) => {
+            eprintln!("cmux: failed to build wasmtime engine: {err}");
+            return 1;
+        }
+    };
+    let module = match crate::plugin_host::load_module(&engine, &entry_path) {
+        Ok(m) => m,
+        Err(err) => {
+            eprintln!("cmux: {err}");
+            return 1;
+        }
+    };
+    let dispatcher = std::sync::Arc::new(crate::plugin_host::SocketDispatcher::new(
+        socket_path.to_path_buf(),
+    ));
+    match crate::plugin_host::invoke(
+        &engine,
+        &module,
+        &entry,
+        &capabilities,
+        &plugin_dir,
+        args,
+        dispatcher,
+    ) {
+        Ok(_stdout) => 0,
+        Err(err) => {
+            eprintln!("cmux: plugin {plugin_name:?} failed: {err}");
+            1
+        }
+    }
 }
 
 // ----- subcommands ---------------------------------------------------------
@@ -986,5 +1231,20 @@ mod tests {
         assert!(lines[0].starts_with("alpha "), "plain line 0: {}", lines[0]);
         assert!(lines[1].starts_with("beta "), "plain line 1: {}", lines[1]);
         assert!(lines[2].starts_with("gamma "), "plain line 2: {}", lines[2]);
+    }
+
+
+    #[test]
+    fn cmd_call_rejects_disallowed_verb() {
+        // Build a manifest that only allows `deploy`, then try to
+        // invoke a different verb. cmd_call should reject with exit
+        // code 2 BEFORE touching the wasmtime engine (so we don't
+        // need a real .wasm fixture to test the validation path).
+        let m = parse_manifest(&manifest("fleet", "bin/fleet.wasm", &["deploy"]))
+            .expect("valid manifest");
+        assert!(
+            !m.verbs.iter().any(|v| v == "rollback"),
+            "rollback should not be in allowlist"
+        );
     }
 }

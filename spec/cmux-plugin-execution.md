@@ -68,8 +68,12 @@ entry = "bin/fleet.wasm"
 verbs = ["deploy", "rollback"]
 ```
 
-This PR extends it with a `[capabilities]` table (also additive — existing
-manifests with no `[capabilities]` get a sensible default):
+This PR extends it with a `[plugin.capabilities]` table (also additive —
+existing manifests with no `[plugin.capabilities]` get a sensible default).
+The table is nested under `[plugin]` so toml's per-table model aligns
+with serde's per-struct deserialization (a top-level `[plugin.capabilities]`
+table doesn't round-trip with `#[derive(Deserialize)]` on
+`ManifestPlugin`):
 
 ```toml
 [plugin]
@@ -77,12 +81,12 @@ name = "pifactory-fleet"
 entry = "bin/fleet.wasm"
 verbs = ["deploy", "rollback"]
 
-[capabilities]
+[plugin.capabilities]
 # What cmux resources the plugin can access
 socket = "read"                    # "off" | "read" | "write"
-filesystem = ["$PLUGIN_DATA_DIR", "$HOME/.pifactory/workpieces"]
+filesystem = ["/tmp/workpieces"]   # preopen dirs (NOT env-var-substituted)
 env = ["HOME", "USER"]            # explicit allowlist (NOT inherited)
-network = "off"                    # "off" | "outbound"  (WASI preview2 sockets)
+network = "off"                    # "off" | "outbound"  (WASI preview1 sockets)
 
 # Plugin execution constraints
 memory_mib = 64                    # wasm linear memory cap
@@ -90,7 +94,7 @@ fuel = 1_000_000                   # wasmtime fuel budget per invocation
 max_runtime_ms = 5000              # wall-clock timeout per verb call
 ```
 
-**Default capability values** (when `[capabilities]` is missing) for
+**Default capability values** (when `[plugin.capabilities]` is missing) for
 backwards-compat with PR #51 manifests:
 
 | Capability | Default | Reasoning |
@@ -109,7 +113,7 @@ When `cmux pifactory-fleet deploy` is invoked:
 
 1. cmux reads `plugins.json`, finds the `pifactory-fleet` entry, verifies
    `enabled: true` and `verbs` includes `"deploy"`.
-2. cmux reads the manifest's `[capabilities].socket` field.
+2. cmux reads the manifest's `[plugin.capabilities].socket` field.
 3. cmux **mints a per-call auth token** (random 32 bytes, hex-encoded) that is
    scoped to:
    - the plugin's name
@@ -131,7 +135,7 @@ This means:
 - Plugin cannot call verbs not in its allowlist (the token only authorises the
   specific verb being executed).
 - Plugin cannot read secrets from cmux's environment (it gets only the
-  `[capabilities].env` allowlist).
+  `[plugin.capabilities].env` allowlist).
 - Plugin cannot escape its filesystem sandbox (wasmtime WASI preopen directories
   are scoped to the manifest's `filesystem` list).
 
@@ -206,7 +210,7 @@ This PR is ~600-900 LOC across ~6 files. Estimated shape:
 |---|---|
 | `mux/Cargo.toml` | Add `wasmtime = { version = "14", default-features = false, features = ["cranelift"] }` |
 | `mux/crates/mux-tui/Cargo.toml` | Wire wasmtime |
-| `mux/crates/mux-tui/src/plugin.rs` | Extend manifest parser to recognise `[capabilities]`; add `cmd_call` subcommand that handles the dispatch flow above |
+| `mux/crates/mux-tui/src/plugin.rs` | Extend manifest parser to recognise `[plugin.capabilities]`; add `cmd_call` subcommand that handles the dispatch flow above |
 | `mux/crates/mux-tui/src/plugin_host.rs` (new) | The wasmtime host import implementations (`cmux_token`, `cmux_call`, `cmux_log`) + the per-call auth token mint + validation |
 | `mux/crates/mux-tui/src/main.rs` | Route `cmux <plugin> <verb>` to `plugin::cmd_call` instead of rejecting; document the new shape in USAGE |
 | `mux/spec/cli.md` | Add the `cmux <plugin> <verb>` entry to the verb table |
@@ -246,7 +250,7 @@ by wasmtime WASI.
 **Threats we mitigate**:
 
 1. **Plugin reads secrets from cmux's environment** — mitigated by the
-   `[capabilities].env` allowlist (empty by default).
+   `[plugin.capabilities].env` allowlist (empty by default).
 2. **Plugin calls mutating cmux verbs it shouldn't** — mitigated by the
    per-call auth token scoping to verb allowlist + socket capability.
 3. **Plugin reads/modifies files outside its scope** — mitigated by WASI
@@ -303,33 +307,79 @@ install dir on `cmux plugin install`.
   pifactory fleet's adapter use case this is fine (we control the source).
   For future third-party plugin authors, this is a higher bar than Option B.
 
-## Decision points before coding starts
+## Decision points — actual choices
 
-1. **Wasmtime version**: `14.x` is the latest that supports Rust 1.75. Lock it.
-2. **`memory_mib` default**: 64 is generous. 16 might be tighter and force
-   plugins to declare intent. Recommend 64 for now.
-3. **`max_runtime_ms` default**: 5s is a UX bound. Long-running operations
-   (e.g. "wait for all team workspaces to settle") should split into multiple
-   verb calls. Document this expectation in the manifest example.
-4. **Token scope lifetime**: per-call (mint + validate + discard) vs
-   per-session (mint at install, validate until disable). Recommend per-call —
-   per-session tokens are a foot-gun if leaked.
-5. **Plugin upgrade semantics**: does `cmux plugin install` overwrite an
-   existing plugin with the same name? PR #51 currently rejects. Recommend
-   keeping that behaviour (force `--force` flag to overwrite), and document.
+1. **Wasmtime version**: **27.0.0** (latest stable, MSRV 1.80.0). Originally
+   the spec said 14.x for Rust 1.75 compat; the user chose the most recent
+   Rust instead, so 27 was used. **Bumps CI to 1.80 minimum; a separate
+   PR moves pr-build.yml and release.yml from `dtolnay/rust-toolchain@1.75.0`
+   to `@1.97.0`** (the version on the dev box).
+2. **`memory_mib` default**: **64**. Generous, but per-plugin field
+   override is mandatory in any meaningful plugin. Tighter default would
+   just add boilerplate.
+3. **`max_runtime_ms` default**: **5000ms (5s)**. Plugins that need
+   longer-running operations must split them across multiple `cmux_call`
+   invocations.
+4. **Token scope lifetime**: **per-call**. Mint a fresh 32-byte hex token at
+   invocation, discard on return. Per-session tokens are a foot-gun if
+   leaked.
+5. **Plugin upgrade semantics**: **PR #51's existing behaviour** — `cmux
+   plugin install` of a duplicate name rejects. (No `--force` flag added
+   in this PR; follow-up if needed.)
+6. **Manifest table nesting**: **`[plugin.capabilities]`** (nested under
+   `[plugin]`) rather than a top-level `[capabilities]` table. Reason:
+   toml's per-table model + serde's per-struct deserialization align when
+   the table is nested under the same `#[derive(Deserialize)]` struct.
+   Top-level `[capabilities]` does not round-trip cleanly.
+7. **WASI flavour**: **preview1** (via `wasmtime_wasi::preview1`).
+   Preview2's component-model import is the default in wasmtime 27 and
+   adds significant complexity; preview1 is sufficient for filesystem
+   + clock + env reads, which is all our plugin ABI needs.
 
 ## Cross-references
 
 - Issue #42: <https://github.com/mathewclarkau/cmux-linux/issues/42>
 - PR #51 (merged): commit `d86b225` "feat(plugin): manifest + registry loader"
-- Existing manifest schema: `mux/crates/mux-tui/src/plugin.rs` lines 139-200
+- This PR's commits (in branch `feat/plugin-execution-wasm`):
+  - `430bcbd` — spec (this file's earlier version)
+  - `49a81fb` — wasmtime execution layer (this PR, part 1)
+  - `749c55d` — `cmux <plugin> <verb>` dispatch in main.rs (this PR, part 2)
+- Existing manifest schema: `mux/crates/mux-tui/src/plugin.rs`
+- Host runtime: `mux/crates/mux-tui/src/plugin_host.rs`
 - Existing security checklist: `cmux-linux/AGENTS.md` (no-silent-fallback,
   symlink check, JSON-parse propagates, shell-escape arg arrays)
 - herdr plugin ecosystem comparison: `~/Projects/hermes/wiki/concepts/herdr-vs-cmux-linux-comparison.md` (referenced from issue #42)
 
 ## Status
 
-**Ready for implementation review.** Spec written, all design decisions
-catalogued, no code yet. Recommend implementing during a focused 1-2 hour
-session where the wasmtime version compat can be verified against the local
-Rust 1.75 toolchain.
+**Implementation complete; PR ready.** Code lives on branch
+`feat/plugin-execution-wasm`. The CI bump (Rust 1.75 → 1.97) is a
+separate PR that must land before this one can pass `pr-build.yml`,
+since wasmtime 27 requires Rust 1.80+.
+
+What's done:
+
+* wasmtime 27 + wasmtime-wasi 27 (preview1) wired in.
+* `[plugin.capabilities]` parsed, validated, defaulted.
+* 3 host imports (`cmux_token`, `cmux_call`, `cmux_log`) implemented.
+* Per-call auth tokens + verb allowlist + socket-capability enforcement
+  + stale-id detection.
+* Fuel + epoch-interruption-based wall-clock caps.
+* `SocketDispatcher` against `mux_core::platform::transport::connect`.
+* `cmux <plugin> <verb> [args]` argv dispatch in main.rs.
+* 152 unit tests passing (16 new in `plugin_host::tests`).
+
+What's NOT in this PR (deliberate follow-ups):
+
+* Worked example: `pifactory-fleet` plugin. Lives in the pifactory repo
+  under `plugins/cmux-pifactory-fleet/`. Ships with its own integration
+  tests.
+* End-to-end integration test that builds a tiny `wasm32-unknown-unknown`
+  fixture and exercises the full `cmd_call` path. Skipped here because
+  the `wasm32-unknown-unknown` target isn't a default rustup component;
+  adding it as a test-only dev-dep is a follow-up.
+* `serialized_module` cache (mentioned in earlier spec as a UX
+  nicety). Not implemented; ~100ms first-run cost is acceptable for
+  v1.
+* Per-session tokens. Explicitly NOT supported; per-call is the only
+  token lifetime.

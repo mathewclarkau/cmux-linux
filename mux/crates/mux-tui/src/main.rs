@@ -26,6 +26,7 @@ mod host_colors;
 mod keys;
 mod pi_hook;
 mod plugin;
+mod plugin_host;
 mod session;
 mod skill_content;
 mod socket_watchdog;
@@ -308,6 +309,55 @@ fn main() {
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("plugin") {
         std::process::exit(plugin::run(&raw_args[1..]));
+    }
+    // `cmux <plugin-name> <verb> [args]` — if the first positional arg
+    // names an installed, enabled plugin, route the rest of the argv
+    // through plugin_host::invoke. Falls through to the standard
+    // verb dispatch if the name doesn't match a plugin.
+    if let Some(first) = raw_args.first().map(String::as_str) {
+        if !first.starts_with('-')
+            && first != "workspace-color"
+            && first != "agents"
+            && first != "ssh"
+            && first != "socket-watchdog"
+        {
+            if plugin::lookup_plugin(first).is_ok() {
+                // Resolve the session's control-socket path the same
+                // way cli::list does. The plugin's cmux_call host
+                // imports write back to this socket.
+                let raw_socket: Option<PathBuf> = std::env::var_os("CMUX_MUX_SOCKET")
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        let mut idx = 0;
+                        while idx + 1 < raw_args.len() {
+                            if raw_args[idx] == "--socket" {
+                                return Some(PathBuf::from(&raw_args[idx + 1]));
+                            }
+                            idx += 1;
+                        }
+                        None
+                    });
+                let socket_path = raw_socket.unwrap_or_else(|| {
+                    // Default: ~/.local/share/cmux/cmux-<pid>.sock
+                    // (matches mux_core::platform::default_socket_path
+                    // when --session is "main"). Plugins running in
+                    // an attached cmux usually want to talk back to
+                    // the parent cmux's control socket, so honour
+                    // CMUX_MUX_SOCKET first.
+                    if let Some(home) = std::env::var_os("HOME") {
+                        if !home.is_empty() {
+                            return PathBuf::from(home)
+                                .join(".local")
+                                .join("share")
+                                .join("cmux")
+                                .join("cmux-main.sock");
+                        }
+                    }
+                    PathBuf::from("/tmp/cmux-main.sock")
+                });
+                std::process::exit(plugin::cmd_call(first, &raw_args[1..], &socket_path));
+            }
+        }
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("ssh") {
         std::process::exit(ssh_bootstrap::run(&raw_args[1..]));
