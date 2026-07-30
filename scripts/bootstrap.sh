@@ -39,6 +39,20 @@ done
 
 echo "==> building mux-tui (release)"
 cd "$ROOT/mux"
-ZIG="$ZIG_DIR/zig" cargo build --release -p mux-tui
+# Pin cargo to the Rust 1.97 toolchain via rustup's "+toolchain" syntax.
+# The dtolnay/rust-toolchain action installs Rust 1.97 under
+# ~/.cargo but the CI image's PATH may still surface an older
+# system cargo first (1.74 on ubuntu-22.04, 1.82 on ubuntu-24.04).
+# Older cargo < 1.78 cannot read Cargo.lock v4, which we generate
+# by default. The "+1.97" prefix routes through rustup regardless of
+# PATH ordering. See AGENTS.md "Pinned toolchain" for the rust pin.
+if command -v cargo >/dev/null 2>&1; then
+    CARGO_BIN="$(command -v cargo)"
+else
+    echo "error: cargo not found on PATH (dtolnay/rust-toolchain should install it)" >&2
+    exit 1
+fi
+echo "    using: $("$CARGO_BIN" --version)"
+ZIG="$ZIG_DIR/zig" "$CARGO_BIN" "+1.97" build --release -p mux-tui
 
 echo "==> built: $ROOT/mux/target/release/cmux"
