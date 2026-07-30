@@ -73,10 +73,18 @@ jobs:
           ./scripts/bootstrap.sh
           echo "ZIG=$GITHUB_WORKSPACE/.tools/zig-${{ matrix.arch }}-linux-0.15.2/zig" >> "$GITHUB_ENV"
 
+      # Pin cargo to the Rust 1.97 toolchain via rustup's "+toolchain"
+      # syntax. dtolnay/rust-toolchain installs Rust 1.97 under ~/.cargo
+      # but the CI image's PATH may still surface an older system cargo
+      # first (1.74 on ubuntu-22.04, 1.82 on ubuntu-24.04). Older cargo
+      # < 1.78 cannot read Cargo.lock v4, which cargo 1.97+ emits by
+      # default. The "+1.97" prefix routes through rustup regardless of
+      # PATH ordering. See AGENTS.md "Pinned toolchain" for the rust pin
+      # and scripts/bootstrap.sh for the matching local-build fix.
       - name: Cargo check (mux-tui)
         working-directory: mux
-        run: cargo check -p mux-tui
+        run: cargo +1.97 check -p mux-tui
 
       - name: Cargo test (mux-tui)
         working-directory: mux
-        run: cargo test -p mux-tui
+        run: cargo +1.97 test -p mux-tui
