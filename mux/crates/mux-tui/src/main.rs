@@ -26,6 +26,7 @@ mod host_colors;
 mod keys;
 mod pi_hook;
 mod plugin;
+mod plugin_host;
 mod session;
 mod skill_content;
 mod socket_watchdog;

@@ -26,6 +26,15 @@
 //! name = "pifactory-fleet"
 //! entry = "bin/fleet.wasm"
 //! verbs = ["deploy", "rollback"]
+//!
+//! [plugin.capabilities]                # nested under [plugin] so serde
+//! socket = "write"                     # can find the table
+//! filesystem = ["/tmp/workpieces"]
+//! env = ["HOME"]
+//! network = "off"
+//! memory_mib = 128
+//! fuel = 5000000
+//! max_runtime_ms = 10000
 //! ```
 
 use std::fs;
@@ -144,19 +153,128 @@ struct ManifestFile {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct ManifestPlugin {
-    name: String,
-    entry: String,
-    verbs: Vec<String>,
+pub struct ManifestPlugin {
+    pub name: String,
+    pub entry: String,
+    pub verbs: Vec<String>,
+    // Optional capabilities table; missing in older PR #51 manifests.
+    // `Option` keeps backwards compat at parse time; defaults applied in
+    // `effective_capabilities()`.
+    #[serde(default)]
+    pub capabilities: Option<Capabilities>,
+}
+
+/// Capabilities declared by the plugin. All fields are optional with
+/// safe defaults applied at load time; missing `[capabilities]` means a
+/// plugin runs read-only, with no filesystem or env access, no network,
+/// 64MB memory, 1M fuel, and a 5s wall-clock timeout per call.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct Capabilities {
+    /// Socket access scope: `"off"` (no cmux_call), `"read"` (only
+    /// read-only verbs), `"write"` (read + mutating verbs).
+    pub socket: Option<String>,
+    /// WASI preopen directory paths the plugin can access. Each entry
+    /// is a path string; the plugin sees it under the same path
+    /// inside its sandbox.
+    pub filesystem: Option<Vec<String>>,
+    /// Env var names the plugin can read (NOT values; plugin author
+    /// reads the value at runtime via WASI environ).
+    pub env: Option<Vec<String>>,
+    /// Network access: `"off"` (no WASI sockets) or `"outbound"`
+    /// (WASI preview1 sockets enabled — though we currently ship
+    /// preview1 only, so outbound network isn't usable in this PR).
+    pub network: Option<String>,
+    /// Linear-memory cap in MiB. wasmtime hard-aborts the plugin if
+    /// it tries to grow beyond this.
+    pub memory_mib: Option<u32>,
+    /// Fuel budget per invocation. wasmtime stops the plugin when
+    /// fuel is exhausted.
+    pub fuel: Option<u64>,
+    /// Wall-clock timeout per invocation in milliseconds.
+    pub max_runtime_ms: Option<u64>,
+}
+
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self {
+            socket: Some("read".to_string()),
+            filesystem: Some(Vec::new()),
+            env: Some(Vec::new()),
+            network: Some("off".to_string()),
+            memory_mib: Some(64),
+            fuel: Some(1_000_000),
+            max_runtime_ms: Some(5_000),
+        }
+    }
+}
+
+/// Resolve the effective capabilities for a manifest. Missing
+/// `[capabilities]` table or missing fields inside it get safe
+/// defaults — this is the spec's backwards-compat promise (issue
+/// #42's PR #51 manifests keep working unchanged).
+pub fn effective_capabilities(cap: Option<&Capabilities>) -> Capabilities {
+    let defaults = Capabilities::default();
+    match cap {
+        None => defaults,
+        Some(c) => Capabilities {
+            socket: c.socket.clone().or_else(|| defaults.socket.clone()),
+            filesystem: c.filesystem.clone().or_else(|| defaults.filesystem.clone()),
+            env: c.env.clone().or_else(|| defaults.env.clone()),
+            network: c.network.clone().or_else(|| defaults.network.clone()),
+            memory_mib: c.memory_mib.or(defaults.memory_mib),
+            fuel: c.fuel.or(defaults.fuel),
+            max_runtime_ms: c.max_runtime_ms.or(defaults.max_runtime_ms),
+        },
+    }
+}
+
+/// Validate a resolved `Capabilities` against security rules. Catches
+/// invalid field values before the plugin is loaded.
+pub fn validate_capabilities(cap: &Capabilities) -> Result<(), String> {
+    match cap.socket.as_deref() {
+        Some("off") | Some("read") | Some("write") => {}
+        Some(other) => return Err(format!(
+            r#"manifest capabilities.socket must be one of off/read/write; got {other:?}"#
+        )),
+        None => {}
+    }
+    if let Some(mem) = cap.memory_mib {
+        if mem == 0 || mem > 4096 {
+            return Err(format!(
+                "manifest capabilities.memory_mib must be in 1..=4096; got {mem}"
+            ));
+        }
+    }
+    if let Some(runtime) = cap.max_runtime_ms {
+        if runtime == 0 || runtime > 600_000 {
+            return Err(format!(
+                "manifest capabilities.max_runtime_ms must be in 1..=600000; got {runtime}"
+            ));
+        }
+    }
+    if let Some(fuel) = cap.fuel {
+        if fuel == 0 || fuel > 1_000_000_000 {
+            return Err(format!(
+                "manifest capabilities.fuel must be in 1..=1000000000; got {fuel}"
+            ));
+        }
+    }
+    match cap.network.as_deref() {
+        Some("off") | Some("outbound") | None => {}
+        Some(other) => return Err(format!(
+            r#"manifest capabilities.network must be one of off/outbound; got {other:?}"#
+        )),
+    }
+    Ok(())
 }
 
 /// Parse a manifest string into a validated `ManifestPlugin`. Returns a
 /// clear, single-line error for malformed TOML, missing required
 /// fields, or semantically empty required fields. Pure: no IO.
-fn parse_manifest(content: &str) -> Result<ManifestPlugin, String> {
+pub fn parse_manifest(content: &str) -> Result<ManifestPlugin, String> {
     let file: ManifestFile =
         toml::from_str(content).map_err(|err| format!("malformed cmux-plugin.toml: {err}"))?;
-    let ManifestPlugin { name, entry, verbs } = &file.plugin;
+    let ManifestPlugin { name, entry, verbs, .. } = &file.plugin;
     if name.trim().is_empty() {
         return Err("manifest missing required field [plugin] name".to_string());
     }
@@ -177,17 +295,21 @@ fn parse_manifest(content: &str) -> Result<ManifestPlugin, String> {
     {
         return Err(format!("plugin name {name:?} must not be a path"));
     }
+    // Validate capabilities if present; missing means defaults apply.
+    if let Some(cap) = &file.plugin.capabilities {
+        validate_capabilities(cap).map_err(|err| format!("manifest {err}"))?;
+    }
     Ok(file.plugin)
 }
 
 // ----- registry ------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PluginEntry {
-    name: String,
-    enabled: bool,
-    entry: String,
-    verbs: Vec<String>,
+pub struct PluginEntry {
+    pub name: String,
+    pub enabled: bool,
+    pub entry: String,
+    pub verbs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
