@@ -8,11 +8,11 @@ The spec is intentionally stricter than prose docs. Implemented commands and eve
 
 The spec version tracks the mux protocol version.
 
-| Change type | Version rule |
-| --- | --- |
-| Clarification that does not change wire behavior | Patch level of the spec text only |
-| Additive command, event, field, CLI flag, binding helper, or transport option | Minor protocol version |
-| Removal, rename, incompatible type change, changed error semantics, or changed ordering guarantee | Major protocol version |
+| Change type                                                                                       | Version rule                      |
+| ------------------------------------------------------------------------------------------------- | --------------------------------- |
+| Clarification that does not change wire behavior                                                  | Patch level of the spec text only |
+| Additive command, event, field, CLI flag, binding helper, or transport option                     | Minor protocol version            |
+| Removal, rename, incompatible type change, changed error semantics, or changed ordering guarantee | Major protocol version            |
 
 Protocol v5 is the implemented baseline. Proposed additions in this directory target protocol v6 unless a later spec says otherwise.
 
@@ -28,13 +28,13 @@ The generator must preserve the wire command names, parameter names, result shap
 
 ## File Map
 
-| File | Purpose |
-| --- | --- |
-| `commands.md` | Command contract, CLI mapping for each command, examples, and compatibility notes |
-| `events.md` | Subscribe and attach event payloads, ordering guarantees, and proposed filters |
-| `transports.md` | Implemented Unix socket transport and proposed HTTP, SSE, and WebSocket transports |
-| `cli.md` | Generated `cmux <verb>` conventions, exit codes, stdin rules, verb table, and examples |
-| `bindings.md` | Language binding style sheets and conformance suite contract |
+| File            | Purpose                                                                                |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `commands.md`   | Command contract, CLI mapping for each command, examples, and compatibility notes      |
+| `events.md`     | Subscribe and attach event payloads, ordering guarantees, and proposed filters         |
+| `transports.md` | Implemented Unix socket transport and proposed HTTP, SSE, and WebSocket transports     |
+| `cli.md`        | Generated `cmux <verb>` conventions, exit codes, stdin rules, verb table, and examples |
+| `bindings.md`   | Language binding style sheets and conformance suite contract                           |
 
 ## Implemented Inventory
 

@@ -6,22 +6,22 @@ This file specifies the JSON command contract for the cmux protocol. Implemented
 
 Schema notation is compact and machine-oriented:
 
-| Notation | Meaning |
-| --- | --- |
-| `uint64` | Non-negative integer fitting a Rust `u64` |
-| `uint32` | Non-negative integer fitting a Rust `u32` |
-| `uint16` | Non-negative integer fitting a Rust `u16` |
-| `usize` | Non-negative integer fitting a Rust `usize` |
-| `isize` | Signed integer fitting a Rust `isize` |
-| `float32` | JSON number read as Rust `f32` |
-| `string`, `boolean`, `null` | JSON primitive |
-| `T?` | Field may be absent or null unless the command says otherwise |
-| `array<T>` | JSON array |
-| `object{a:T,b?:U}` | JSON object with required `a` and optional `b` |
-| `Base64` | Standard base64 string |
-| `ColorHex` | `#rrggbb`, exactly 7 bytes, ASCII hex |
-| `Id` | Implemented numeric id, `uint64` |
-| `IdRef` | Proposed id reference, `Id` or short id string |
+| Notation                    | Meaning                                                       |
+| --------------------------- | ------------------------------------------------------------- |
+| `uint64`                    | Non-negative integer fitting a Rust `u64`                     |
+| `uint32`                    | Non-negative integer fitting a Rust `u32`                     |
+| `uint16`                    | Non-negative integer fitting a Rust `u16`                     |
+| `usize`                     | Non-negative integer fitting a Rust `usize`                   |
+| `isize`                     | Signed integer fitting a Rust `isize`                         |
+| `float32`                   | JSON number read as Rust `f32`                                |
+| `string`, `boolean`, `null` | JSON primitive                                                |
+| `T?`                        | Field may be absent or null unless the command says otherwise |
+| `array<T>`                  | JSON array                                                    |
+| `object{a:T,b?:U}`          | JSON object with required `a` and optional `b`                |
+| `Base64`                    | Standard base64 string                                        |
+| `ColorHex`                  | `#rrggbb`, exactly 7 bytes, ASCII hex                         |
+| `Id`                        | Implemented numeric id, `uint64`                              |
+| `IdRef`                     | Proposed id reference, `Id` or short id string                |
 
 The canonical request and response envelope is defined in `transports.md`. Command blocks in this file define the command-specific request fields and response `data` shape.
 
@@ -88,11 +88,11 @@ The `dead` pane variant is serialized by the v5 server only if the tree referenc
 
 ### identify
 
-| Field | Value |
-| --- | --- |
-| name | `identify` |
+| Field  | Value       |
+| ------ | ----------- |
+| name   | `identify`  |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Returns process and protocol metadata for the connected mux server. Clients use this command to verify that the socket endpoint is cmux and to check feature compatibility.
 
@@ -106,19 +106,19 @@ object{app:"cmux",version:string,protocol:uint32,session:string,pid:uint32}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error              | Condition                  |
+| ------------------ | -------------------------- |
 | `bad request: ...` | Malformed request envelope |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `identify` |
-| Flags | none |
+| Item         | Value                                                  |
+| ------------ | ------------------------------------------------------ |
+| Verb         | `identify`                                             |
+| Flags        | none                                                   |
 | Plain stdout | `cmux session=<session> protocol=<protocol> pid=<pid>` |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| JSON stdout  | exact result object                                    |
+| Exit codes   | common                                                 |
 
 Example:
 
@@ -129,11 +129,11 @@ Example:
 
 ### list-workspaces
 
-| Field | Value |
-| --- | --- |
-| name | `list-workspaces` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value             |
+| ------ | ----------------- |
+| name   | `list-workspaces` |
+| status | implemented       |
+| since  | protocol 5        |
 
 Returns the full workspace, screen, pane, tab, and split-tree snapshot. The snapshot includes active flags, active pane ids, active tab indexes, tab titles, tab names, surface kinds, browser source, size, and dead flags.
 
@@ -147,19 +147,19 @@ Tree
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error              | Condition                  |
+| ------------------ | -------------------------- |
 | `bad request: ...` | Malformed request envelope |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `list-workspaces` |
-| Flags | none |
+| Item         | Value                                                |
+| ------------ | ---------------------------------------------------- |
+| Verb         | `list-workspaces`                                    |
+| Flags        | none                                                 |
 | Plain stdout | one stable line per workspace, screen, pane, and tab |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| JSON stdout  | exact result object                                  |
+| Exit codes   | common                                               |
 
 Example:
 
@@ -170,13 +170,13 @@ Example:
 
 ### get-resolved-config
 
-| Field | Value |
-| --- | --- |
-| name | `get-resolved-config` |
-| status | implemented |
-| since | protocol 6 |
+| Field  | Value                 |
+| ------ | --------------------- |
+| name   | `get-resolved-config` |
+| status | implemented           |
+| since  | protocol 6            |
 
-Returns the server process's resolved presentation chrome (theme, tabs, sidebar, keys) so a thin-client `cmux attach --apply-local-config` can fetch it and layer the laptop's local `Overlay` on top of the *server* config rather than replacing it with the laptop's own `config::load()` (issue #40). Browser and scrollbar are server-side truth and intentionally omitted: the server keeps them, the attach client does not spawn browsers or scrollbars locally. The shape matches `mux-tui`'s `Config::resolved_chrome_value`; a client rebuilds a base `Config` from it via `Config::from_server_chrome` and then applies the local `Overlay`. A server that has registered no chrome (e.g. a `mux-core`-only host with no TUI) returns an empty object `{}`.
+Returns the server process's resolved presentation chrome (theme, tabs, sidebar, keys) so a thin-client `cmux attach --apply-local-config` can fetch it and layer the laptop's local `Overlay` on top of the _server_ config rather than replacing it with the laptop's own `config::load()` (issue #40). Browser and scrollbar are server-side truth and intentionally omitted: the server keeps them, the attach client does not spawn browsers or scrollbars locally. The shape matches `mux-tui`'s `Config::resolved_chrome_value`; a client rebuilds a base `Config` from it via `Config::from_server_chrome` and then applies the local `Overlay`. A server that has registered no chrome (e.g. a `mux-core`-only host with no TUI) returns an empty object `{}`.
 
 Params: none.
 
@@ -213,21 +213,21 @@ Colours are `#rrggbb` for true colour, a bare integer for an xterm-256 index, or
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error              | Condition                                      |
+| ------------------ | ---------------------------------------------- |
 | `bad request: ...` | Malformed request envelope (e.g. extra fields) |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `get-resolved-config` |
-| Flags | none (read-only metadata verb; supports global `--session`/`--socket` and `--json`) |
-| Plain stdout | pretty JSON object, the server's resolved chrome |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                                                                               |
+| ------------ | ----------------------------------------------------------------------------------- |
+| Verb         | `get-resolved-config`                                                               |
+| Flags        | none (read-only metadata verb; supports global `--session`/`--socket` and `--json`) |
+| Plain stdout | pretty JSON object, the server's resolved chrome                                    |
+| JSON stdout  | exact result object                                                                 |
+| Exit codes   | common                                                                              |
 
-The same verb is invoked internally by `cmux attach --apply-local-config`, which fetches the chrome, rebuilds a base `Config`, layers the local `Overlay`, and starts the TUI. `cmux attach --print-resolved-config` (issue #40) prints the *merged* chrome (server base + local overlay) as JSON without attaching, for inspecting layering without a live terminal.
+The same verb is invoked internally by `cmux attach --apply-local-config`, which fetches the chrome, rebuilds a base `Config`, layers the local `Overlay`, and starts the TUI. `cmux attach --print-resolved-config` (issue #40) prints the _merged_ chrome (server base + local overlay) as JSON without attaching, for inspecting layering without a live terminal.
 
 Example:
 
@@ -238,22 +238,22 @@ Example:
 
 ### send
 
-| Field | Value |
-| --- | --- |
-| name | `send` |
+| Field  | Value       |
+| ------ | ----------- |
+| name   | `send`      |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Writes input to a PTY surface. `text`, when present, is UTF-8 encoded and written as bytes. `bytes`, when present, is standard base64 decoded and written as raw bytes. If both are present, v5 writes `text` first and `bytes` second. If neither is present, v5 returns success and writes nothing.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `Id` | required | Must identify a live PTY surface |
-| `text` | `string` | default null | Written before `bytes` when both are present |
-| `bytes` | `Base64` | default null | Decoded with standard base64 |
-| `shell` | `string` | default null | One of `auto`, `fish`, `bash`, `zsh`, `sh`, `nu`, `raw` (default `raw` = verbatim passthrough, unchanged from pre-#35). `auto` resolves the pane's shell from `/proc/<pid>/cmdline` on Linux and falls back to `raw` on lookup failure or non-Linux. For a known shell, a leading `\n` is prefixed to `text` when it starts with a shell metacharacter (`$`, `!`, quote, bracket, `~`, `#`) or contains an unclosed quote, so a pasted `$ pwd` is typed literally into a fish pane (issue #35). `bytes` is never transformed. |
+| Name      | JSON type | Required/default | Constraints                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------- | --------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `surface` | `Id`      | required         | Must identify a live PTY surface                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `text`    | `string`  | default null     | Written before `bytes` when both are present                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `bytes`   | `Base64`  | default null     | Decoded with standard base64                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `shell`   | `string`  | default null     | One of `auto`, `fish`, `bash`, `zsh`, `sh`, `nu`, `raw` (default `raw` = verbatim passthrough, unchanged from pre-#35). `auto` resolves the pane's shell from `/proc/<pid>/cmdline` on Linux and falls back to `raw` on lookup failure or non-Linux. For a known shell, a leading `\n` is prefixed to `text` when it starts with a shell metacharacter (`$`, `!`, quote, bracket, `~`, `#`) or contains an unclosed quote, so a pasted `$ pwd` is typed literally into a fish pane (issue #35). `bytes` is never transformed. |
 
 Result:
 
@@ -263,23 +263,23 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `browser surface does not support PTY/VT socket commands` | Surface is a browser |
-| base64 decode error | `bytes` is not valid standard base64 |
-| IO error string | PTY write fails |
-| `bad request: ...` | Missing `surface` or wrong JSON type |
+| Error                                                     | Condition                            |
+| --------------------------------------------------------- | ------------------------------------ |
+| `unknown surface <id>`                                    | Surface id does not exist            |
+| `browser surface does not support PTY/VT socket commands` | Surface is a browser                 |
+| base64 decode error                                       | `bytes` is not valid standard base64 |
+| IO error string                                           | PTY write fails                      |
+| `bad request: ...`                                        | Missing `surface` or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `send` |
-| Flags | `--surface <id> [--text <text>] [--bytes <base64>] [--shell <mode>]` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                                                                |
+| ------------ | -------------------------------------------------------------------- |
+| Verb         | `send`                                                               |
+| Flags        | `--surface <id> [--text <text>] [--bytes <base64>] [--shell <mode>]` |
+| Plain stdout | no output                                                            |
+| JSON stdout  | exact result object                                                  |
+| Exit codes   | common                                                               |
 
 When neither `--text` nor `--bytes` is supplied, the CLI reads stdin as text and sends it as `text`.
 
@@ -292,19 +292,19 @@ Example:
 
 ### read-screen
 
-| Field | Value |
-| --- | --- |
-| name | `read-screen` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value         |
+| ------ | ------------- |
+| name   | `read-screen` |
+| status | implemented   |
+| since  | protocol 5    |
 
 Returns the current plain-text viewport of a PTY surface. The text is produced by the Ghostty VT terminal state and does not include prior scrollback beyond the current screen.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `Id` | required | Must identify a live PTY surface |
+| Name      | JSON type | Required/default | Constraints                      |
+| --------- | --------- | ---------------- | -------------------------------- |
+| `surface` | `Id`      | required         | Must identify a live PTY surface |
 
 Result:
 
@@ -314,22 +314,22 @@ object{text:string}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `browser surface does not support PTY/VT socket commands` | Surface is a browser |
-| terminal error string | VT plain-text extraction fails |
-| `bad request: ...` | Missing `surface` or wrong JSON type |
+| Error                                                     | Condition                            |
+| --------------------------------------------------------- | ------------------------------------ |
+| `unknown surface <id>`                                    | Surface id does not exist            |
+| `browser surface does not support PTY/VT socket commands` | Surface is a browser                 |
+| terminal error string                                     | VT plain-text extraction fails       |
+| `bad request: ...`                                        | Missing `surface` or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `read-screen` |
-| Flags | `--surface <id>` |
-| Plain stdout | `text` exactly |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value               |
+| ------------ | ------------------- |
+| Verb         | `read-screen`       |
+| Flags        | `--surface <id>`    |
+| Plain stdout | `text` exactly      |
+| JSON stdout  | exact result object |
+| Exit codes   | common              |
 
 Example:
 
@@ -340,19 +340,19 @@ Example:
 
 ### vt-state
 
-| Field | Value |
-| --- | --- |
-| name | `vt-state` |
+| Field  | Value       |
+| ------ | ----------- |
+| name   | `vt-state`  |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Returns a one-shot base64 VT replay for a PTY surface, including the current screen, styles, cursor, modes, palette, keyboard protocol state, charsets, and tabstops. Replaying this data into a fresh Ghostty VT terminal reproduces the surface state at the time of the snapshot.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `Id` | required | Must identify a live PTY surface |
+| Name      | JSON type | Required/default | Constraints                      |
+| --------- | --------- | ---------------- | -------------------------------- |
+| `surface` | `Id`      | required         | Must identify a live PTY surface |
 
 Result:
 
@@ -362,22 +362,22 @@ object{cols:uint16,rows:uint16,data:Base64}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `browser surface does not support PTY/VT socket commands` | Surface is a browser |
-| terminal error string | VT replay generation fails |
-| `bad request: ...` | Missing `surface` or wrong JSON type |
+| Error                                                     | Condition                            |
+| --------------------------------------------------------- | ------------------------------------ |
+| `unknown surface <id>`                                    | Surface id does not exist            |
+| `browser surface does not support PTY/VT socket commands` | Surface is a browser                 |
+| terminal error string                                     | VT replay generation fails           |
+| `bad request: ...`                                        | Missing `surface` or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `vt-state` |
-| Flags | `--surface <id>` |
+| Item         | Value                                   |
+| ------------ | --------------------------------------- |
+| Verb         | `vt-state`                              |
+| Flags        | `--surface <id>`                        |
 | Plain stdout | `cols=<cols> rows=<rows> data=<base64>` |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| JSON stdout  | exact result object                     |
+| Exit codes   | common                                  |
 
 Example:
 
@@ -388,22 +388,22 @@ Example:
 
 ### new-tab
 
-| Field | Value |
-| --- | --- |
-| name | `new-tab` |
+| Field  | Value       |
+| ------ | ----------- |
+| name   | `new-tab`   |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Creates a new PTY tab in a pane and makes it the active tab. If `pane` is absent, the active pane of the active screen is used. If the session has no workspaces and no pane is supplied, v5 creates a new workspace containing the tab. In that empty-session fallback, a supplied `cwd` is silently dropped because v5 delegates to `new_workspace(None, size)`. The new tab inherits the active surface working directory of the target pane when `cwd` is absent.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `pane` | `Id` | default null | Target pane; unknown ids error |
-| `cwd` | `string` | default null | PTY child working directory |
-| `cols` | `uint16` | default null | Used only when paired with `rows` |
-| `rows` | `uint16` | default null | Used only when paired with `cols` |
+| Name   | JSON type | Required/default | Constraints                       |
+| ------ | --------- | ---------------- | --------------------------------- |
+| `pane` | `Id`      | default null     | Target pane; unknown ids error    |
+| `cwd`  | `string`  | default null     | PTY child working directory       |
+| `cols` | `uint16`  | default null     | Used only when paired with `rows` |
+| `rows` | `uint16`  | default null     | Used only when paired with `cols` |
 
 If only one of `cols` or `rows` is present, v5 ignores both because the server uses `cols.zip(rows)`.
 
@@ -415,22 +415,22 @@ object{surface:Id}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown pane <id>` | Supplied pane id does not exist |
+| Error                                 | Condition                             |
+| ------------------------------------- | ------------------------------------- |
+| `unknown pane <id>`                   | Supplied pane id does not exist       |
 | `pane disappeared while creating tab` | Target pane vanished after validation |
-| spawn or PTY error string | PTY creation or child spawn fails |
-| `bad request: ...` | Wrong JSON type |
+| spawn or PTY error string             | PTY creation or child spawn fails     |
+| `bad request: ...`                    | Wrong JSON type                       |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `new-tab` |
-| Flags | `[--pane <id>] [--cwd <path>] [--cols <n> --rows <n>]` |
-| Plain stdout | new surface id followed by newline |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                                                  |
+| ------------ | ------------------------------------------------------ |
+| Verb         | `new-tab`                                              |
+| Flags        | `[--pane <id>] [--cwd <path>] [--cols <n> --rows <n>]` |
+| Plain stdout | new surface id followed by newline                     |
+| JSON stdout  | exact result object                                    |
+| Exit codes   | common                                                 |
 
 Example:
 
@@ -441,22 +441,22 @@ Example:
 
 ### new-browser-tab
 
-| Field | Value |
-| --- | --- |
-| name | `new-browser-tab` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value             |
+| ------ | ----------------- |
+| name   | `new-browser-tab` |
+| status | implemented       |
+| since  | protocol 5        |
 
 Creates a browser tab in a pane and makes it active. If `pane` is absent, the active pane is used. If the session has no workspaces and no pane is supplied, v5 creates a new workspace containing the browser tab. The browser runtime may connect to an external CDP endpoint or launch Chrome according to mux configuration.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `url` | `string` | required | Normalized by browser runtime |
-| `pane` | `Id` | default null | Target pane; unknown ids error |
-| `cols` | `uint16` | default null | Used only when paired with `rows` |
-| `rows` | `uint16` | default null | Used only when paired with `cols` |
+| Name   | JSON type | Required/default | Constraints                       |
+| ------ | --------- | ---------------- | --------------------------------- |
+| `url`  | `string`  | required         | Normalized by browser runtime     |
+| `pane` | `Id`      | default null     | Target pane; unknown ids error    |
+| `cols` | `uint16`  | default null     | Used only when paired with `rows` |
+| `rows` | `uint16`  | default null     | Used only when paired with `cols` |
 
 Result:
 
@@ -466,22 +466,22 @@ object{surface:Id}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown pane <id>` | Supplied pane id does not exist |
-| `pane disappeared while creating browser tab` | Target pane vanished after validation |
-| browser/CDP error string | Browser runtime connect, target create, attach, setup, or Chrome launch fails |
-| `bad request: ...` | Missing `url` or wrong JSON type |
+| Error                                         | Condition                                                                     |
+| --------------------------------------------- | ----------------------------------------------------------------------------- |
+| `unknown pane <id>`                           | Supplied pane id does not exist                                               |
+| `pane disappeared while creating browser tab` | Target pane vanished after validation                                         |
+| browser/CDP error string                      | Browser runtime connect, target create, attach, setup, or Chrome launch fails |
+| `bad request: ...`                            | Missing `url` or wrong JSON type                                              |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `new-browser-tab` |
-| Flags | `--url <url> [--pane <id>] [--cols <n> --rows <n>]` |
-| Plain stdout | new surface id followed by newline |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                                               |
+| ------------ | --------------------------------------------------- |
+| Verb         | `new-browser-tab`                                   |
+| Flags        | `--url <url> [--pane <id>] [--cols <n> --rows <n>]` |
+| Plain stdout | new surface id followed by newline                  |
+| JSON stdout  | exact result object                                 |
+| Exit codes   | common                                              |
 
 Example:
 
@@ -492,21 +492,21 @@ Example:
 
 ### new-workspace
 
-| Field | Value |
-| --- | --- |
-| name | `new-workspace` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value           |
+| ------ | --------------- |
+| name   | `new-workspace` |
+| status | implemented     |
+| since  | protocol 5      |
 
 Creates a new workspace with one screen, one pane, and one PTY tab, then makes the new workspace active. If `name` is absent, the workspace name is the next 1-based workspace count at creation time.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `name` | `string` | default null | Workspace name; empty string is accepted |
-| `cols` | `uint16` | default null | Used only when paired with `rows` |
-| `rows` | `uint16` | default null | Used only when paired with `cols` |
+| Name   | JSON type | Required/default | Constraints                              |
+| ------ | --------- | ---------------- | ---------------------------------------- |
+| `name` | `string`  | default null     | Workspace name; empty string is accepted |
+| `cols` | `uint16`  | default null     | Used only when paired with `rows`        |
+| `rows` | `uint16`  | default null     | Used only when paired with `cols`        |
 
 Result:
 
@@ -516,20 +516,20 @@ object{surface:Id}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error                     | Condition                         |
+| ------------------------- | --------------------------------- |
 | spawn or PTY error string | PTY creation or child spawn fails |
-| `bad request: ...` | Wrong JSON type |
+| `bad request: ...`        | Wrong JSON type                   |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `new-workspace` |
-| Flags | `[--name <name>] [--cols <n> --rows <n>]` |
-| Plain stdout | new surface id followed by newline |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                                     |
+| ------------ | ----------------------------------------- |
+| Verb         | `new-workspace`                           |
+| Flags        | `[--name <name>] [--cols <n> --rows <n>]` |
+| Plain stdout | new surface id followed by newline        |
+| JSON stdout  | exact result object                       |
+| Exit codes   | common                                    |
 
 Example:
 
@@ -540,21 +540,21 @@ Example:
 
 ### new-screen
 
-| Field | Value |
-| --- | --- |
-| name | `new-screen` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value        |
+| ------ | ------------ |
+| name   | `new-screen` |
+| status | implemented  |
+| since  | protocol 5   |
 
 Creates a new screen in a workspace with one pane and one PTY tab, then makes the new screen active. If `workspace` is absent, the active workspace is used. If no workspace exists and `workspace` is absent, v5 creates a new workspace instead.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `workspace` | `Id` | default null | Target workspace; unknown ids error |
-| `cols` | `uint16` | default null | Used only when paired with `rows` |
-| `rows` | `uint16` | default null | Used only when paired with `cols` |
+| Name        | JSON type | Required/default | Constraints                         |
+| ----------- | --------- | ---------------- | ----------------------------------- |
+| `workspace` | `Id`      | default null     | Target workspace; unknown ids error |
+| `cols`      | `uint16`  | default null     | Used only when paired with `rows`   |
+| `rows`      | `uint16`  | default null     | Used only when paired with `cols`   |
 
 Result:
 
@@ -564,22 +564,22 @@ object{surface:Id}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown workspace <id>` | Supplied workspace id does not exist |
+| Error                                         | Condition                                  |
+| --------------------------------------------- | ------------------------------------------ |
+| `unknown workspace <id>`                      | Supplied workspace id does not exist       |
 | `workspace disappeared while creating screen` | Target workspace vanished after validation |
-| spawn or PTY error string | PTY creation or child spawn fails |
-| `bad request: ...` | Wrong JSON type |
+| spawn or PTY error string                     | PTY creation or child spawn fails          |
+| `bad request: ...`                            | Wrong JSON type                            |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `new-screen` |
-| Flags | `[--workspace <id>] [--cols <n> --rows <n>]` |
-| Plain stdout | new surface id followed by newline |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                                        |
+| ------------ | -------------------------------------------- |
+| Verb         | `new-screen`                                 |
+| Flags        | `[--workspace <id>] [--cols <n> --rows <n>]` |
+| Plain stdout | new surface id followed by newline           |
+| JSON stdout  | exact result object                          |
+| Exit codes   | common                                       |
 
 Example:
 
@@ -590,22 +590,22 @@ Example:
 
 ### split
 
-| Field | Value |
-| --- | --- |
-| name | `split` |
+| Field  | Value       |
+| ------ | ----------- |
+| name   | `split`     |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Splits the screen containing `pane`, inserts a new pane after the target leaf, spawns one PTY tab in the new pane, and focuses the new pane. `dir:"right"` creates left/right columns. `dir:"down"` creates top/bottom rows. The new surface inherits the active surface working directory of the target pane when available.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `pane` | `Id` | required | Target split leaf |
-| `dir` | `string` | required | `"right"` or `"down"` |
-| `cols` | `uint16` | default null | Used only when paired with `rows` |
-| `rows` | `uint16` | default null | Used only when paired with `cols` |
+| Name   | JSON type | Required/default | Constraints                       |
+| ------ | --------- | ---------------- | --------------------------------- |
+| `pane` | `Id`      | required         | Target split leaf                 |
+| `dir`  | `string`  | required         | `"right"` or `"down"`             |
+| `cols` | `uint16`  | default null     | Used only when paired with `rows` |
+| `rows` | `uint16`  | default null     | Used only when paired with `cols` |
 
 Result:
 
@@ -615,22 +615,22 @@ object{surface:Id}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `bad dir "<value>" (want "right" or "down")` | `dir` is not allowed |
-| `pane <id> not found` | Target pane is not in any screen split tree |
-| spawn or PTY error string | PTY creation or child spawn fails |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                                        | Condition                                   |
+| -------------------------------------------- | ------------------------------------------- |
+| `bad dir "<value>" (want "right" or "down")` | `dir` is not allowed                        |
+| `pane <id> not found`                        | Target pane is not in any screen split tree |
+| spawn or PTY error string                    | PTY creation or child spawn fails           |
+| `bad request: ...`                           | Missing fields or wrong JSON type           |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `split` |
-| Flags | `--pane <id> --dir right|down [--cols <n> --rows <n>]` |
+| Item         | Value                              |
+| ------------ | ---------------------------------- |
+| Verb         | `split`                            |
+| Flags        | `--pane <id> --dir right           | down [--cols <n> --rows <n>]` |
 | Plain stdout | new surface id followed by newline |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| JSON stdout  | exact result object                |
+| Exit codes   | common                             |
 
 Example:
 
@@ -641,21 +641,21 @@ Example:
 
 ### set-ratio
 
-| Field | Value |
-| --- | --- |
-| name | `set-ratio` |
+| Field  | Value       |
+| ------ | ----------- |
+| name   | `set-ratio` |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Sets the deepest split ratio in `dir` on the path to `pane`. The server clamps the supplied ratio to `0.05..0.95` before applying it. The result does not report the clamped value.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `pane` | `Id` | required | Pane used to find a split on its ancestor path |
-| `dir` | `string` | required | `"right"` or `"down"` |
-| `ratio` | `float32` | required | Clamped to `0.05..0.95` |
+| Name    | JSON type | Required/default | Constraints                                    |
+| ------- | --------- | ---------------- | ---------------------------------------------- |
+| `pane`  | `Id`      | required         | Pane used to find a split on its ancestor path |
+| `dir`   | `string`  | required         | `"right"` or `"down"`                          |
+| `ratio` | `float32` | required         | Clamped to `0.05..0.95`                        |
 
 Result:
 
@@ -665,21 +665,21 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `bad dir "<value>" (want "right" or "down")` | `dir` is not allowed |
-| `unknown pane/split <id>` | Pane is unknown or no ancestor split has `dir` |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                                        | Condition                                      |
+| -------------------------------------------- | ---------------------------------------------- |
+| `bad dir "<value>" (want "right" or "down")` | `dir` is not allowed                           |
+| `unknown pane/split <id>`                    | Pane is unknown or no ancestor split has `dir` |
+| `bad request: ...`                           | Missing fields or wrong JSON type              |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `set-ratio` |
-| Flags | `--pane <id> --dir right|down --ratio <number>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                    |
+| ------------ | ------------------------ |
+| Verb         | `set-ratio`              |
+| Flags        | `--pane <id> --dir right | down --ratio <number>` |
+| Plain stdout | no output                |
+| JSON stdout  | exact result object      |
+| Exit codes   | common                   |
 
 Example:
 
@@ -690,20 +690,20 @@ Example:
 
 ### set-default-colors
 
-| Field | Value |
-| --- | --- |
-| name | `set-default-colors` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value                |
+| ------ | -------------------- |
+| name   | `set-default-colors` |
+| status | implemented          |
+| since  | protocol 5           |
 
 Updates the session default foreground and/or background colors used by PTY surfaces. Missing fields preserve their previous values. Existing PTY surfaces receive the merged defaults. The v5 server emits `surface-output` for every existing surface, including browser surfaces; browser color application is a no-op, but the event is still emitted. Future PTY surfaces start with the merged defaults.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `fg` | `ColorHex` | default null | Foreground color |
-| `bg` | `ColorHex` | default null | Background color |
+| Name | JSON type  | Required/default | Constraints      |
+| ---- | ---------- | ---------------- | ---------------- |
+| `fg` | `ColorHex` | default null     | Foreground color |
+| `bg` | `ColorHex` | default null     | Background color |
 
 Result:
 
@@ -713,20 +713,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error                                  | Condition                      |
+| -------------------------------------- | ------------------------------ |
 | `bad color "<value>" (want "#rrggbb")` | Color is not exactly `#rrggbb` |
-| `bad request: ...` | Wrong JSON type |
+| `bad request: ...`                     | Wrong JSON type                |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `set-default-colors` |
-| Flags | `[--fg #rrggbb] [--bg #rrggbb]` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                           |
+| ------------ | ------------------------------- |
+| Verb         | `set-default-colors`            |
+| Flags        | `[--fg #rrggbb] [--bg #rrggbb]` |
+| Plain stdout | no output                       |
+| JSON stdout  | exact result object             |
+| Exit codes   | common                          |
 
 Example:
 
@@ -737,19 +737,19 @@ Example:
 
 ### close-surface
 
-| Field | Value |
-| --- | --- |
-| name | `close-surface` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value           |
+| ------ | --------------- |
+| name   | `close-surface` |
+| status | implemented     |
+| since  | protocol 5      |
 
 Closes one surface tab. The server kills the surface runtime, removes the tab from its pane, collapses an emptied pane out of its split tree, removes emptied screens and workspaces, and may emit `tree-changed` and `empty`.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `Id` | required | Must identify a live surface |
+| Name      | JSON type | Required/default | Constraints                  |
+| --------- | --------- | ---------------- | ---------------------------- |
+| `surface` | `Id`      | required         | Must identify a live surface |
 
 Result:
 
@@ -759,20 +759,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error                  | Condition                              |
+| ---------------------- | -------------------------------------- |
 | `unknown surface <id>` | Surface id does not exist before close |
-| `bad request: ...` | Missing `surface` or wrong JSON type |
+| `bad request: ...`     | Missing `surface` or wrong JSON type   |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `close-surface` |
-| Flags | `--surface <id>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value               |
+| ------------ | ------------------- |
+| Verb         | `close-surface`     |
+| Flags        | `--surface <id>`    |
+| Plain stdout | no output           |
+| JSON stdout  | exact result object |
+| Exit codes   | common              |
 
 Example:
 
@@ -783,19 +783,19 @@ Example:
 
 ### close-pane
 
-| Field | Value |
-| --- | --- |
-| name | `close-pane` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value        |
+| ------ | ------------ |
+| name   | `close-pane` |
+| status | implemented  |
+| since  | protocol 5   |
 
 Closes a pane and every tab in it. The pane is collapsed out of the screen split tree. Emptied screens and workspaces are removed.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `pane` | `Id` | required | Must identify a live pane |
+| Name   | JSON type | Required/default | Constraints               |
+| ------ | --------- | ---------------- | ------------------------- |
+| `pane` | `Id`      | required         | Must identify a live pane |
 
 Result:
 
@@ -805,20 +805,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error               | Condition                           |
+| ------------------- | ----------------------------------- |
 | `unknown pane <id>` | Pane id does not exist before close |
-| `bad request: ...` | Missing `pane` or wrong JSON type |
+| `bad request: ...`  | Missing `pane` or wrong JSON type   |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `close-pane` |
-| Flags | `--pane <id>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value               |
+| ------------ | ------------------- |
+| Verb         | `close-pane`        |
+| Flags        | `--pane <id>`       |
+| Plain stdout | no output           |
+| JSON stdout  | exact result object |
+| Exit codes   | common              |
 
 Example:
 
@@ -829,19 +829,19 @@ Example:
 
 ### close-screen
 
-| Field | Value |
-| --- | --- |
-| name | `close-screen` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value          |
+| ------ | -------------- |
+| name   | `close-screen` |
+| status | implemented    |
+| since  | protocol 5     |
 
 Closes a screen and every pane and tab in it. The workspace remains if it still has screens; otherwise the workspace is removed.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `screen` | `Id` | required | Must identify a live screen |
+| Name     | JSON type | Required/default | Constraints                 |
+| -------- | --------- | ---------------- | --------------------------- |
+| `screen` | `Id`      | required         | Must identify a live screen |
 
 Result:
 
@@ -851,20 +851,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown screen <id>` | Screen id does not exist |
-| `bad request: ...` | Missing `screen` or wrong JSON type |
+| Error                 | Condition                           |
+| --------------------- | ----------------------------------- |
+| `unknown screen <id>` | Screen id does not exist            |
+| `bad request: ...`    | Missing `screen` or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `close-screen` |
-| Flags | `--screen <id>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value               |
+| ------------ | ------------------- |
+| Verb         | `close-screen`      |
+| Flags        | `--screen <id>`     |
+| Plain stdout | no output           |
+| JSON stdout  | exact result object |
+| Exit codes   | common              |
 
 Example:
 
@@ -875,19 +875,19 @@ Example:
 
 ### close-workspace
 
-| Field | Value |
-| --- | --- |
-| name | `close-workspace` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value             |
+| ------ | ----------------- |
+| name   | `close-workspace` |
+| status | implemented       |
+| since  | protocol 5        |
 
 Closes a workspace and every screen, pane, and tab in it. The active workspace selection is adjusted to keep a remaining workspace active when possible.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `workspace` | `Id` | required | Must identify a live workspace |
+| Name        | JSON type | Required/default | Constraints                    |
+| ----------- | --------- | ---------------- | ------------------------------ |
+| `workspace` | `Id`      | required         | Must identify a live workspace |
 
 Result:
 
@@ -897,20 +897,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown workspace <id>` | Workspace id does not exist |
-| `bad request: ...` | Missing `workspace` or wrong JSON type |
+| Error                    | Condition                              |
+| ------------------------ | -------------------------------------- |
+| `unknown workspace <id>` | Workspace id does not exist            |
+| `bad request: ...`       | Missing `workspace` or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `close-workspace` |
-| Flags | `--workspace <id>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value               |
+| ------------ | ------------------- |
+| Verb         | `close-workspace`   |
+| Flags        | `--workspace <id>`  |
+| Plain stdout | no output           |
+| JSON stdout  | exact result object |
+| Exit codes   | common              |
 
 Example:
 
@@ -921,20 +921,20 @@ Example:
 
 ### rename-pane
 
-| Field | Value |
-| --- | --- |
-| name | `rename-pane` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value         |
+| ------ | ------------- |
+| name   | `rename-pane` |
+| status | implemented   |
+| since  | protocol 5    |
 
 Sets a pane user-visible name. An empty `name` clears the pane name so display falls back to the active tab title or shell label.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `pane` | `Id` | required | Must identify a live pane |
-| `name` | `string` | required | Empty string clears |
+| Name   | JSON type | Required/default | Constraints               |
+| ------ | --------- | ---------------- | ------------------------- |
+| `pane` | `Id`      | required         | Must identify a live pane |
+| `name` | `string`  | required         | Empty string clears       |
 
 Result:
 
@@ -944,20 +944,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown pane <id>` | Pane id does not exist |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error               | Condition                         |
+| ------------------- | --------------------------------- |
+| `unknown pane <id>` | Pane id does not exist            |
+| `bad request: ...`  | Missing fields or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `rename-pane` |
-| Flags | `--pane <id> --name <name>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                       |
+| ------------ | --------------------------- |
+| Verb         | `rename-pane`               |
+| Flags        | `--pane <id> --name <name>` |
+| Plain stdout | no output                   |
+| JSON stdout  | exact result object         |
+| Exit codes   | common                      |
 
 Example:
 
@@ -968,20 +968,20 @@ Example:
 
 ### rename-surface
 
-| Field | Value |
-| --- | --- |
-| name | `rename-surface` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value            |
+| ------ | ---------------- |
+| name   | `rename-surface` |
+| status | implemented      |
+| since  | protocol 5       |
 
 Sets a tab user-visible name on a surface. An empty `name` clears the tab name so display falls back to generated tab label and process title.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `Id` | required | Must identify a live surface |
-| `name` | `string` | required | Empty string clears |
+| Name      | JSON type | Required/default | Constraints                  |
+| --------- | --------- | ---------------- | ---------------------------- |
+| `surface` | `Id`      | required         | Must identify a live surface |
+| `name`    | `string`  | required         | Empty string clears          |
 
 Result:
 
@@ -991,20 +991,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                  | Condition                         |
+| ---------------------- | --------------------------------- |
+| `unknown surface <id>` | Surface id does not exist         |
+| `bad request: ...`     | Missing fields or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `rename-surface` |
-| Flags | `--surface <id> --name <name>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                          |
+| ------------ | ------------------------------ |
+| Verb         | `rename-surface`               |
+| Flags        | `--surface <id> --name <name>` |
+| Plain stdout | no output                      |
+| JSON stdout  | exact result object            |
+| Exit codes   | common                         |
 
 Example:
 
@@ -1015,20 +1015,20 @@ Example:
 
 ### rename-screen
 
-| Field | Value |
-| --- | --- |
-| name | `rename-screen` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value           |
+| ------ | --------------- |
+| name   | `rename-screen` |
+| status | implemented     |
+| since  | protocol 5      |
 
 Sets a screen user-visible name. An empty `name` clears the screen name so display falls back to the screen number.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `screen` | `Id` | required | Must identify a live screen |
-| `name` | `string` | required | Empty string clears |
+| Name     | JSON type | Required/default | Constraints                 |
+| -------- | --------- | ---------------- | --------------------------- |
+| `screen` | `Id`      | required         | Must identify a live screen |
+| `name`   | `string`  | required         | Empty string clears         |
 
 Result:
 
@@ -1038,20 +1038,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown screen <id>` | Screen id does not exist |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                 | Condition                         |
+| --------------------- | --------------------------------- |
+| `unknown screen <id>` | Screen id does not exist          |
+| `bad request: ...`    | Missing fields or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `rename-screen` |
-| Flags | `--screen <id> --name <name>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                         |
+| ------------ | ----------------------------- |
+| Verb         | `rename-screen`               |
+| Flags        | `--screen <id> --name <name>` |
+| Plain stdout | no output                     |
+| JSON stdout  | exact result object           |
+| Exit codes   | common                        |
 
 Example:
 
@@ -1062,20 +1062,20 @@ Example:
 
 ### rename-workspace
 
-| Field | Value |
-| --- | --- |
-| name | `rename-workspace` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value              |
+| ------ | ------------------ |
+| name   | `rename-workspace` |
+| status | implemented        |
+| since  | protocol 5         |
 
 Sets a workspace name. Unlike pane, surface, and screen names, an empty `name` is stored as the workspace name and does not clear to a generated fallback in v5.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `workspace` | `Id` | required | Must identify a live workspace |
-| `name` | `string` | required | Empty string is stored |
+| Name        | JSON type | Required/default | Constraints                    |
+| ----------- | --------- | ---------------- | ------------------------------ |
+| `workspace` | `Id`      | required         | Must identify a live workspace |
+| `name`      | `string`  | required         | Empty string is stored         |
 
 Result:
 
@@ -1085,20 +1085,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown workspace <id>` | Workspace id does not exist |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                    | Condition                         |
+| ------------------------ | --------------------------------- |
+| `unknown workspace <id>` | Workspace id does not exist       |
+| `bad request: ...`       | Missing fields or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `rename-workspace` |
-| Flags | `--workspace <id> --name <name>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                            |
+| ------------ | -------------------------------- |
+| Verb         | `rename-workspace`               |
+| Flags        | `--workspace <id> --name <name>` |
+| Plain stdout | no output                        |
+| JSON stdout  | exact result object              |
+| Exit codes   | common                           |
 
 Example:
 
@@ -1109,20 +1109,20 @@ Example:
 
 ### set-workspace-color
 
-| Field | Value |
-| --- | --- |
-| name | `set-workspace-color` |
-| status | implemented |
-| since | protocol 6 |
+| Field  | Value                 |
+| ------ | --------------------- |
+| name   | `set-workspace-color` |
+| status | implemented           |
+| since  | protocol 6            |
 
 Sets or clears a workspace's display colour. A `#rrggbb` value or named preset in `colour` sets the workspace colour. `colour: null` clears it back to no colour; an absent `colour` key has the same effect as `null` at the protocol level. The CLI always sends the key explicitly and accepts `--color` as the primary spelling plus `--colour` as a back-compatible alias.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `workspace` | `Id` | required | Must identify a live workspace |
-| `colour` | `ColorHex \| string \| null` | optional (default: `null`) | Absent or `null` clears the colour; `#rrggbb` or `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `cyan`, `grey`/`gray` sets it. |
+| Name        | JSON type                    | Required/default           | Constraints                                                                                                                                   |
+| ----------- | ---------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspace` | `Id`                         | required                   | Must identify a live workspace                                                                                                                |
+| `colour`    | `ColorHex \| string \| null` | optional (default: `null`) | Absent or `null` clears the colour; `#rrggbb` or `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `cyan`, `grey`/`gray` sets it. |
 
 Result:
 
@@ -1132,21 +1132,21 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown workspace <id>` | Workspace id does not exist |
+| Error                                                              | Condition                                    |
+| ------------------------------------------------------------------ | -------------------------------------------- |
+| `unknown workspace <id>`                                           | Workspace id does not exist                  |
 | `bad workspace color "<value>" (want "#rrggbb" or a named preset)` | `colour` is not a hex colour or known preset |
-| `bad request: ...` | Missing `workspace` or wrong JSON type |
+| `bad request: ...`                                                 | Missing `workspace` or wrong JSON type       |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `set-workspace-color` |
-| Flags | `--workspace <id> --color <hex-or-preset>`; `--colour <hex-or-empty-string>` alias |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                                                                              |
+| ------------ | ---------------------------------------------------------------------------------- |
+| Verb         | `set-workspace-color`                                                              |
+| Flags        | `--workspace <id> --color <hex-or-preset>`; `--colour <hex-or-empty-string>` alias |
+| Plain stdout | no output                                                                          |
+| JSON stdout  | exact result object                                                                |
+| Exit codes   | common                                                                             |
 
 The CLI requires either `--color` or `--colour`; an empty alias value (`--colour ""`) sends `colour:null` to clear the colour, and any non-empty value is sent through for server validation.
 
@@ -1154,40 +1154,40 @@ The positional shorthand `cmux workspace-color <name> <color>` updates a workspa
 
 ### set-status
 
-| Field | Value |
-| --- | --- |
-| name | `set-status` |
-| status | implemented |
-| since | protocol 6 |
+| Field  | Value        |
+| ------ | ------------ |
+| name   | `set-status` |
+| status | implemented  |
+| since  | protocol 6   |
 
 Sets a workspace status icon. Bundled names are `folder`, `robot`, `eye`, `gear`, `search`, `magnifier`, `lock`, and `check`. A single Unicode character or a `\\u{HEX}` escape is also accepted.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `icon` | string | required | Bundled name, one Unicode character, or `\\u{HEX}` |
-| `workspace` | `Id` | active workspace | Must identify a live workspace when supplied |
+| Name        | JSON type | Required/default | Constraints                                        |
+| ----------- | --------- | ---------------- | -------------------------------------------------- |
+| `icon`      | string    | required         | Bundled name, one Unicode character, or `\\u{HEX}` |
+| `workspace` | `Id`      | active workspace | Must identify a live workspace when supplied       |
 
 Result: `object{}`.
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown workspace <id>` | Workspace id does not exist |
-| `unknown workspace icon "<value>"; ...` | Icon is not bundled or a supported Unicode value |
-| `no active workspace` | `workspace` is omitted and the session has no workspace |
+| Error                                   | Condition                                               |
+| --------------------------------------- | ------------------------------------------------------- |
+| `unknown workspace <id>`                | Workspace id does not exist                             |
+| `unknown workspace icon "<value>"; ...` | Icon is not bundled or a supported Unicode value        |
+| `no active workspace`                   | `workspace` is omitted and the session has no workspace |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `set-status` |
-| Flags | `--icon <name> [--workspace <id>]` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                              |
+| ------------ | ---------------------------------- |
+| Verb         | `set-status`                       |
+| Flags        | `--icon <name> [--workspace <id>]` |
+| Plain stdout | no output                          |
+| JSON stdout  | exact result object                |
+| Exit codes   | common                             |
 
 Example:
 
@@ -1212,20 +1212,20 @@ Clearing a color sends `colour:null` instead:
 
 ### trigger-flash
 
-| Field | Value |
-| --- | --- |
-| name | `trigger-flash` |
-| status | implemented |
-| since | protocol 6 |
+| Field  | Value           |
+| ------ | --------------- |
+| name   | `trigger-flash` |
+| status | implemented     |
+| since  | protocol 6      |
 
 Emits a transient `flash` event to subscribers for a workspace, intended to draw attention to it (e.g. a sidebar pulse). `surface`, when present, is advisory only — it is passed straight through in the event and not validated against the workspace's own surfaces.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `workspace` | `Id` | required | Must identify a live workspace |
-| `surface` | `Id` | default null | Advisory only; not validated against `workspace` |
+| Name        | JSON type | Required/default | Constraints                                      |
+| ----------- | --------- | ---------------- | ------------------------------------------------ |
+| `workspace` | `Id`      | required         | Must identify a live workspace                   |
+| `surface`   | `Id`      | default null     | Advisory only; not validated against `workspace` |
 
 Result:
 
@@ -1235,20 +1235,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown workspace <id>` | Workspace id does not exist |
-| `bad request: ...` | Missing `workspace` or wrong JSON type |
+| Error                    | Condition                              |
+| ------------------------ | -------------------------------------- |
+| `unknown workspace <id>` | Workspace id does not exist            |
+| `bad request: ...`       | Missing `workspace` or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `trigger-flash` |
-| Flags | `--workspace <id> [--surface <id>]` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                               |
+| ------------ | ----------------------------------- |
+| Verb         | `trigger-flash`                     |
+| Flags        | `--workspace <id> [--surface <id>]` |
+| Plain stdout | no output                           |
+| JSON stdout  | exact result object                 |
+| Exit codes   | common                              |
 
 Example:
 
@@ -1259,21 +1259,21 @@ Example:
 
 ### resize-surface
 
-| Field | Value |
-| --- | --- |
-| name | `resize-surface` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value            |
+| ------ | ---------------- |
+| name   | `resize-surface` |
+| status | implemented      |
+| since  | protocol 5       |
 
 Resizes a surface to a cell grid. PTY surfaces resize both the PTY and VT terminal state. Browser surfaces update their cell grid and CDP device metrics. `cols` and `rows` are clamped to at least 1 by the surface runtime. The command result does not report whether the size changed.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `Id` | required | Must identify a live surface |
-| `cols` | `uint16` | required | Final value clamped to at least 1 |
-| `rows` | `uint16` | required | Final value clamped to at least 1 |
+| Name      | JSON type | Required/default | Constraints                       |
+| --------- | --------- | ---------------- | --------------------------------- |
+| `surface` | `Id`      | required         | Must identify a live surface      |
+| `cols`    | `uint16`  | required         | Final value clamped to at least 1 |
+| `rows`    | `uint16`  | required         | Final value clamped to at least 1 |
 
 Result:
 
@@ -1283,20 +1283,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                  | Condition                         |
+| ---------------------- | --------------------------------- |
+| `unknown surface <id>` | Surface id does not exist         |
+| `bad request: ...`     | Missing fields or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `resize-surface` |
-| Flags | `--surface <id> --cols <n> --rows <n>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                                  |
+| ------------ | -------------------------------------- |
+| Verb         | `resize-surface`                       |
+| Flags        | `--surface <id> --cols <n> --rows <n>` |
+| Plain stdout | no output                              |
+| JSON stdout  | exact result object                    |
+| Exit codes   | common                                 |
 
 Example:
 
@@ -1307,19 +1307,19 @@ Example:
 
 ### focus-pane
 
-| Field | Value |
-| --- | --- |
-| name | `focus-pane` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value        |
+| ------ | ------------ |
+| name   | `focus-pane` |
+| status | implemented  |
+| since  | protocol 5   |
 
 Makes `pane` the active pane of its screen and also activates the containing screen and workspace. This is an explicit focus-intent command.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `pane` | `Id` | required | Must identify a pane in a screen tree |
+| Name   | JSON type | Required/default | Constraints                           |
+| ------ | --------- | ---------------- | ------------------------------------- |
+| `pane` | `Id`      | required         | Must identify a pane in a screen tree |
 
 Result:
 
@@ -1329,20 +1329,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error               | Condition                         |
+| ------------------- | --------------------------------- |
 | `unknown pane <id>` | Pane id is not in any screen tree |
-| `bad request: ...` | Missing `pane` or wrong JSON type |
+| `bad request: ...`  | Missing `pane` or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `focus-pane` |
-| Flags | `--pane <id>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value               |
+| ------------ | ------------------- |
+| Verb         | `focus-pane`        |
+| Flags        | `--pane <id>`       |
+| Plain stdout | no output           |
+| JSON stdout  | exact result object |
+| Exit codes   | common              |
 
 Example:
 
@@ -1353,11 +1353,11 @@ Example:
 
 ### select-tab
 
-| Field | Value |
-| --- | --- |
-| name | `select-tab` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value        |
+| ------ | ------------ |
+| name   | `select-tab` |
+| status | implemented  |
+| since  | protocol 5   |
 
 Selects a tab within a pane by zero-based `index` or relative `delta`. If both `index` and `delta` are present, v5 uses `index` and ignores `delta`. If `pane` is absent, the active pane is used.
 
@@ -1365,11 +1365,11 @@ No-op event behavior is split by target resolution. If the target pane cannot be
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `pane` | `Id` | default null | Target pane or active pane |
-| `index` | `usize` | default null | Zero-based; ignored if out of range |
-| `delta` | `isize` | default null | Relative; wraps with Euclidean modulo |
+| Name    | JSON type | Required/default | Constraints                           |
+| ------- | --------- | ---------------- | ------------------------------------- |
+| `pane`  | `Id`      | default null     | Target pane or active pane            |
+| `index` | `usize`   | default null     | Zero-based; ignored if out of range   |
+| `delta` | `isize`   | default null     | Relative; wraps with Euclidean modulo |
 
 Result:
 
@@ -1379,19 +1379,19 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error              | Condition       |
+| ------------------ | --------------- |
 | `bad request: ...` | Wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `select-tab` |
-| Flags | `[--pane <id>] (--index <n> | --delta <n>)` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common; CLI rejects missing selector with exit 2 |
+| Item         | Value                                            |
+| ------------ | ------------------------------------------------ |
+| Verb         | `select-tab`                                     |
+| Flags        | `[--pane <id>] (--index <n>                      | --delta <n>)` |
+| Plain stdout | no output                                        |
+| JSON stdout  | exact result object                              |
+| Exit codes   | common; CLI rejects missing selector with exit 2 |
 
 Example:
 
@@ -1402,11 +1402,11 @@ Example:
 
 ### select-screen
 
-| Field | Value |
-| --- | --- |
-| name | `select-screen` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value           |
+| ------ | --------------- |
+| name   | `select-screen` |
+| status | implemented     |
+| since  | protocol 5      |
 
 Selects a screen in the active workspace by zero-based `index` or relative `delta`. If both `index` and `delta` are present, v5 uses `index` and ignores `delta`.
 
@@ -1414,10 +1414,10 @@ No-op event behavior is split by target resolution. If there is no active worksp
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `index` | `usize` | default null | Zero-based; ignored if out of range |
-| `delta` | `isize` | default null | Relative; wraps with Euclidean modulo |
+| Name    | JSON type | Required/default | Constraints                           |
+| ------- | --------- | ---------------- | ------------------------------------- |
+| `index` | `usize`   | default null     | Zero-based; ignored if out of range   |
+| `delta` | `isize`   | default null     | Relative; wraps with Euclidean modulo |
 
 Result:
 
@@ -1427,19 +1427,19 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error              | Condition       |
+| ------------------ | --------------- |
 | `bad request: ...` | Wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `select-screen` |
-| Flags | `--index <n> | --delta <n>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common; CLI rejects missing selector with exit 2 |
+| Item         | Value                                            |
+| ------------ | ------------------------------------------------ |
+| Verb         | `select-screen`                                  |
+| Flags        | `--index <n>                                     | --delta <n>` |
+| Plain stdout | no output                                        |
+| JSON stdout  | exact result object                              |
+| Exit codes   | common; CLI rejects missing selector with exit 2 |
 
 Example:
 
@@ -1450,11 +1450,11 @@ Example:
 
 ### select-workspace
 
-| Field | Value |
-| --- | --- |
-| name | `select-workspace` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value              |
+| ------ | ------------------ |
+| name   | `select-workspace` |
+| status | implemented        |
+| since  | protocol 5         |
 
 Selects a workspace by zero-based `index` or relative `delta`. If both `index` and `delta` are present, v5 uses `index` and ignores `delta`.
 
@@ -1462,10 +1462,10 @@ No-op event behavior is split by target resolution. If the session has no worksp
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `index` | `usize` | default null | Zero-based; ignored if out of range |
-| `delta` | `isize` | default null | Relative; wraps with Euclidean modulo |
+| Name    | JSON type | Required/default | Constraints                           |
+| ------- | --------- | ---------------- | ------------------------------------- |
+| `index` | `usize`   | default null     | Zero-based; ignored if out of range   |
+| `delta` | `isize`   | default null     | Relative; wraps with Euclidean modulo |
 
 Result:
 
@@ -1475,19 +1475,19 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error              | Condition       |
+| ------------------ | --------------- |
 | `bad request: ...` | Wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `select-workspace` |
-| Flags | `--index <n> | --delta <n>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common; CLI rejects missing selector with exit 2 |
+| Item         | Value                                            |
+| ------------ | ------------------------------------------------ |
+| Verb         | `select-workspace`                               |
+| Flags        | `--index <n>                                     | --delta <n>` |
+| Plain stdout | no output                                        |
+| JSON stdout  | exact result object                              |
+| Exit codes   | common; CLI rejects missing selector with exit 2 |
 
 Example:
 
@@ -1498,21 +1498,21 @@ Example:
 
 ### move-tab
 
-| Field | Value |
-| --- | --- |
-| name | `move-tab` |
+| Field  | Value       |
+| ------ | ----------- |
+| name   | `move-tab`  |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Moves an existing tab, identified by `surface`, into `pane` at zero-based `index`. Moving a tab to its current pane and current index is an `ok:true` no-op. This command is documented from the consumer-side landed contract; it is not present in this branch's `server.rs`, so out-of-range index behavior and event emission could not be verified here.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `Id` | required | Surface tab to move |
-| `pane` | `Id` | required | Destination pane |
-| `index` | `usize` | required | Zero-based destination index |
+| Name      | JSON type | Required/default | Constraints                  |
+| --------- | --------- | ---------------- | ---------------------------- |
+| `surface` | `Id`      | required         | Surface tab to move          |
+| `pane`    | `Id`      | required         | Destination pane             |
+| `index`   | `usize`   | required         | Zero-based destination index |
 
 Result:
 
@@ -1522,22 +1522,22 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `unknown pane <id>` | Destination pane does not exist |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                   | Condition                                                                         |
+| ----------------------- | --------------------------------------------------------------------------------- |
+| `unknown surface <id>`  | Surface id does not exist                                                         |
+| `unknown pane <id>`     | Destination pane does not exist                                                   |
+| `bad request: ...`      | Missing fields or wrong JSON type                                                 |
 | unverified error string | Non-same-position out-of-range index behavior could not be checked in this branch |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `move-tab` |
-| Flags | `--surface <id> --pane <id> --index <n>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                                    |
+| ------------ | ---------------------------------------- |
+| Verb         | `move-tab`                               |
+| Flags        | `--surface <id> --pane <id> --index <n>` |
+| Plain stdout | no output                                |
+| JSON stdout  | exact result object                      |
+| Exit codes   | common                                   |
 
 Example:
 
@@ -1548,20 +1548,20 @@ Example:
 
 ### move-workspace
 
-| Field | Value |
-| --- | --- |
-| name | `move-workspace` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value            |
+| ------ | ---------------- |
+| name   | `move-workspace` |
+| status | implemented      |
+| since  | protocol 5       |
 
 Moves an existing workspace to zero-based `index`. Moving a workspace to its current index is an `ok:true` no-op. This command is documented from the consumer-side landed contract; it is not present in this branch's `server.rs`, so out-of-range index behavior and event emission could not be verified here.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `workspace` | `Id` | required | Workspace to move |
-| `index` | `usize` | required | Zero-based destination index |
+| Name        | JSON type | Required/default | Constraints                  |
+| ----------- | --------- | ---------------- | ---------------------------- |
+| `workspace` | `Id`      | required         | Workspace to move            |
+| `index`     | `usize`   | required         | Zero-based destination index |
 
 Result:
 
@@ -1571,21 +1571,21 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown workspace <id>` | Workspace id does not exist |
-| `bad request: ...` | Missing fields or wrong JSON type |
-| unverified error string | Non-same-position out-of-range index behavior could not be checked in this branch |
+| Error                    | Condition                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `unknown workspace <id>` | Workspace id does not exist                                                       |
+| `bad request: ...`       | Missing fields or wrong JSON type                                                 |
+| unverified error string  | Non-same-position out-of-range index behavior could not be checked in this branch |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `move-workspace` |
-| Flags | `--workspace <id> --index <n>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                          |
+| ------------ | ------------------------------ |
+| Verb         | `move-workspace`               |
+| Flags        | `--workspace <id> --index <n>` |
+| Plain stdout | no output                      |
+| JSON stdout  | exact result object            |
+| Exit codes   | common                         |
 
 Example:
 
@@ -1596,20 +1596,20 @@ Example:
 
 ### scroll-surface
 
-| Field | Value |
-| --- | --- |
-| name | `scroll-surface` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value            |
+| ------ | ---------------- |
+| name   | `scroll-surface` |
+| status | implemented      |
+| since  | protocol 5       |
 
 Scrolls a PTY surface viewport by row delta. Negative values scroll up. Positive values scroll down. This changes the terminal viewport state used by `read-screen` and renderers.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `Id` | required | Must identify a live PTY surface |
-| `delta` | `isize` | required | Negative up, positive down |
+| Name      | JSON type | Required/default | Constraints                      |
+| --------- | --------- | ---------------- | -------------------------------- |
+| `surface` | `Id`      | required         | Must identify a live PTY surface |
+| `delta`   | `isize`   | required         | Negative up, positive down       |
 
 Result:
 
@@ -1619,21 +1619,21 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `browser surface does not support PTY/VT socket commands` | Surface is a browser |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                                                     | Condition                         |
+| --------------------------------------------------------- | --------------------------------- |
+| `unknown surface <id>`                                    | Surface id does not exist         |
+| `browser surface does not support PTY/VT socket commands` | Surface is a browser              |
+| `bad request: ...`                                        | Missing fields or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `scroll-surface` |
-| Flags | `--surface <id> --delta <n>` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                        |
+| ------------ | ---------------------------- |
+| Verb         | `scroll-surface`             |
+| Flags        | `--surface <id> --delta <n>` |
+| Plain stdout | no output                    |
+| JSON stdout  | exact result object          |
+| Exit codes   | common                       |
 
 Example:
 
@@ -1644,11 +1644,11 @@ Example:
 
 ### subscribe
 
-| Field | Value |
-| --- | --- |
-| name | `subscribe` |
+| Field  | Value       |
+| ------ | ----------- |
+| name   | `subscribe` |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Subscribes the connection to mux events. After this command, response lines and event lines may be interleaved on the same connection. `subscribe` does not send an initial tree snapshot; clients should call `list-workspaces` when they need state.
 
@@ -1662,20 +1662,20 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error                     | Condition                                    |
+| ------------------------- | -------------------------------------------- |
 | thread spawn error string | Server cannot create the event writer thread |
-| `bad request: ...` | Malformed request envelope |
+| `bad request: ...`        | Malformed request envelope                   |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `subscribe` |
-| Flags | none in v5 |
-| Plain stdout | JSON event object per line |
-| JSON stdout | JSON event object per line |
-| Exit codes | common; runs until connection closes or interrupted |
+| Item         | Value                                               |
+| ------------ | --------------------------------------------------- |
+| Verb         | `subscribe`                                         |
+| Flags        | none in v5                                          |
+| Plain stdout | JSON event object per line                          |
+| JSON stdout  | JSON event object per line                          |
+| Exit codes   | common; runs until connection closes or interrupted |
 
 Example:
 
@@ -1687,11 +1687,11 @@ Example:
 
 ### attach-surface
 
-| Field | Value |
-| --- | --- |
-| name | `attach-surface` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value            |
+| ------ | ---------------- |
+| name   | `attach-surface` |
+| status | implemented      |
+| since  | protocol 5       |
 
 Attaches the connection to a PTY surface stream. In protocol v5, the server first sends a `vt-state` event for the current surface state, then sends live `output` events for subsequent PTY bytes, and finally sends `detached` when the stream ends. The command response is sent after the initial `vt-state` event in v5.
 
@@ -1699,9 +1699,9 @@ Protocol v6 changes the attach stream ordering to `vt-state -> (resized | output
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `Id` | required | Must identify a live PTY surface |
+| Name      | JSON type | Required/default | Constraints                      |
+| --------- | --------- | ---------------- | -------------------------------- |
+| `surface` | `Id`      | required         | Must identify a live PTY surface |
 
 Result:
 
@@ -1711,23 +1711,23 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `browser panes are not supported over attach yet` | Surface is a browser |
-| terminal error string | VT replay generation fails |
-| thread spawn error string | Server cannot create the attach writer thread |
-| `bad request: ...` | Missing `surface` or wrong JSON type |
+| Error                                             | Condition                                     |
+| ------------------------------------------------- | --------------------------------------------- |
+| `unknown surface <id>`                            | Surface id does not exist                     |
+| `browser panes are not supported over attach yet` | Surface is a browser                          |
+| terminal error string                             | VT replay generation fails                    |
+| thread spawn error string                         | Server cannot create the attach writer thread |
+| `bad request: ...`                                | Missing `surface` or wrong JSON type          |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `attach-surface` |
-| Flags | `--surface <id>` |
-| Plain stdout | JSON event object per line |
-| JSON stdout | JSON event object per line |
-| Exit codes | common; runs until `detached`, connection closes, or interrupted |
+| Item         | Value                                                            |
+| ------------ | ---------------------------------------------------------------- |
+| Verb         | `attach-surface`                                                 |
+| Flags        | `--surface <id>`                                                 |
+| Plain stdout | JSON event object per line                                       |
+| JSON stdout  | JSON event object per line                                       |
+| Exit codes   | common; runs until `detached`, connection closes, or interrupted |
 
 Example:
 
@@ -1739,13 +1739,13 @@ Example:
 
 ### get-resolved-config
 
-| Field | Value |
-| --- | --- |
-| name | `get-resolved-config` |
-| status | implemented |
-| since | protocol 6 |
+| Field  | Value                 |
+| ------ | --------------------- |
+| name   | `get-resolved-config` |
+| status | implemented           |
+| since  | protocol 6            |
 
-Returns the server process's resolved presentation chrome (the keys relevant to a thin-client `Overlay`: theme, tabs, sidebar, keys) so a `cmux attach --apply-local-config` client can layer its local overlay on top of the *server's* config rather than replacing it with the laptop's own (issue #40). Browser and scrollbar are server-side truth and are intentionally not part of the payload. The shape matches what `mux-tui`'s `Config::resolved_chrome_value()` emits and `Config::from_server_chrome()` consumes, so the client round-trips it back through the same `apply_*` resolution helpers `load()` uses.
+Returns the server process's resolved presentation chrome (the keys relevant to a thin-client `Overlay`: theme, tabs, sidebar, keys) so a `cmux attach --apply-local-config` client can layer its local overlay on top of the _server's_ config rather than replacing it with the laptop's own (issue #40). Browser and scrollbar are server-side truth and are intentionally not part of the payload. The shape matches what `mux-tui`'s `Config::resolved_chrome_value()` emits and `Config::from_server_chrome()` consumes, so the client round-trips it back through the same `apply_*` resolution helpers `load()` uses.
 
 The server publishes this from its own `config::load()` at startup; if it has not registered any chrome (for example a `mux-core`-only host with no TUI), it returns an empty object `{}` and the client falls back to its local config.
 
@@ -1774,19 +1774,19 @@ object{
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error              | Condition       |
+| ------------------ | --------------- |
 | `bad request: ...` | Wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `get-resolved-config` (also consumed internally by `cmux attach --print-resolved-config` and `cmux attach --apply-local-config`) |
-| Flags | n/a |
-| Plain stdout | n/a |
-| JSON stdout | n/a |
-| Exit codes | n/a |
+| Item         | Value                                                                                                                            |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Verb         | `get-resolved-config` (also consumed internally by `cmux attach --print-resolved-config` and `cmux attach --apply-local-config`) |
+| Flags        | n/a                                                                                                                              |
+| Plain stdout | n/a                                                                                                                              |
+| JSON stdout  | n/a                                                                                                                              |
+| Exit codes   | n/a                                                                                                                              |
 
 Example:
 
@@ -1804,11 +1804,11 @@ home for every `cmux <verb> ...` invocation.
 
 ### plugin
 
-| Field | Value |
-| --- | --- |
-| name | `plugin` (verb group: `cmux plugin <subcommand>`) |
-| status | implemented (manifest + registry only) |
-| since | local client surface, issue #42 scoped first PR |
+| Field  | Value                                             |
+| ------ | ------------------------------------------------- |
+| name   | `plugin` (verb group: `cmux plugin <subcommand>`) |
+| status | implemented (manifest + registry only)            |
+| since  | local client surface, issue #42 scoped first PR   |
 
 Manages `cmux-plugin.toml` manifests and a small JSON registry under the
 cmux data directory (`$XDG_DATA_HOME/cmux`, or `~/.local/share/cmux`
@@ -1822,32 +1822,32 @@ by default). Layout:
 
 Manifest (`cmux-plugin.toml`):
 
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `[plugin] name` | string | yes | non-empty, single path component (used as the on-disk dir name) |
-| `[plugin] entry` | string | yes | non-empty; path to the plugin entry artefact, stored verbatim, not resolved or validated as executable in this PR |
-| `[plugin] verbs` | array of strings | yes | non-empty, each entry non-empty; the verbs this plugin claims, stored verbatim, not proxied in this PR |
+| Field            | Type             | Required | Notes                                                                                                             |
+| ---------------- | ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| `[plugin] name`  | string           | yes      | non-empty, single path component (used as the on-disk dir name)                                                   |
+| `[plugin] entry` | string           | yes      | non-empty; path to the plugin entry artefact, stored verbatim, not resolved or validated as executable in this PR |
+| `[plugin] verbs` | array of strings | yes      | non-empty, each entry non-empty; the verbs this plugin claims, stored verbatim, not proxied in this PR            |
 
 CLI mappings:
 
-| Subcommand | Required args | Optional flags | Plain stdout | JSON stdout |
-| --- | --- | --- | --- | --- |
-| `plugin list` | none | `--json` | one line per plugin `<name> <enabled|disabled> <entry> <verb,verb>`; `no plugins installed` when empty | the registry object `{"plugins":[...]}` |
-| `plugin install <manifest-path>` | `<manifest-path>` | none | `installed plugin <name> from <path>` | n/a (exit code only) |
-| `plugin uninstall <name>` | `<name>` | none | `uninstalled plugin <name>` | n/a (exit code only) |
-| `plugin enable <name>` | `<name>` | none | `plugin <name> enabled` (or `already enabled`) | n/a (exit code only) |
-| `plugin disable <name>` | `<name>` | none | `plugin <name> disabled` (or `already disabled`) | n/a (exit code only) |
+| Subcommand                       | Required args     | Optional flags | Plain stdout                                     | JSON stdout                                                       |
+| -------------------------------- | ----------------- | -------------- | ------------------------------------------------ | ----------------------------------------------------------------- |
+| `plugin list`                    | none              | `--json`       | one line per plugin `<name> <enabled             | disabled> <entry> <verb,verb>`; `no plugins installed` when empty | the registry object `{"plugins":[...]}` |
+| `plugin install <manifest-path>` | `<manifest-path>` | none           | `installed plugin <name> from <path>`            | n/a (exit code only)                                              |
+| `plugin uninstall <name>`        | `<name>`          | none           | `uninstalled plugin <name>`                      | n/a (exit code only)                                              |
+| `plugin enable <name>`           | `<name>`          | none           | `plugin <name> enabled` (or `already enabled`)   | n/a (exit code only)                                              |
+| `plugin disable <name>`          | `<name>`          | none           | `plugin <name> disabled` (or `already disabled`) | n/a (exit code only)                                              |
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `malformed cmux-plugin.toml: ...` | manifest is not valid TOML or a required field is missing/empty |
+| Error                                       | Condition                                                        |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| `malformed cmux-plugin.toml: ...`           | manifest is not valid TOML or a required field is missing/empty  |
 | `a plugin named "..." is already installed` | `install` against a name already in the registry (AC5 collision) |
-| `no plugin named "..." is installed` | `uninstall`/`enable`/`disable` against an unknown name |
-| `plugin name "..." must not be a path` | `install` where `name` contains a separator or is `.`/`..` |
+| `no plugin named "..." is installed`        | `uninstall`/`enable`/`disable` against an unknown name           |
+| `plugin name "..." must not be a path`      | `install` where `name` contains a separator or is `.`/`..`       |
 
-NOT IMPLEMENTED (deferred to a follow-up PR): plugin *execution*
+NOT IMPLEMENTED (deferred to a follow-up PR): plugin _execution_
 (proxying `cmux <plugin-name> <verb>` to a running plugin process,
 WASM/WASI sandboxing, the permission model) is out of scope for this
 PR. These verbs only manage manifest state and must not be read as
@@ -1855,11 +1855,11 @@ implying that any plugin code runs.
 
 ### agents
 
-| Field | Value |
-| --- | --- |
-| name | `agents` (verb group: `cmux agents <subcommand>`) |
-| status | implemented |
-| transport | local filesystem only; no control-socket request |
+| Field     | Value                                             |
+| --------- | ------------------------------------------------- |
+| name      | `agents` (verb group: `cmux agents <subcommand>`) |
+| status    | implemented                                       |
+| transport | local filesystem only; no control-socket request  |
 
 The registry contains `claude`, `antigravity`, `codex`, `aider`, `pi`, and
 `grok`. Hook install paths are resolved from the current project for local
@@ -1867,11 +1867,11 @@ installs and from the user's home directory for `--global` installs.
 
 CLI mappings:
 
-| Subcommand | Required args | Optional flags | Plain stdout |
-| --- | --- | --- | --- |
-| `agents list` | none | `--global` | `agent<TAB>status<TAB>version<TAB>last-installed<TAB>install-path`, followed by one row per registered agent |
-| `agents install --all` | `--all` | `--uninstall`, `--global` | one per-agent result; processing continues after failures |
-| `agents install --only <agent>` | `--only <agent>` | `--uninstall`, `--global` | one result for the selected agent |
+| Subcommand                      | Required args    | Optional flags            | Plain stdout                                                                                                 |
+| ------------------------------- | ---------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `agents list`                   | none             | `--global`                | `agent<TAB>status<TAB>version<TAB>last-installed<TAB>install-path`, followed by one row per registered agent |
+| `agents install --all`          | `--all`          | `--uninstall`, `--global` | one per-agent result; processing continues after failures                                                    |
+| `agents install --only <agent>` | `--only <agent>` | `--uninstall`, `--global` | one result for the selected agent                                                                            |
 
 A listed agent is `installed` when its registered install path exists. The
 version is the managed hook version and `last-installed` is the install path's
@@ -1885,21 +1885,21 @@ shapes and unknown agent names return exit code `2`.
 
 ### wait-for
 
-| Field | Value |
-| --- | --- |
-| name | `wait-for` |
-| status | proposed |
-| since | proposed protocol 6 |
+| Field  | Value               |
+| ------ | ------------------- |
+| name   | `wait-for`          |
+| status | proposed            |
+| since  | proposed protocol 6 |
 
 Blocks until a regular expression matches the current plain-text screen for a PTY surface. The server polls the same text source as `read-screen` and returns as soon as a match is found or the timeout expires. This is the primary automation synchronization primitive.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `IdRef` | required | PTY surface |
-| `pattern` | `string` | required | Rust regex syntax |
-| `timeout_ms` | `uint64` | required | `0` means a single immediate check |
+| Name         | JSON type | Required/default | Constraints                        |
+| ------------ | --------- | ---------------- | ---------------------------------- |
+| `surface`    | `IdRef`   | required         | PTY surface                        |
+| `pattern`    | `string`  | required         | Rust regex syntax                  |
+| `timeout_ms` | `uint64`  | required         | `0` means a single immediate check |
 
 Result:
 
@@ -1909,23 +1909,23 @@ object{matched:true,text:string,elapsed_ms:uint64}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `browser surface does not support PTY/VT socket commands` | Surface is a browser |
-| `bad regex: <message>` | Pattern cannot compile |
-| `timeout waiting for pattern` | Timeout expires before match |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                                                     | Condition                         |
+| --------------------------------------------------------- | --------------------------------- |
+| `unknown surface <id>`                                    | Surface id does not exist         |
+| `browser surface does not support PTY/VT socket commands` | Surface is a browser              |
+| `bad regex: <message>`                                    | Pattern cannot compile            |
+| `timeout waiting for pattern`                             | Timeout expires before match      |
+| `bad request: ...`                                        | Missing fields or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `wait-for` |
-| Flags | `--surface <id> --pattern <regex> --timeout-ms <n>` |
-| Plain stdout | no output on success |
-| JSON stdout | exact result object |
-| Exit codes | common; timeout is exit code 1 |
+| Item         | Value                                               |
+| ------------ | --------------------------------------------------- |
+| Verb         | `wait-for`                                          |
+| Flags        | `--surface <id> --pattern <regex> --timeout-ms <n>` |
+| Plain stdout | no output on success                                |
+| JSON stdout  | exact result object                                 |
+| Exit codes   | common; timeout is exit code 1                      |
 
 Example:
 
@@ -1936,26 +1936,26 @@ Example:
 
 ### run
 
-| Field | Value |
-| --- | --- |
-| name | `run` |
-| status | proposed |
-| since | proposed protocol 6 |
+| Field  | Value               |
+| ------ | ------------------- |
+| name   | `run`               |
+| status | proposed            |
+| since  | proposed protocol 6 |
 
 Spawns a command in a new PTY tab and returns the new surface id. `argv` executes directly without a shell. `command` executes through the session shell as `shell -lc <command>`. Exactly one of `argv` or `command` is required. By default the tab is created in the active pane. With `pane`, it is created in that pane. With `new_workspace:true`, a new workspace is created instead.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `argv` | `array<string>` | required if `command` absent | Non-empty; direct exec |
-| `command` | `string` | required if `argv` absent | Executed via shell `-lc` |
-| `cwd` | `string` | default null | Working directory |
-| `pane` | `IdRef` | default null | Mutually exclusive with `new_workspace:true` |
-| `new_workspace` | `boolean` | default false | Create isolated workspace |
-| `name` | `string` | default null | Sets surface name; also workspace name when `new_workspace:true` |
-| `cols` | `uint16` | default null | Used only with `rows` |
-| `rows` | `uint16` | default null | Used only with `cols` |
+| Name            | JSON type       | Required/default             | Constraints                                                      |
+| --------------- | --------------- | ---------------------------- | ---------------------------------------------------------------- |
+| `argv`          | `array<string>` | required if `command` absent | Non-empty; direct exec                                           |
+| `command`       | `string`        | required if `argv` absent    | Executed via shell `-lc`                                         |
+| `cwd`           | `string`        | default null                 | Working directory                                                |
+| `pane`          | `IdRef`         | default null                 | Mutually exclusive with `new_workspace:true`                     |
+| `new_workspace` | `boolean`       | default false                | Create isolated workspace                                        |
+| `name`          | `string`        | default null                 | Sets surface name; also workspace name when `new_workspace:true` |
+| `cols`          | `uint16`        | default null                 | Used only with `rows`                                            |
+| `rows`          | `uint16`        | default null                 | Used only with `cols`                                            |
 
 Result:
 
@@ -1965,23 +1965,23 @@ object{surface:Id,pane:Id,screen:Id,workspace:Id}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `argv or command is required` | Neither is supplied |
-| `argv and command are mutually exclusive` | Both are supplied |
-| `unknown pane <id>` | Supplied pane does not exist |
-| spawn or PTY error string | PTY creation or child spawn fails |
-| `bad request: ...` | Wrong JSON type |
+| Error                                     | Condition                         |
+| ----------------------------------------- | --------------------------------- |
+| `argv or command is required`             | Neither is supplied               |
+| `argv and command are mutually exclusive` | Both are supplied                 |
+| `unknown pane <id>`                       | Supplied pane does not exist      |
+| spawn or PTY error string                 | PTY creation or child spawn fails |
+| `bad request: ...`                        | Wrong JSON type                   |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `run` |
-| Flags | `[--pane <id> | --new-workspace] [--cwd <path>] [--name <name>] -- <argv...>` or `--command <cmd>` |
+| Item         | Value                              |
+| ------------ | ---------------------------------- |
+| Verb         | `run`                              |
+| Flags        | `[--pane <id>                      | --new-workspace] [--cwd <path>] [--name <name>] -- <argv...>`or`--command <cmd>` |
 | Plain stdout | new surface id followed by newline |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| JSON stdout  | exact result object                |
+| Exit codes   | common                             |
 
 Example:
 
@@ -1992,20 +1992,20 @@ Example:
 
 ### send-key
 
-| Field | Value |
-| --- | --- |
-| name | `send-key` |
-| status | proposed |
-| since | proposed protocol 6 |
+| Field  | Value               |
+| ------ | ------------------- |
+| name   | `send-key`          |
+| status | proposed            |
+| since  | proposed protocol 6 |
 
 Sends named key chords to a surface without requiring callers to hand-encode escape sequences. PTY surfaces use the same Ghostty key encoder as the TUI, synced to the surface terminal modes. Browser surfaces translate supported keys to CDP keyboard input when the browser runtime is local.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `IdRef` | required | Target surface |
-| `keys` | `array<string>` | required | Non-empty key chord list |
+| Name      | JSON type       | Required/default | Constraints              |
+| --------- | --------------- | ---------------- | ------------------------ |
+| `surface` | `IdRef`         | required         | Target surface           |
+| `keys`    | `array<string>` | required         | Non-empty key chord list |
 
 Key chord syntax is lower-case tokens joined with `+`. Supported names are `enter`, `tab`, `backtab`, `escape`, `backspace`, `delete`, `insert`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `f1` through `f24`, printable single characters, `ctrl+<key>`, `alt+<key>`, and `shift+<key>` where the encoder supports it.
 
@@ -2017,23 +2017,23 @@ object{}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `unknown key <key>` | Key token is not supported |
-| `surface does not support key input` | Surface kind cannot accept keys |
-| IO or CDP error string | Input write fails |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                                | Condition                         |
+| ------------------------------------ | --------------------------------- |
+| `unknown surface <id>`               | Surface id does not exist         |
+| `unknown key <key>`                  | Key token is not supported        |
+| `surface does not support key input` | Surface kind cannot accept keys   |
+| IO or CDP error string               | Input write fails                 |
+| `bad request: ...`                   | Missing fields or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `send-key` |
-| Flags | `--surface <id> <key>...` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                     |
+| ------------ | ------------------------- |
+| Verb         | `send-key`                |
+| Flags        | `--surface <id> <key>...` |
+| Plain stdout | no output                 |
+| JSON stdout  | exact result object       |
+| Exit codes   | common                    |
 
 Example:
 
@@ -2044,20 +2044,20 @@ Example:
 
 ### copy
 
-| Field | Value |
-| --- | --- |
-| name | `copy` |
-| status | proposed |
-| since | proposed protocol 6 |
+| Field  | Value               |
+| ------ | ------------------- |
+| name   | `copy`              |
+| status | proposed            |
+| since  | proposed protocol 6 |
 
 Extracts text from a surface. `screen` returns the current plain-text viewport. `selection` returns the current mux-owned selection. `scrollback` returns available scrollback followed by the current viewport.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `IdRef` | required | PTY surface |
-| `mode` | `string` | required | `"screen"`, `"selection"`, or `"scrollback"` |
+| Name      | JSON type | Required/default | Constraints                                  |
+| --------- | --------- | ---------------- | -------------------------------------------- |
+| `surface` | `IdRef`   | required         | PTY surface                                  |
+| `mode`    | `string`  | required         | `"screen"`, `"selection"`, or `"scrollback"` |
 
 Result:
 
@@ -2067,24 +2067,24 @@ object{text:string,mode:"screen"|"selection"|"scrollback"}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `browser surface does not support PTY/VT socket commands` | Surface is a browser |
-| `bad mode <mode>` | Mode is not allowed |
-| `no selection` | Mode is `selection` and no selection exists |
-| `scrollback unavailable` | Mode is `scrollback` and the terminal cannot export it |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                                                     | Condition                                              |
+| --------------------------------------------------------- | ------------------------------------------------------ |
+| `unknown surface <id>`                                    | Surface id does not exist                              |
+| `browser surface does not support PTY/VT socket commands` | Surface is a browser                                   |
+| `bad mode <mode>`                                         | Mode is not allowed                                    |
+| `no selection`                                            | Mode is `selection` and no selection exists            |
+| `scrollback unavailable`                                  | Mode is `scrollback` and the terminal cannot export it |
+| `bad request: ...`                                        | Missing fields or wrong JSON type                      |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `copy` |
-| Flags | `--surface <id> --mode screen|selection|scrollback` |
-| Plain stdout | extracted text exactly |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                         |
+| ------------ | ----------------------------- |
+| Verb         | `copy`                        |
+| Flags        | `--surface <id> --mode screen | selection | scrollback` |
+| Plain stdout | extracted text exactly        |
+| JSON stdout  | exact result object           |
+| Exit codes   | common                        |
 
 Example:
 
@@ -2095,19 +2095,19 @@ Example:
 
 ### ids
 
-| Field | Value |
-| --- | --- |
-| name | `ids` |
-| status | proposed |
-| since | proposed protocol 6 |
+| Field  | Value               |
+| ------ | ------------------- |
+| name   | `ids`               |
+| status | proposed            |
+| since  | proposed protocol 6 |
 
 Returns the session id mapping and establishes the short-id scheme. Every workspace, screen, pane, and surface has a numeric id and a stable short id for the lifetime of the session. Short ids are content-independent, collision-checked per session, and usable anywhere an `IdRef` is accepted.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `kind` | `string` | default null | Optional filter: `"workspace"`, `"screen"`, `"pane"`, or `"surface"` |
+| Name   | JSON type | Required/default | Constraints                                                          |
+| ------ | --------- | ---------------- | -------------------------------------------------------------------- |
+| `kind` | `string`  | default null     | Optional filter: `"workspace"`, `"screen"`, `"pane"`, or `"surface"` |
 
 Short id format:
 
@@ -2127,20 +2127,20 @@ object{ids:array<object{kind:"workspace"|"screen"|"pane"|"surface",id:Id,short_i
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `bad kind <kind>` | Filter kind is not allowed |
-| `bad request: ...` | Wrong JSON type |
+| Error              | Condition                  |
+| ------------------ | -------------------------- |
+| `bad kind <kind>`  | Filter kind is not allowed |
+| `bad request: ...` | Wrong JSON type            |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `ids` |
-| Flags | `[--kind workspace|screen|pane|surface]` |
+| Item         | Value                                     |
+| ------------ | ----------------------------------------- |
+| Verb         | `ids`                                     |
+| Flags        | `[--kind workspace                        | screen | pane | surface]` |
 | Plain stdout | one line per id: `<kind> <id> <short_id>` |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| JSON stdout  | exact result object                       |
+| Exit codes   | common                                    |
 
 Example:
 
@@ -2151,22 +2151,22 @@ Example:
 
 ### notify
 
-| Field | Value |
-| --- | --- |
-| name | `notify` |
-| status | proposed |
-| since | proposed protocol 6 |
+| Field  | Value               |
+| ------ | ------------------- |
+| name   | `notify`            |
+| status | proposed            |
+| since  | proposed protocol 6 |
 
 Posts a notification into the mux notification area. This is a telemetry command and must not change app focus or pane selection.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `title` | `string` | required | Non-empty |
-| `body` | `string` | required | May be empty |
-| `level` | `string` | default `"info"` | `"info"`, `"warning"`, or `"error"` |
-| `surface` | `IdRef` | default null | Optional originating surface |
+| Name      | JSON type | Required/default | Constraints                         |
+| --------- | --------- | ---------------- | ----------------------------------- |
+| `title`   | `string`  | required         | Non-empty                           |
+| `body`    | `string`  | required         | May be empty                        |
+| `level`   | `string`  | default `"info"` | `"info"`, `"warning"`, or `"error"` |
+| `surface` | `IdRef`   | default null     | Optional originating surface        |
 
 Result:
 
@@ -2176,22 +2176,22 @@ object{notification:Id}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `title is required` | Title is empty |
-| `bad level <level>` | Level is not allowed |
+| Error                  | Condition                          |
+| ---------------------- | ---------------------------------- |
+| `title is required`    | Title is empty                     |
+| `bad level <level>`    | Level is not allowed               |
 | `unknown surface <id>` | Optional surface id does not exist |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| `bad request: ...`     | Missing fields or wrong JSON type  |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `notify` |
-| Flags | `--title <title> --body <body> [--level info|warning|error] [--surface <id>]` |
-| Plain stdout | notification id followed by newline |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                                        |
+| ------------ | -------------------------------------------- |
+| Verb         | `notify`                                     |
+| Flags        | `--title <title> --body <body> [--level info | warning | error] [--surface <id>]` |
+| Plain stdout | notification id followed by newline          |
+| JSON stdout  | exact result object                          |
+| Exit codes   | common                                       |
 
 Example:
 
@@ -2202,20 +2202,20 @@ Example:
 
 ### list-agents
 
-| Field | Value |
-| --- | --- |
-| name | `list-agents` |
-| status | implemented |
-| since | protocol 6 |
+| Field  | Value         |
+| ------ | ------------- |
+| name   | `list-agents` |
+| status | implemented   |
+| since  | protocol 6    |
 
 Returns known agent status records. Records may come from detection, explicit reports, or hooks — all three are implemented in this fork: `source: "detected"` comes from watching a surface's own pty output for an OSC 9 / OSC 777 / kitty desktop notification (see `mux-core/src/notify.rs`), which sets state `blocked`. Detected reports have the lowest authority: a `socket` or `hook` report always wins over a `detected` one, regardless of order (see `report-agent`'s authority rules below). Explicit hook-authority reports override detection for the same surface until another explicit report changes the state or the surface closes.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `IdRef` | default null | Optional surface filter |
-| `state` | `string` | default null | Optional state filter |
+| Name      | JSON type | Required/default | Constraints             |
+| --------- | --------- | ---------------- | ----------------------- |
+| `surface` | `IdRef`   | default null     | Optional surface filter |
+| `state`   | `string`  | default null     | Optional state filter   |
 
 Result:
 
@@ -2233,21 +2233,21 @@ object{
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
+| Error                  | Condition                          |
+| ---------------------- | ---------------------------------- |
 | `unknown surface <id>` | Optional surface id does not exist |
-| `bad state <state>` | State filter is not allowed |
-| `bad request: ...` | Wrong JSON type |
+| `bad state <state>`    | State filter is not allowed        |
+| `bad request: ...`     | Wrong JSON type                    |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `list-agents` |
-| Flags | `[--surface <id>] [--state working|blocked|idle|done|unknown]` |
+| Item         | Value                                                          |
+| ------------ | -------------------------------------------------------------- |
+| Verb         | `list-agents`                                                  |
+| Flags        | `[--surface <id>] [--state working                             | blocked | idle | done | unknown]` |
 | Plain stdout | one line per agent: `<surface> <state> <source> <session-or->` |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| JSON stdout  | exact result object                                            |
+| Exit codes   | common                                                         |
 
 Example:
 
@@ -2258,22 +2258,22 @@ Example:
 
 ### report-agent
 
-| Field | Value |
-| --- | --- |
-| name | `report-agent` |
-| status | implemented |
-| since | protocol 6 |
+| Field  | Value          |
+| ------ | -------------- |
+| name   | `report-agent` |
+| status | implemented    |
+| since  | protocol 6     |
 
 Reports agent state for a surface. This is a telemetry command and must not change focus. Reports with `source:"hook"` have hook authority and override detector-derived state. Reports with `source:"socket"` override detector-derived state but are lower priority than a newer hook report (concretely: a `socket` report is rejected outright while the current report's source is `hook`, regardless of timing).
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `surface` | `IdRef` | required | Surface associated with the agent |
-| `state` | `string` | required | `"working"`, `"blocked"`, `"idle"`, `"done"`, or `"unknown"` |
-| `source` | `string` | required | `"socket"` or `"hook"` |
-| `session` | `string` | default null | Optional upstream agent session id |
+| Name      | JSON type | Required/default | Constraints                                                  |
+| --------- | --------- | ---------------- | ------------------------------------------------------------ |
+| `surface` | `IdRef`   | required         | Surface associated with the agent                            |
+| `state`   | `string`  | required         | `"working"`, `"blocked"`, `"idle"`, `"done"`, or `"unknown"` |
+| `source`  | `string`  | required         | `"socket"` or `"hook"`                                       |
+| `session` | `string`  | default null     | Optional upstream agent session id                           |
 
 Result:
 
@@ -2283,22 +2283,22 @@ object{surface:Id,state:string,source:string,session:string|null}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `unknown surface <id>` | Surface id does not exist |
-| `bad state <state>` | State is not allowed |
-| `bad source <source>` | Source is not allowed |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                  | Condition                         |
+| ---------------------- | --------------------------------- |
+| `unknown surface <id>` | Surface id does not exist         |
+| `bad state <state>`    | State is not allowed              |
+| `bad source <source>`  | Source is not allowed             |
+| `bad request: ...`     | Missing fields or wrong JSON type |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `report-agent` |
-| Flags | `--surface <id> --state working|blocked|idle|done|unknown --source socket|hook [--session <id>]` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                           |
+| ------------ | ------------------------------- |
+| Verb         | `report-agent`                  |
+| Flags        | `--surface <id> --state working | blocked | idle | done | unknown --source socket | hook [--session <id>]` |
+| Plain stdout | no output                       |
+| JSON stdout  | exact result object             |
+| Exit codes   | common                          |
 
 Example:
 
@@ -2309,25 +2309,25 @@ Example:
 
 ### new-remote-workspace
 
-| Field | Value |
-| --- | --- |
-| name | `new-remote-workspace` |
-| status | implemented |
-| since | protocol 6 |
+| Field  | Value                  |
+| ------ | ---------------------- |
+| name   | `new-remote-workspace` |
+| status | implemented            |
+| since  | protocol 6             |
 
 Creates a workspace whose single tab is a remote shell reached through `cmuxd-remote` over SSH (see `docs/protocol.md`'s "Remote Workspaces" section and `mux-core/src/remote_pty.rs`) instead of a local pty. The caller is responsible for having already built/uploaded a `cmuxd-remote` binary for the target's OS/arch and passing its local path; the bundled `cmux ssh <host>` CLI does this and is the intended entry point, not this command directly.
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `host` | `string` | required | SSH destination, passed to `ssh`/`scp` as-is (may be a full `user@host` or an entry in `~/.ssh/config`) |
-| `slot` | `string` | required | Groups sessions under one persistent remote daemon per host |
-| `session_id` | `string` | required | Fresh id starts a new remote shell; an existing id (e.g. from a persisted snapshot) reattaches to it |
-| `local_binary_path` | `string` | required | Local filesystem path to a `cmuxd-remote` binary built for the remote's OS/arch |
-| `name` | `string?` | default null | Workspace display name |
-| `cols` | `uint16?` | default null | Initial surface width; `rows` must also be set to take effect |
-| `rows` | `uint16?` | default null | Initial surface height; `cols` must also be set to take effect |
+| Name                | JSON type | Required/default | Constraints                                                                                             |
+| ------------------- | --------- | ---------------- | ------------------------------------------------------------------------------------------------------- |
+| `host`              | `string`  | required         | SSH destination, passed to `ssh`/`scp` as-is (may be a full `user@host` or an entry in `~/.ssh/config`) |
+| `slot`              | `string`  | required         | Groups sessions under one persistent remote daemon per host                                             |
+| `session_id`        | `string`  | required         | Fresh id starts a new remote shell; an existing id (e.g. from a persisted snapshot) reattaches to it    |
+| `local_binary_path` | `string`  | required         | Local filesystem path to a `cmuxd-remote` binary built for the remote's OS/arch                         |
+| `name`              | `string?` | default null     | Workspace display name                                                                                  |
+| `cols`              | `uint16?` | default null     | Initial surface width; `rows` must also be set to take effect                                           |
+| `rows`              | `uint16?` | default null     | Initial surface height; `cols` must also be set to take effect                                          |
 
 Result:
 
@@ -2337,20 +2337,20 @@ object{surface:Id}
 
 Errors:
 
-| Error | Condition |
-| --- | --- |
-| `bad request: ...` | Missing fields or wrong JSON type |
+| Error                | Condition                                                                                            |
+| -------------------- | ---------------------------------------------------------------------------------------------------- |
+| `bad request: ...`   | Missing fields or wrong JSON type                                                                    |
 | other `Err` messages | SSH/upload/daemon-handshake failure; message is passed through from `remote_pty.rs`, not a fixed set |
 
 CLI mapping:
 
-| Item | Value |
-| --- | --- |
-| Verb | `ssh` |
-| Flags | `<host> [--name <workspace-name>] [--session <mux-session>] [--socket <path>]` |
-| Plain stdout | no output |
-| JSON stdout | exact result object |
-| Exit codes | common |
+| Item         | Value                                                                          |
+| ------------ | ------------------------------------------------------------------------------ |
+| Verb         | `ssh`                                                                          |
+| Flags        | `<host> [--name <workspace-name>] [--session <mux-session>] [--socket <path>]` |
+| Plain stdout | no output                                                                      |
+| JSON stdout  | exact result object                                                            |
+| Exit codes   | common                                                                         |
 
 Example:
 
@@ -2396,40 +2396,40 @@ Exactly one of `argv` or `command` is required. `argv` executes directly. `comma
 
 Common environment:
 
-| Env var | Meaning |
-| --- | --- |
-| `CMUX_MUX_SESSION` | Session name |
-| `CMUX_MUX_SOCKET` | Unix socket path when available |
-| `CMUX_MUX_EVENT` | Hook event name |
-| `CMUX_MUX_SURFACE` | Surface id when the event is surface-scoped |
-| `CMUX_MUX_WORKSPACE` | Workspace id when known |
-| `CMUX_MUX_SCREEN` | Screen id when known |
-| `CMUX_MUX_PANE` | Pane id when known |
-| `CMUX_MUX_AGENT_STATE` | Agent state for agent hooks |
-| `CMUX_MUX_AGENT_SOURCE` | Agent source for agent hooks |
-| `CMUX_MUX_AGENT_SESSION` | Upstream agent session id when reported |
+| Env var                  | Meaning                                     |
+| ------------------------ | ------------------------------------------- |
+| `CMUX_MUX_SESSION`       | Session name                                |
+| `CMUX_MUX_SOCKET`        | Unix socket path when available             |
+| `CMUX_MUX_EVENT`         | Hook event name                             |
+| `CMUX_MUX_SURFACE`       | Surface id when the event is surface-scoped |
+| `CMUX_MUX_WORKSPACE`     | Workspace id when known                     |
+| `CMUX_MUX_SCREEN`        | Screen id when known                        |
+| `CMUX_MUX_PANE`          | Pane id when known                          |
+| `CMUX_MUX_AGENT_STATE`   | Agent state for agent hooks                 |
+| `CMUX_MUX_AGENT_SOURCE`  | Agent source for agent hooks                |
+| `CMUX_MUX_AGENT_SESSION` | Upstream agent session id when reported     |
 
 Hook event mapping:
 
-| Hook | Trigger |
-| --- | --- |
-| `on-bell` | Implemented `bell` event |
-| `on-agent-blocked` | Proposed agent state becomes `blocked` |
-| `on-agent-done` | Proposed agent state becomes `done` |
-| `on-surface-exit` | Implemented surface exits and is reaped |
+| Hook               | Trigger                                 |
+| ------------------ | --------------------------------------- |
+| `on-bell`          | Implemented `bell` event                |
+| `on-agent-blocked` | Proposed agent state becomes `blocked`  |
+| `on-agent-done`    | Proposed agent state becomes `done`     |
+| `on-surface-exit`  | Implemented surface exits and is reaped |
 
 ## Compatibility Notes
 
 The following v5 behaviors are awkward for generated bindings and should be normalized in protocol v6:
 
-| Area | v5 behavior | Proposed v6 normalization |
-| --- | --- | --- |
-| Create commands | `new-tab`, `new-browser-tab`, `new-screen`, `new-workspace`, and `split` return only `{surface}` | Return `{surface,pane,screen,workspace}` |
-| Selection commands | `select-*` returns success for unknown targets, out-of-range indexes, and missing selector fields | Return a changed boolean or reject invalid target/index |
-| Resize command | `resize-surface` does not report whether size changed or final clamped size | Return `{changed,cols,rows}` |
-| Ratio command | `set-ratio` silently clamps and does not return final ratio | Return `{ratio}` after clamping |
-| Naming commands | Empty string clears pane/surface/screen names but stores an empty workspace name | Make empty string clear all optional display names, including workspace |
-| Attach response ordering | v5 `attach-surface` sends `vt-state` before the command response | v6 keeps attach as an event stream and adds `resized` replay events; clients must gate behavior by protocol |
-| Error taxonomy | Errors are strings from `anyhow`, IO, base64, and terminal layers | Add stable machine error codes while preserving messages |
-| Optional size pair | Supplying only one of `cols` or `rows` is silently ignored | Reject partial size pairs |
-| Unknown fields | Unknown request fields are ignored by serde | Reject unknown fields or define extension slots |
+| Area                     | v5 behavior                                                                                       | Proposed v6 normalization                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Create commands          | `new-tab`, `new-browser-tab`, `new-screen`, `new-workspace`, and `split` return only `{surface}`  | Return `{surface,pane,screen,workspace}`                                                                    |
+| Selection commands       | `select-*` returns success for unknown targets, out-of-range indexes, and missing selector fields | Return a changed boolean or reject invalid target/index                                                     |
+| Resize command           | `resize-surface` does not report whether size changed or final clamped size                       | Return `{changed,cols,rows}`                                                                                |
+| Ratio command            | `set-ratio` silently clamps and does not return final ratio                                       | Return `{ratio}` after clamping                                                                             |
+| Naming commands          | Empty string clears pane/surface/screen names but stores an empty workspace name                  | Make empty string clear all optional display names, including workspace                                     |
+| Attach response ordering | v5 `attach-surface` sends `vt-state` before the command response                                  | v6 keeps attach as an event stream and adds `resized` replay events; clients must gate behavior by protocol |
+| Error taxonomy           | Errors are strings from `anyhow`, IO, base64, and terminal layers                                 | Add stable machine error codes while preserving messages                                                    |
+| Optional size pair       | Supplying only one of `cols` or `rows` is silently ignored                                        | Reject partial size pairs                                                                                   |
+| Unknown fields           | Unknown request fields are ignored by serde                                                       | Reject unknown fields or define extension slots                                                             |

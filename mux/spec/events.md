@@ -4,11 +4,11 @@ This file specifies event lines emitted by protocol v5 and proposed protocol v6.
 
 Implemented event lines can appear on two stream types:
 
-| Stream | How to start | Event names |
-| --- | --- | --- |
-| Subscribe stream | `subscribe` command | `tree-changed`, `surface-output`, `surface-resized`, `surface-exited`, `title-changed`, `bell`, `flash`, `empty` |
-| Attach stream v5 | `attach-surface` command | `vt-state`, `output`, `detached` |
-| Attach stream v6 | `attach-surface` command | `vt-state`, `resized`, `output`, `detached` |
+| Stream           | How to start             | Event names                                                                                                      |
+| ---------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| Subscribe stream | `subscribe` command      | `tree-changed`, `surface-output`, `surface-resized`, `surface-exited`, `title-changed`, `bell`, `flash`, `empty` |
+| Attach stream v5 | `attach-surface` command | `vt-state`, `output`, `detached`                                                                                 |
+| Attach stream v6 | `attach-surface` command | `vt-state`, `resized`, `output`, `detached`                                                                      |
 
 Events and command responses share one JSON-lines connection. Clients must route lines by checking for `event`. If `event` is absent, the line is a command response and should be matched by `id`.
 
@@ -32,11 +32,11 @@ When a surface exits, the mux removes it from the tree itself. Subscribe streams
 
 ### tree-changed
 
-| Field | Value |
-| --- | --- |
-| event | `tree-changed` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value          |
+| ------ | -------------- |
+| event  | `tree-changed` |
+| status | implemented    |
+| since  | protocol 5     |
 
 Payload:
 
@@ -49,16 +49,16 @@ Meaning: The workspace, screen, pane, tab, active selection, names, split layout
 Example:
 
 ```json
-{"event":"tree-changed"}
+{ "event": "tree-changed" }
 ```
 
 ### surface-output
 
-| Field | Value |
-| --- | --- |
-| event | `surface-output` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value            |
+| ------ | ---------------- |
+| event  | `surface-output` |
+| status | implemented      |
+| since  | protocol 5       |
 
 Payload:
 
@@ -71,16 +71,16 @@ Meaning: A surface has new output or was marked dirty. For PTY surfaces, this is
 Example:
 
 ```json
-{"event":"surface-output","surface":1}
+{ "event": "surface-output", "surface": 1 }
 ```
 
 ### surface-resized
 
-| Field | Value |
-| --- | --- |
-| event | `surface-resized` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value             |
+| ------ | ----------------- |
+| event  | `surface-resized` |
+| status | implemented       |
+| since  | protocol 5        |
 
 Payload:
 
@@ -93,16 +93,16 @@ Meaning: A surface's final clamped cell size changed. A same-size `resize-surfac
 Example:
 
 ```json
-{"event":"surface-resized","surface":1,"cols":120,"rows":40}
+{ "event": "surface-resized", "surface": 1, "cols": 120, "rows": 40 }
 ```
 
 ### surface-exited
 
-| Field | Value |
-| --- | --- |
-| event | `surface-exited` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value            |
+| ------ | ---------------- |
+| event  | `surface-exited` |
+| status | implemented      |
+| since  | protocol 5       |
 
 Payload:
 
@@ -115,16 +115,16 @@ Meaning: A PTY child exited or a browser surface was closed. The mux has already
 Example:
 
 ```json
-{"event":"surface-exited","surface":1}
+{ "event": "surface-exited", "surface": 1 }
 ```
 
 ### title-changed
 
-| Field | Value |
-| --- | --- |
-| event | `title-changed` |
-| status | implemented |
-| since | protocol 5 |
+| Field  | Value           |
+| ------ | --------------- |
+| event  | `title-changed` |
+| status | implemented     |
+| since  | protocol 5      |
 
 Payload:
 
@@ -137,16 +137,16 @@ Meaning: A surface title changed. The event does not include the new title. Clie
 Example:
 
 ```json
-{"event":"title-changed","surface":1}
+{ "event": "title-changed", "surface": 1 }
 ```
 
 ### bell
 
-| Field | Value |
-| --- | --- |
-| event | `bell` |
+| Field  | Value       |
+| ------ | ----------- |
+| event  | `bell`      |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Payload:
 
@@ -159,16 +159,16 @@ Meaning: A PTY surface emitted a terminal bell.
 Example:
 
 ```json
-{"event":"bell","surface":1}
+{ "event": "bell", "surface": 1 }
 ```
 
 ### flash
 
-| Field | Value |
-| --- | --- |
-| event | `flash` |
+| Field  | Value       |
+| ------ | ----------- |
+| event  | `flash`     |
 | status | implemented |
-| since | protocol 6 |
+| since  | protocol 6  |
 
 Payload:
 
@@ -184,16 +184,16 @@ if any -- not validated against the workspace.
 Example:
 
 ```json
-{"event":"flash","workspace":4,"surface":9}
+{ "event": "flash", "workspace": 4, "surface": 9 }
 ```
 
 ### empty
 
-| Field | Value |
-| --- | --- |
-| event | `empty` |
+| Field  | Value       |
+| ------ | ----------- |
+| event  | `empty`     |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Payload:
 
@@ -206,18 +206,18 @@ Meaning: Every workspace is gone. Remote clients also synthesize this event loca
 Example:
 
 ```json
-{"event":"empty"}
+{ "event": "empty" }
 ```
 
 ## Implemented Attach Events
 
 ### vt-state
 
-| Field | Value |
-| --- | --- |
-| event | `vt-state` |
+| Field  | Value       |
+| ------ | ----------- |
+| event  | `vt-state`  |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Payload:
 
@@ -230,16 +230,22 @@ Meaning: Initial VT replay for an attached PTY surface. Replaying `data` into a 
 Example:
 
 ```json
-{"event":"vt-state","surface":1,"cols":80,"rows":24,"data":"G1s/bA=="}
+{
+  "event": "vt-state",
+  "surface": 1,
+  "cols": 80,
+  "rows": 24,
+  "data": "G1s/bA=="
+}
 ```
 
 ### output
 
-| Field | Value |
-| --- | --- |
-| event | `output` |
+| Field  | Value       |
+| ------ | ----------- |
+| event  | `output`    |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Payload:
 
@@ -252,16 +258,16 @@ Meaning: Live PTY bytes applied after the `vt-state` snapshot. Chunks preserve b
 Example:
 
 ```json
-{"event":"output","surface":1,"data":"bHMNCg=="}
+{ "event": "output", "surface": 1, "data": "bHMNCg==" }
 ```
 
 ### resized
 
-| Field | Value |
-| --- | --- |
-| event | `resized` |
+| Field  | Value                                   |
+| ------ | --------------------------------------- |
+| event  | `resized`                               |
 | status | implemented in protocol 6 attach stream |
-| since | protocol 6 |
+| since  | protocol 6                              |
 
 Payload:
 
@@ -274,16 +280,22 @@ Meaning: Protocol v6 attach-only event indicating that the authoritative surface
 Example:
 
 ```json
-{"event":"resized","surface":1,"cols":100,"rows":30,"replay":"G1s/bA=="}
+{
+  "event": "resized",
+  "surface": 1,
+  "cols": 100,
+  "rows": 30,
+  "replay": "G1s/bA=="
+}
 ```
 
 ### detached
 
-| Field | Value |
-| --- | --- |
-| event | `detached` |
+| Field  | Value       |
+| ------ | ----------- |
+| event  | `detached`  |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 Payload:
 
@@ -296,18 +308,18 @@ Meaning: The attach stream ended because the surface disappeared or its output t
 Example:
 
 ```json
-{"event":"detached","surface":1}
+{ "event": "detached", "surface": 1 }
 ```
 
 ## Proposed Events
 
 ### agent-state-changed
 
-| Field | Value |
-| --- | --- |
-| event | `agent-state-changed` |
-| status | implemented |
-| since | protocol 6 |
+| Field  | Value                 |
+| ------ | --------------------- |
+| event  | `agent-state-changed` |
+| status | implemented           |
+| since  | protocol 6            |
 
 Payload:
 
@@ -328,16 +340,24 @@ Meaning: The authoritative agent state for a surface changed. Hook-authority and
 Example:
 
 ```json
-{"event":"agent-state-changed","surface":1,"previous":"working","state":"blocked","source":"hook","session":"abc","updated_at_ms":1710000000000}
+{
+  "event": "agent-state-changed",
+  "surface": 1,
+  "previous": "working",
+  "state": "blocked",
+  "source": "hook",
+  "session": "abc",
+  "updated_at_ms": 1710000000000
+}
 ```
 
 ### osc-notification
 
-| Field | Value |
-| --- | --- |
-| event | `osc-notification` |
-| status | implemented |
-| since | protocol 6 (this fork; not in the original proposal) |
+| Field  | Value                                                |
+| ------ | ---------------------------------------------------- |
+| event  | `osc-notification`                                   |
+| status | implemented                                          |
+| since  | protocol 6 (this fork; not in the original proposal) |
 
 Payload:
 
@@ -357,16 +377,21 @@ This is a distinct, simpler mechanism from the `notify`/`notification`/`list-not
 Example:
 
 ```json
-{"event":"osc-notification","surface":3,"title":"","body":"Build failed"}
+{
+  "event": "osc-notification",
+  "surface": 3,
+  "title": "",
+  "body": "Build failed"
+}
 ```
 
 ### notification
 
-| Field | Value |
-| --- | --- |
-| event | `notification` |
-| status | proposed |
-| since | proposed protocol 6 |
+| Field  | Value               |
+| ------ | ------------------- |
+| event  | `notification`      |
+| status | proposed            |
+| since  | proposed protocol 6 |
 
 Payload:
 
@@ -387,7 +412,15 @@ Meaning: A notification was posted by `notify`, a hook, or an internal mux actio
 Example:
 
 ```json
-{"event":"notification","notification":44,"title":"Build failed","body":"api tests failed","level":"error","surface":1,"created_at_ms":1710000000000}
+{
+  "event": "notification",
+  "notification": 44,
+  "title": "Build failed",
+  "body": "api tests failed",
+  "level": "error",
+  "surface": 1,
+  "created_at_ms": 1710000000000
+}
 ```
 
 ## Proposed Subscribe Filters
@@ -396,15 +429,20 @@ Protocol v6 extends `subscribe` with optional filters:
 
 Params:
 
-| Name | JSON type | Required/default | Constraints |
-| --- | --- | --- | --- |
-| `events` | `array<string>` | default all | Event names to include |
-| `surfaces` | `array<IdRef>` | default all | Surface-scoped events to include |
+| Name       | JSON type       | Required/default | Constraints                      |
+| ---------- | --------------- | ---------------- | -------------------------------- |
+| `events`   | `array<string>` | default all      | Event names to include           |
+| `surfaces` | `array<IdRef>`  | default all      | Surface-scoped events to include |
 
 Request:
 
 ```json
-{"id":1,"cmd":"subscribe","events":["bell","agent-state-changed"],"surfaces":[1,"a8f3k2"]}
+{
+  "id": 1,
+  "cmd": "subscribe",
+  "events": ["bell", "agent-state-changed"],
+  "surfaces": [1, "a8f3k2"]
+}
 ```
 
 Filtering applies only to events produced after the subscription is registered. Non-surface events are included only when their event name matches `events` or when `events` is absent.

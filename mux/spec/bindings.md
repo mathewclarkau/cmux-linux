@@ -10,15 +10,15 @@ Bindings must preserve wire names and schemas. They may expose idiomatic method 
 
 Bindings must:
 
-| Requirement | Contract |
-| --- | --- |
-| Version check | Call `identify` or require the caller to supply protocol compatibility before using newer features |
-| Error handling | Preserve the server error string and expose a typed transport vs command distinction |
-| Events | Route response lines and event lines correctly on full-duplex connections |
-| Attach | Preserve attach ordering for the negotiated protocol: v5 `vt-state`, then `output`, then `detached`; v6 `vt-state`, then `(resized | output)*`, then `detached` |
-| JSON mode | Provide a way to send raw command JSON for forward compatibility |
-| Timeouts | Let callers configure request timeout without changing wire schema |
-| Ids | Use numeric ids for v5 and `IdRef` for proposed v6 |
+| Requirement    | Contract                                                                                                                           |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Version check  | Call `identify` or require the caller to supply protocol compatibility before using newer features                                 |
+| Error handling | Preserve the server error string and expose a typed transport vs command distinction                                               |
+| Events         | Route response lines and event lines correctly on full-duplex connections                                                          |
+| Attach         | Preserve attach ordering for the negotiated protocol: v5 `vt-state`, then `output`, then `detached`; v6 `vt-state`, then `(resized | output)*`, then `detached` |
+| JSON mode      | Provide a way to send raw command JSON for forward compatibility                                                                   |
+| Timeouts       | Let callers configure request timeout without changing wire schema                                                                 |
+| Ids            | Use numeric ids for v5 and `IdRef` for proposed v6                                                                                 |
 
 ## Rust
 
@@ -136,7 +136,13 @@ Event expectation steps use `type:"expect_events"`, a stream name, and an `expec
 A stream step opens a persistent stream, usually by sending `subscribe`:
 
 ```json
-{"type":"stream","name":"events","request":{"id":3,"cmd":"subscribe"},"expect":{"id":3,"ok":true},"match":"partial"}
+{
+  "type": "stream",
+  "name": "events",
+  "request": { "id": 3, "cmd": "subscribe" },
+  "expect": { "id": 3, "ok": true },
+  "match": "partial"
+}
 ```
 
 ### Worked Fixture: Subscribe And New Tab
@@ -152,7 +158,12 @@ This fixture uses only protocol v5 commands and can run against a headless serve
       "steps": [
         {
           "type": "command",
-          "request": { "id": 1, "cmd": "new-workspace", "cols": 80, "rows": 24 },
+          "request": {
+            "id": 1,
+            "cmd": "new-workspace",
+            "cols": 80,
+            "rows": 24
+          },
           "expect": { "id": 1, "ok": true },
           "match": "partial",
           "bind": { "surface0": "data.surface" }
@@ -185,9 +196,7 @@ This fixture uses only protocol v5 commands and can run against a headless serve
         {
           "type": "expect_events",
           "stream": "events",
-          "expect": [
-            { "event": "tree-changed" }
-          ]
+          "expect": [{ "event": "tree-changed" }]
         },
         {
           "type": "command",
@@ -233,11 +242,14 @@ Attach fixtures validate the replay ordering contract:
 ```json
 {
   "name": "attach-replay-then-live",
-  "surface_setup": {"cmd": "run", "command": "printf before; read x; printf after"},
-  "attach": {"cmd": "attach-surface", "surface": "$surface0"},
-  "expect_prefix": [{"event": "vt-state", "surface": "$surface0"}],
-  "actions": [{"cmd": "send", "surface": "$surface0", "text": "x\r"}],
-  "expect_later": [{"event": "output", "surface": "$surface0"}]
+  "surface_setup": {
+    "cmd": "run",
+    "command": "printf before; read x; printf after"
+  },
+  "attach": { "cmd": "attach-surface", "surface": "$surface0" },
+  "expect_prefix": [{ "event": "vt-state", "surface": "$surface0" }],
+  "actions": [{ "cmd": "send", "surface": "$surface0", "text": "x\r" }],
+  "expect_later": [{ "event": "output", "surface": "$surface0" }]
 }
 ```
 

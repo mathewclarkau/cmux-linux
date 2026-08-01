@@ -8,12 +8,12 @@ The generated CLI is `cmux <verb> ...`. The current checked-in binary also has T
 
 The CLI resolves the target session in this order:
 
-| Priority | Source |
-| --- | --- |
-| 1 | `--socket <path>` |
-| 2 | `CMUX_MUX_SOCKET` |
-| 3 | `--session <name>` using `$TMPDIR/cmux-<uid>/<session>.sock` |
-| 4 | default session `main` using the default socket path |
+| Priority | Source                                                       |
+| -------- | ------------------------------------------------------------ |
+| 1        | `--socket <path>`                                            |
+| 2        | `CMUX_MUX_SOCKET`                                            |
+| 3        | `--session <name>` using `$TMPDIR/cmux-<uid>/<session>.sock` |
+| 4        | default session `main` using the default socket path         |
 
 `--session` and `--socket` are global flags and may appear before or after the verb.
 
@@ -25,12 +25,12 @@ Human output is stable, greppable, and minimal. It must not include colors, tabl
 
 ### Exit Codes
 
-| Code | Meaning |
-| --- | --- |
-| `0` | Command succeeded |
-| `1` | Server returned `ok:false` or a stream ended with a command-level error |
-| `2` | CLI usage error, invalid flags, or invalid local argument shape |
-| `3` | Connection error, missing socket, auth failure, or transport failure before response |
+| Code | Meaning                                                                              |
+| ---- | ------------------------------------------------------------------------------------ |
+| `0`  | Command succeeded                                                                    |
+| `1`  | Server returned `ok:false` or a stream ended with a command-level error              |
+| `2`  | CLI usage error, invalid flags, or invalid local argument shape                      |
+| `3`  | Connection error, missing socket, auth failure, or transport failure before response |
 
 ### Stdin
 
@@ -48,51 +48,51 @@ The generated CLI requires one of `--index` or `--delta` for `select-tab`, `sele
 
 ## Verb Table
 
-| Verb | Status | Required flags/args | Optional flags | Human stdout |
-| --- | --- | --- | --- | --- |
-| `identify` | implemented | none | global flags | one metadata line |
-| `list-workspaces` | implemented | none | global flags | tree lines |
-| `get-resolved-config` | implemented | none | global flags | pretty JSON chrome object |
-| `send` | implemented | `--surface <id>` | `--text <text>`, `--bytes <base64>`, `--shell <mode>` | none |
-| `read-screen` | implemented | `--surface <id>` | none | screen text |
-| `vt-state` | implemented | `--surface <id>` | none | `cols=<n> rows=<n> data=<base64>` |
-| `new-tab` | implemented | none | `--pane <id>`, `--cwd <path>`, `--cols <n> --rows <n>` | surface id |
-| `new-browser-tab` | implemented | `--url <url>` | `--pane <id>`, `--cols <n> --rows <n>` | surface id |
-| `new-workspace` | implemented | none | `--name <name>`, `--cols <n> --rows <n>` | surface id |
-| `new-screen` | implemented | none | `--workspace <id>`, `--cols <n> --rows <n>` | surface id |
-| `split` | implemented | `--pane <id> --dir right|down` | `--cols <n> --rows <n>` | surface id |
-| `set-ratio` | implemented | `--pane <id> --dir right|down --ratio <n>` | none | none |
-| `set-default-colors` | implemented | none | `--fg #rrggbb`, `--bg #rrggbb` | none |
-| `get-resolved-config` | implemented | none | global flags | JSON chrome (theme/tabs/sidebar/keys); used by `cmux attach --apply-local-config`/`--print-resolved-config` to layer the local overlay over the server config |
-| `close-surface` | implemented | `--surface <id>` | none | none |
-| `close-pane` | implemented | `--pane <id>` | none | none |
-| `close-screen` | implemented | `--screen <id>` | none | none |
-| `close-workspace` | implemented | `--workspace <id>` | none | none |
-| `rename-pane` | implemented | `--pane <id> --name <name>` | none | none |
-| `rename-surface` | implemented | `--surface <id> --name <name>` | none | none |
-| `rename-screen` | implemented | `--screen <id> --name <name>` | none | none |
-| `rename-workspace` | implemented | `--workspace <id> --name <name>` | none | none |
-| `set-workspace-color` | implemented | `--workspace <id> --color <hex-or-preset>` | `--colour <hex-or-empty-string>` is a back-compatible alias | none |
-| `set-status` | implemented | `--icon <name>` | `--workspace <id>` (active workspace when omitted) | none |
-| `trigger-flash` | implemented | `--workspace <id>` | `--surface <id>` | none |
-| `resize-surface` | implemented | `--surface <id> --cols <n> --rows <n>` | none | none |
-| `focus-pane` | implemented | `--pane <id>` | none | none |
-| `select-tab` | implemented | one of `--index`, `--delta` | `--pane <id>` | none |
-| `select-screen` | implemented | one of `--index`, `--delta` | none | none |
-| `select-workspace` | implemented | one of `--index`, `--delta` | none | none |
-| `move-tab` | implemented | `--surface <id> --pane <id> --index <n>` | none | none |
-| `move-workspace` | implemented | `--workspace <id> --index <n>` | none | none |
-| `scroll-surface` | implemented | `--surface <id> --delta <n>` | none | none |
-| `subscribe` | implemented | none | none in v5 | event JSON lines |
-| `attach-surface` | implemented | `--surface <id>` | none | event JSON lines |
-| `wait-for` | proposed | `--surface <id> --pattern <regex> --timeout-ms <n>` | none | none |
-| `run` | proposed | `-- <argv...>` or `--command <cmd>` | `--pane <id>`, `--new-workspace`, `--cwd <path>`, `--name <name>` | surface id |
-| `send-key` | proposed | `--surface <id> <key>...` | none | none |
-| `copy` | proposed | `--surface <id> --mode screen|selection|scrollback` | none | text |
-| `ids` | proposed | none | `--kind workspace|screen|pane|surface` | id lines |
-| `notify` | proposed | `--title <title> --body <body>` | `--level info|warning|error`, `--surface <id>` | notification id |
-| `list-agents` | proposed | none | `--surface <id>`, `--state <state>` | agent lines |
-| `report-agent` | proposed | `--surface <id> --state <state> --source socket|hook` | `--session <id>` | none |
+| Verb                  | Status      | Required flags/args                                 | Optional flags                                                    | Human stdout                                                                                                                                                  |
+| --------------------- | ----------- | --------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identify`            | implemented | none                                                | global flags                                                      | one metadata line                                                                                                                                             |
+| `list-workspaces`     | implemented | none                                                | global flags                                                      | tree lines                                                                                                                                                    |
+| `get-resolved-config` | implemented | none                                                | global flags                                                      | pretty JSON chrome object                                                                                                                                     |
+| `send`                | implemented | `--surface <id>`                                    | `--text <text>`, `--bytes <base64>`, `--shell <mode>`             | none                                                                                                                                                          |
+| `read-screen`         | implemented | `--surface <id>`                                    | none                                                              | screen text                                                                                                                                                   |
+| `vt-state`            | implemented | `--surface <id>`                                    | none                                                              | `cols=<n> rows=<n> data=<base64>`                                                                                                                             |
+| `new-tab`             | implemented | none                                                | `--pane <id>`, `--cwd <path>`, `--cols <n> --rows <n>`            | surface id                                                                                                                                                    |
+| `new-browser-tab`     | implemented | `--url <url>`                                       | `--pane <id>`, `--cols <n> --rows <n>`                            | surface id                                                                                                                                                    |
+| `new-workspace`       | implemented | none                                                | `--name <name>`, `--cols <n> --rows <n>`                          | surface id                                                                                                                                                    |
+| `new-screen`          | implemented | none                                                | `--workspace <id>`, `--cols <n> --rows <n>`                       | surface id                                                                                                                                                    |
+| `split`               | implemented | `--pane <id> --dir right                            | down`                                                             | `--cols <n> --rows <n>`                                                                                                                                       | surface id               |
+| `set-ratio`           | implemented | `--pane <id> --dir right                            | down --ratio <n>`                                                 | none                                                                                                                                                          | none                     |
+| `set-default-colors`  | implemented | none                                                | `--fg #rrggbb`, `--bg #rrggbb`                                    | none                                                                                                                                                          |
+| `get-resolved-config` | implemented | none                                                | global flags                                                      | JSON chrome (theme/tabs/sidebar/keys); used by `cmux attach --apply-local-config`/`--print-resolved-config` to layer the local overlay over the server config |
+| `close-surface`       | implemented | `--surface <id>`                                    | none                                                              | none                                                                                                                                                          |
+| `close-pane`          | implemented | `--pane <id>`                                       | none                                                              | none                                                                                                                                                          |
+| `close-screen`        | implemented | `--screen <id>`                                     | none                                                              | none                                                                                                                                                          |
+| `close-workspace`     | implemented | `--workspace <id>`                                  | none                                                              | none                                                                                                                                                          |
+| `rename-pane`         | implemented | `--pane <id> --name <name>`                         | none                                                              | none                                                                                                                                                          |
+| `rename-surface`      | implemented | `--surface <id> --name <name>`                      | none                                                              | none                                                                                                                                                          |
+| `rename-screen`       | implemented | `--screen <id> --name <name>`                       | none                                                              | none                                                                                                                                                          |
+| `rename-workspace`    | implemented | `--workspace <id> --name <name>`                    | none                                                              | none                                                                                                                                                          |
+| `set-workspace-color` | implemented | `--workspace <id> --color <hex-or-preset>`          | `--colour <hex-or-empty-string>` is a back-compatible alias       | none                                                                                                                                                          |
+| `set-status`          | implemented | `--icon <name>`                                     | `--workspace <id>` (active workspace when omitted)                | none                                                                                                                                                          |
+| `trigger-flash`       | implemented | `--workspace <id>`                                  | `--surface <id>`                                                  | none                                                                                                                                                          |
+| `resize-surface`      | implemented | `--surface <id> --cols <n> --rows <n>`              | none                                                              | none                                                                                                                                                          |
+| `focus-pane`          | implemented | `--pane <id>`                                       | none                                                              | none                                                                                                                                                          |
+| `select-tab`          | implemented | one of `--index`, `--delta`                         | `--pane <id>`                                                     | none                                                                                                                                                          |
+| `select-screen`       | implemented | one of `--index`, `--delta`                         | none                                                              | none                                                                                                                                                          |
+| `select-workspace`    | implemented | one of `--index`, `--delta`                         | none                                                              | none                                                                                                                                                          |
+| `move-tab`            | implemented | `--surface <id> --pane <id> --index <n>`            | none                                                              | none                                                                                                                                                          |
+| `move-workspace`      | implemented | `--workspace <id> --index <n>`                      | none                                                              | none                                                                                                                                                          |
+| `scroll-surface`      | implemented | `--surface <id> --delta <n>`                        | none                                                              | none                                                                                                                                                          |
+| `subscribe`           | implemented | none                                                | none in v5                                                        | event JSON lines                                                                                                                                              |
+| `attach-surface`      | implemented | `--surface <id>`                                    | none                                                              | event JSON lines                                                                                                                                              |
+| `wait-for`            | proposed    | `--surface <id> --pattern <regex> --timeout-ms <n>` | none                                                              | none                                                                                                                                                          |
+| `run`                 | proposed    | `-- <argv...>` or `--command <cmd>`                 | `--pane <id>`, `--new-workspace`, `--cwd <path>`, `--name <name>` | surface id                                                                                                                                                    |
+| `send-key`            | proposed    | `--surface <id> <key>...`                           | none                                                              | none                                                                                                                                                          |
+| `copy`                | proposed    | `--surface <id> --mode screen                       | selection                                                         | scrollback`                                                                                                                                                   | none                     | text            |
+| `ids`                 | proposed    | none                                                | `--kind workspace                                                 | screen                                                                                                                                                        | pane                     | surface`        | id lines |
+| `notify`              | proposed    | `--title <title> --body <body>`                     | `--level info                                                     | warning                                                                                                                                                       | error`, `--surface <id>` | notification id |
+| `list-agents`         | proposed    | none                                                | `--surface <id>`, `--state <state>`                               | agent lines                                                                                                                                                   |
+| `report-agent`        | proposed    | `--surface <id> --state <state> --source socket     | hook`                                                             | `--session <id>`                                                                                                                                              | none                     |
 
 ## Plugin Verb Group
 
@@ -101,7 +101,7 @@ The generated CLI requires one of `--index` or `--delta` for `select-tab`, `sele
 directory (`$XDG_DATA_HOME/cmux`, or `~/.local/share/cmux` by default).
 
 NOT IMPLEMENTED by this group (deferred to a follow-up PR): plugin
-*execution* (proxying `cmux <plugin-name> <verb>` calls to a running
+_execution_ (proxying `cmux <plugin-name> <verb>` calls to a running
 plugin process, WASM/WASI sandboxing, the permission model). The verbs
 below only manage manifest state. Do not read them as implying execution.
 
@@ -116,13 +116,13 @@ verbs = ["deploy", "rollback"]   # required, non-empty; stored verbatim,
                                  # not proxied to anything yet
 ```
 
-| Subcommand | Required args | Optional flags | Human stdout |
-| --- | --- | --- | --- |
-| `cmux plugin list` | none | `--json`, global flags | one line per plugin (`<name> <enabled|disabled> <entry> <verb,verb>`), or `no plugins installed` when empty |
-| `cmux plugin install <manifest-path>` | `<manifest-path>` | none | `installed plugin <name> from <path>` |
-| `cmux plugin uninstall <name>` | `<name>` | none | `uninstalled plugin <name>` |
-| `cmux plugin enable <name>` | `<name>` | none | `plugin <name> enabled` (or `... already enabled`) |
-| `cmux plugin disable <name>` | `<name>` | none | `plugin <name> disabled` (or `... already disabled`) |
+| Subcommand                            | Required args     | Optional flags         | Human stdout                                         |
+| ------------------------------------- | ----------------- | ---------------------- | ---------------------------------------------------- |
+| `cmux plugin list`                    | none              | `--json`, global flags | one line per plugin (`<name> <enabled                | disabled> <entry> <verb,verb>`), or `no plugins installed` when empty |
+| `cmux plugin install <manifest-path>` | `<manifest-path>` | none                   | `installed plugin <name> from <path>`                |
+| `cmux plugin uninstall <name>`        | `<name>`          | none                   | `uninstalled plugin <name>`                          |
+| `cmux plugin enable <name>`           | `<name>`          | none                   | `plugin <name> enabled` (or `... already enabled`)   |
+| `cmux plugin disable <name>`          | `<name>`          | none                   | `plugin <name> disabled` (or `... already disabled`) |
 
 Exit codes follow the global convention: `0` success, `1` command error
 (missing/malformed manifest, name collision, unknown plugin), `2` usage
@@ -134,11 +134,11 @@ error (missing/extra positional argument, unknown subcommand).
 hooks for the six registered agents: `claude`, `antigravity`, `codex`,
 `aider`, `pi`, and `grok`.
 
-| Subcommand | Required args | Optional flags | Human stdout |
-| --- | --- | --- | --- |
-| `cmux agents list` | none | `--global` | header plus one tab-separated row per agent: name, status, version, last-installed epoch seconds, install path |
-| `cmux agents install --all` | `--all` | `--uninstall`, `--global` | one result per agent; all agents are attempted even after a failure |
-| `cmux agents install --only <agent>` | `--only <agent>` | `--uninstall`, `--global` | one result for the selected agent |
+| Subcommand                           | Required args    | Optional flags            | Human stdout                                                                                                   |
+| ------------------------------------ | ---------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `cmux agents list`                   | none             | `--global`                | header plus one tab-separated row per agent: name, status, version, last-installed epoch seconds, install path |
+| `cmux agents install --all`          | `--all`          | `--uninstall`, `--global` | one result per agent; all agents are attempted even after a failure                                            |
+| `cmux agents install --only <agent>` | `--only <agent>` | `--uninstall`, `--global` | one result for the selected agent                                                                              |
 
 `--global` is forwarded to each agent installer. `--uninstall` removes the
 managed hook instead of installing it. Install returns exit code `1` when any

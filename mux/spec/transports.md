@@ -4,10 +4,10 @@ The command schema is transport-independent. Protocol v5 implements a Unix domai
 
 ## Unix Socket
 
-| Field | Value |
-| --- | --- |
+| Field  | Value       |
+| ------ | ----------- |
 | status | implemented |
-| since | protocol 5 |
+| since  | protocol 5  |
 
 ### Path Resolution
 
@@ -58,10 +58,10 @@ Event lines do not carry request ids.
 
 The v5 socket security model is filesystem permissions:
 
-| Path | Mode |
-| --- | --- |
+| Path              | Mode   |
+| ----------------- | ------ |
 | Runtime directory | `0700` |
-| Socket file | `0600` |
+| Socket file       | `0600` |
 
 When binding, the server creates the runtime directory if needed, refuses to clobber a live socket, removes a stale socket, binds the listener, and then sets socket permissions. On clean shutdown, it removes the socket file.
 
@@ -82,10 +82,10 @@ If auth fails, the server responds with `{"ok":false,"error":"invalid token"}` a
 
 ## HTTP
 
-| Field | Value |
-| --- | --- |
-| status | proposed |
-| since | proposed protocol 6 |
+| Field  | Value               |
+| ------ | ------------------- |
+| status | proposed            |
+| since  | proposed protocol 6 |
 
 HTTP is opt-in. The server binds localhost by default when enabled:
 
@@ -106,13 +106,13 @@ POST /api/v1/command
 The request body is the same JSON command object used on the socket:
 
 ```json
-{"id":1,"cmd":"read-screen","surface":1}
+{ "id": 1, "cmd": "read-screen", "surface": 1 }
 ```
 
 The response body is the same response envelope:
 
 ```json
-{"id":1,"ok":true,"data":{"text":"ready> "}}
+{ "id": 1, "ok": true, "data": { "text": "ready> " } }
 ```
 
 The API intentionally does not expose a REST resource tree. Command names, params, results, and errors stay 1:1 with `commands.md`.
@@ -155,10 +155,10 @@ The attach ordering contract is identical to the socket `attach-surface` command
 
 ## HTTP Auth
 
-| Field | Value |
-| --- | --- |
-| status | proposed |
-| since | proposed protocol 6 |
+| Field  | Value               |
+| ------ | ------------------- |
+| status | proposed            |
+| since  | proposed protocol 6 |
 
 When HTTP is enabled securely, the server mints one token per mux session at:
 
@@ -176,21 +176,21 @@ The server compares bearer tokens using constant-time comparison. Missing, malfo
 
 Auth error responses:
 
-| HTTP status | Body | Condition |
-| --- | --- | --- |
-| `401` | `{"ok":false,"error":"missing bearer token"}` | Header absent |
-| `401` | `{"ok":false,"error":"bad authorization header"}` | Header does not use bearer format |
-| `403` | `{"ok":false,"error":"invalid bearer token"}` | Token compare fails |
-| `403` | `{"ok":false,"error":"http disabled without token"}` | HTTP requested without token and without insecure localhost opt-in |
+| HTTP status | Body                                                 | Condition                                                          |
+| ----------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
+| `401`       | `{"ok":false,"error":"missing bearer token"}`        | Header absent                                                      |
+| `401`       | `{"ok":false,"error":"bad authorization header"}`    | Header does not use bearer format                                  |
+| `403`       | `{"ok":false,"error":"invalid bearer token"}`        | Token compare fails                                                |
+| `403`       | `{"ok":false,"error":"http disabled without token"}` | HTTP requested without token and without insecure localhost opt-in |
 
 Non-auth error responses:
 
-| HTTP status | Body | Condition |
-| --- | --- | --- |
-| `200` | normal response envelope | Command decoded and dispatched, even when `ok:false` |
-| `400` | `{"ok":false,"error":"bad request: ..."}` | Malformed JSON or request shape |
-| `404` | `{"ok":false,"error":"not found"}` | Unknown HTTP path |
-| `405` | `{"ok":false,"error":"method not allowed"}` | Wrong method for path |
-| `500` | `{"ok":false,"error":"internal server error"}` | Transport-level server failure before command dispatch |
+| HTTP status | Body                                           | Condition                                              |
+| ----------- | ---------------------------------------------- | ------------------------------------------------------ |
+| `200`       | normal response envelope                       | Command decoded and dispatched, even when `ok:false`   |
+| `400`       | `{"ok":false,"error":"bad request: ..."}`      | Malformed JSON or request shape                        |
+| `404`       | `{"ok":false,"error":"not found"}`             | Unknown HTTP path                                      |
+| `405`       | `{"ok":false,"error":"method not allowed"}`    | Wrong method for path                                  |
+| `500`       | `{"ok":false,"error":"internal server error"}` | Transport-level server failure before command dispatch |
 
 `--http-insecure-localhost` permits HTTP without a token only when the bind address is loopback. It must fail for non-loopback binds.

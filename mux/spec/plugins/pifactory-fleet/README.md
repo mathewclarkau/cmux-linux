@@ -8,8 +8,8 @@ multi-pane agent dispatch via `cmux pifactory-fleet <verb>` instead of
 sourcing the shell library by hand.
 
 [i42]: https://github.com/mathewclarkau/cmux-linux/issues/42
-[pifactory]: https://example.invalid/mathewclarkau/pifactory (local-only repo;
-`scripts/cmux-panel-lib.sh` lives outside cmux-linux)
+[pifactory]: https://example.invalid/mathewclarkau/pifactory "local-only repo;
+`scripts/cmux-panel-lib.sh` lives outside cmux-linux"
 
 ## What this plugin does
 
@@ -21,13 +21,13 @@ the cmux CLI verbs `split`, `rename-surface`, `send --text ...` (often
 
 `pifactory-fleet` re-exposes the same operations as cmux-plugin verbs:
 
-| Verb       | Underlying cmux verb(s)        | Notes                             |
-|------------|--------------------------------|-----------------------------------|
-| `ping`     | `identify`                     | read-only smoke test              |
-| `status`   | `list-workspaces`              | read-only snapshot                |
-| `deploy`   | `new-workspace`                | one cmux_call per role            |
-| `dispatch` | `new-workspace`                | one cmux_call (anchor for workers)|
-| `rollback` | `close-workspace`              | one cmux_call per closed workspace|
+| Verb       | Underlying cmux verb(s) | Notes                              |
+| ---------- | ----------------------- | ---------------------------------- |
+| `ping`     | `identify`              | read-only smoke test               |
+| `status`   | `list-workspaces`       | read-only snapshot                 |
+| `deploy`   | `new-workspace`         | one cmux_call per role             |
+| `dispatch` | `new-workspace`         | one cmux_call (anchor for workers) |
+| `rollback` | `close-workspace`       | one cmux_call per closed workspace |
 
 All `cmux_call` traffic is mediated by the wasmtime host
 (`mux/crates/mux-tui/src/plugin_host.rs`): the plugin receives a
@@ -154,7 +154,7 @@ the loader will reject it as `WriteBlocked`. Bump the manifest's
 - `mux/crates/mux-tui/tests/cli.rs::plugin_install_list_uninstall_round_trip`
   is the closest existing analogue; it round-trips a hand-rolled
   `pifactory-fleet`-shaped manifest through `cmux plugin
-  install/list/uninstall` and asserts the registry state.
+install/list/uninstall` and asserts the registry state.
 - `mux/crates/mux-tui/src/plugin.rs::tests::example_pifactory_fleet_manifest_parses`
   (added with this plugin) parses the actual `cmux-plugin.toml` from
   this directory and asserts the schema values match the contract
