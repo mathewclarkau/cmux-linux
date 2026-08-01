@@ -136,6 +136,17 @@ enum Command {
         /// (`scripts/cmux-panel-lib.sh`'s `cmux_dispatch_worker_pane_interactive`).
         #[serde(default)]
         send_cr: Option<bool>,
+        /// Shell-aware input sanitisation (issue #35): one of `auto`,
+        /// `fish`, `bash`, `zsh`, `sh`, `nu`, or `raw`. `raw` (default,
+        /// when absent) writes bytes verbatim, preserving pre-#35
+        /// behaviour. A known shell gets a leading `\n` prefixed to `text`
+        /// when it starts with a shell metacharacter or contains an
+        /// unclosed quote, so `$ pwd\n` is typed literally into a fish
+        /// pane instead of being interpreted by the shell's line editor.
+        /// `auto` resolves the pane's shell from `/proc/<child-pid>/cmdline`
+        /// on Linux and falls back to `raw` on lookup failure or non-Linux.
+        #[serde(default)]
+        shell: Option<String>,
     },
     ReadScreen {
         surface: SurfaceId,
@@ -601,6 +612,142 @@ fn workspaces_json(state: &State) -> Value {
     })
 }
 
+/// Shell-aware input sanitisation for `send` (issue #35).
+///
+/// Some shells (fish especially) interpret a leading `$`, `!` or an
+/// unterminated quote in a pasted input buffer, so a `cmux send --text
+/// '$ pwd\n'` can corrupt a pane. When a known shell is selected
+/// (explicitly or via `auto`) we prefix a single `\n` to reset the
+/// line editor's buffer when the text could be mis-parsed. `raw` (the
+/// default) writes bytes verbatim — unchanged from pre-#35 behaviour.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ShellMode {
+    Auto,
+    Fish,
+    Bash,
+    Zsh,
+    Sh,
+    Nu,
+    Raw,
+}
+
+impl ShellMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            "fish" => Some(Self::Fish),
+            "bash" => Some(Self::Bash),
+            "zsh" => Some(Self::Zsh),
+            "sh" => Some(Self::Sh),
+            "nu" => Some(Self::Nu),
+            "raw" => Some(Self::Raw),
+            _ => None,
+        }
+    }
+}
+
+/// Resolve the `shell` request field to a concrete mode. Unknown values
+/// are a protocol error; `auto` resolves against the pane's child pid.
+fn resolve_shell_mode(shell: Option<&str>, child_pid: Option<u32>) -> anyhow::Result<ShellMode> {
+    match shell {
+        None => Ok(ShellMode::Raw),
+        Some(name) => match ShellMode::parse(name) {
+            Some(ShellMode::Auto) => Ok(detect_shell_from_child(child_pid)),
+            Some(mode) => Ok(mode),
+            None => {
+                anyhow::bail!("bad shell {name:?} (want auto, fish, bash, zsh, sh, nu, or raw)")
+            }
+        },
+    }
+}
+
+/// Detect the pane's shell from its PTY child process.
+///
+/// Linux: reads `/proc/<pid>/cmdline` and matches the argv[0] basename
+/// (minus a leading `-` for login shells). Falls back to `raw` on any
+/// lookup failure or on non-Linux, so `--shell auto` never errors.
+fn detect_shell_from_child(child_pid: Option<u32>) -> ShellMode {
+    #[cfg(target_os = "linux")]
+    {
+        let Some(pid) = child_pid else { return ShellMode::Raw };
+        let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
+            return ShellMode::Raw;
+        };
+        // argv[0] is the first NUL-terminated element (cmdline is
+        // NUL-separated); a login shell may be invoked with a leading `-`.
+        let argv0 = cmdline
+            .split(|&b| b == 0)
+            .next()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default();
+        let name = argv0.trim_start_matches('-').rsplit('/').next().unwrap_or("");
+        match name {
+            "fish" => ShellMode::Fish,
+            "bash" => ShellMode::Bash,
+            "zsh" => ShellMode::Zsh,
+            "sh" | "dash" => ShellMode::Sh,
+            "nu" | "nushell" => ShellMode::Nu,
+            _ => ShellMode::Raw,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = child_pid;
+        ShellMode::Raw
+    }
+}
+
+/// True when `text` has an unbalanced single or double quote, which a
+/// shell line editor would keep waiting on (holding the input buffer).
+fn has_unclosed_quote(text: &str) -> bool {
+    let mut single = false;
+    let mut double = false;
+    for c in text.chars() {
+        match c {
+            '\'' => single = !single,
+            '"' => double = !double,
+            _ => {}
+        }
+    }
+    single || double
+}
+
+/// Issue #35's table: a leading shell metacharacter (`$`, `!`, a quote,
+/// a bracket, `~`, `#`) or an unclosed quote needs a buffer reset.
+/// `sh` is not in the table (no transformation); `nu` only resets for
+/// unclosed quotes.
+fn needs_buffer_reset(mode: ShellMode, text: &str) -> bool {
+    match mode {
+        ShellMode::Raw | ShellMode::Sh | ShellMode::Auto => false,
+        ShellMode::Nu => has_unclosed_quote(text),
+        ShellMode::Fish | ShellMode::Bash | ShellMode::Zsh => {
+            has_unclosed_quote(text)
+                || text.starts_with('$')
+                || text.starts_with('!')
+                || text.starts_with('\'')
+                || text.starts_with('"')
+                || text.starts_with('(')
+                || text.starts_with('[')
+                || text.starts_with('{')
+                || text.starts_with('~')
+                || text.starts_with('#')
+        }
+    }
+}
+
+/// Apply issue #35's sanitisation: prefix a single `\n` when the text
+/// could be mis-parsed by the selected shell. `raw` passes through.
+fn sanitise_text(mode: ShellMode, text: &str) -> String {
+    if needs_buffer_reset(mode, text) {
+        let mut out = String::with_capacity(text.len() + 1);
+        out.push('\n');
+        out.push_str(text);
+        out
+    } else {
+        text.to_string()
+    }
+}
+
 fn get_surface(mux: &Mux, id: SurfaceId) -> anyhow::Result<Arc<crate::Surface>> {
     mux.surface(id).ok_or_else(|| anyhow::anyhow!("unknown surface {id}"))
 }
@@ -733,11 +880,15 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
         })),
         Command::ListWorkspaces => Ok(mux.with_state(workspaces_json)),
         Command::GetResolvedConfig => Ok(mux.resolved_chrome().unwrap_or_else(|| json!({}))),
-        Command::Send { surface, text, bytes, send_cr } => {
+        Command::Send { surface, text, bytes, send_cr, shell } => {
             let surface = get_surface(mux, surface)?;
             require_pty(&surface)?;
+            // Issue #35: shell-aware sanitisation of `text` (raw bytes
+            // via `bytes` are always written verbatim). `raw` (the
+            // default) keeps the pre-#35 passthrough behaviour.
+            let mode = resolve_shell_mode(shell.as_deref(), surface.child_pid())?;
             if let Some(text) = text {
-                let mut bytes_buf = text.into_bytes();
+                let mut bytes_buf = sanitise_text(mode, &text).into_bytes();
                 if send_cr.unwrap_or(false) {
                     bytes_buf.push(b'\r');
                 }
@@ -1226,6 +1377,64 @@ mod tests {
         assert_eq!(parse_workspace_color("#1234ab").unwrap(), Rgb { r: 0x12, g: 0x34, b: 0xab });
         assert_eq!(parse_workspace_color("blue").unwrap(), Rgb { r: 0, g: 0, b: 255 });
         assert!(parse_workspace_color("ultraviolet").is_err());
+    }
+
+    #[test]
+    fn send_shell_sanitisation_table() {
+        // Issue #35: known shells reset the input buffer (leading \n) for
+        // metacharacter-leading or quote-unbalanced text; raw passes through.
+        assert_eq!(sanitise_text(ShellMode::Fish, "$ pwd\n"), "\n$ pwd\n");
+        assert_eq!(sanitise_text(ShellMode::Bash, "$ pwd\n"), "\n$ pwd\n");
+        assert_eq!(sanitise_text(ShellMode::Zsh, "! foo\n"), "\n! foo\n");
+        assert_eq!(sanitise_text(ShellMode::Raw, "$ pwd\n"), "$ pwd\n");
+        // `sh` is not in the issue's table: no transformation.
+        assert_eq!(sanitise_text(ShellMode::Sh, "$ pwd\n"), "$ pwd\n");
+        // nu: no special handling for a leading `$`, but unclosed quotes reset.
+        assert_eq!(sanitise_text(ShellMode::Nu, "$ pwd\n"), "$ pwd\n");
+        assert_eq!(sanitise_text(ShellMode::Nu, "echo 'oops\n"), "\necho 'oops\n");
+        // Unclosed quotes reset for fish/bash/zsh too.
+        assert_eq!(sanitise_text(ShellMode::Fish, "echo 'oops\n"), "\necho 'oops\n");
+        // Balanced quotes / plain commands need no reset.
+        assert_eq!(sanitise_text(ShellMode::Fish, "echo 'hi'\n"), "echo 'hi'\n");
+        assert_eq!(sanitise_text(ShellMode::Fish, "ls -la\n"), "ls -la\n");
+    }
+
+    #[test]
+    fn send_shell_auto_falls_back_to_raw_on_lookup_failure() {
+        // No flag, a missing/bogus pid, and unmatched cmdlines all resolve
+        // to raw (never an error); unknown names are a protocol error.
+        assert_eq!(resolve_shell_mode(None, None).unwrap(), ShellMode::Raw);
+        assert_eq!(resolve_shell_mode(Some("raw"), None).unwrap(), ShellMode::Raw);
+        assert_eq!(resolve_shell_mode(Some("auto"), None).unwrap(), ShellMode::Raw);
+        assert_eq!(detect_shell_from_child(None), ShellMode::Raw);
+        assert_eq!(detect_shell_from_child(Some(u32::MAX)), ShellMode::Raw);
+        assert!(resolve_shell_mode(Some("tcsh"), None).is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn send_shell_auto_detects_shell_from_proc_cmdline() {
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+        // `sh -c 'while :; do sleep 1; done'` keeps sh as the direct child,
+        // so /proc/<pid>/cmdline's argv[0] is the shell we should detect.
+        let mut child =
+            Command::new("/bin/sh").arg("-c").arg("while :; do sleep 1; done").spawn().unwrap();
+        let pid = child.id();
+        // Retry briefly in case we read /proc before the child's exec
+        // lands (mirrors the wait-for-child pattern in process.rs tests).
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut detected = ShellMode::Raw;
+        while Instant::now() < deadline {
+            detected = detect_shell_from_child(Some(pid));
+            if detected == ShellMode::Sh {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(detected, ShellMode::Sh);
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]

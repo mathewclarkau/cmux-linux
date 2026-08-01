@@ -409,6 +409,66 @@ fn control_socket_set_default_colors_merges_fields() {
     mux_core::server::cleanup(&sock_path);
 }
 
+/// Issue #35: `send` with a known shell resets the pane's input buffer
+/// (leading `\n`) before metacharacter-leading text, while `raw` (the
+/// default) writes bytes verbatim. We run `/bin/cat` so the PTY echoes
+/// exactly the bytes written, and read them back via the terminal.
+#[test]
+fn send_shell_sanitises_text_and_raw_passes_through() {
+    let mux = Mux::new(
+        unique_session("test-send-shell"),
+        SurfaceOptions { command: Some(vec!["/bin/cat".to_string()]), ..Default::default() },
+    );
+    let surface = mux.new_workspace(None, None).unwrap();
+    let sock_path = mux_core::server::serve(mux.clone(), None).unwrap();
+    let stream = connect(&sock_path);
+    let mut writer = stream.try_clone_box().unwrap();
+    let mut reader = BufReader::new(stream);
+
+    let mut line = String::new();
+    let mut send = |writer: &mut Box<dyn transport::Stream>,
+                 id: u64,
+                 shell: &str,
+                 text: &str|
+     -> serde_json::Value {
+        writeln!(
+            writer,
+            r##"{{"id":{id},"cmd":"send","surface":{},"text":{},"shell":"{shell}"}}"##,
+            surface.id,
+            serde_json::to_string(text).unwrap()
+        )
+        .unwrap();
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        serde_json::from_str(&line).unwrap()
+    };
+
+    // raw first so we can assert it got no leading newline.
+    assert_eq!(send(&mut writer, 1, "raw", "$marker-raw\n")["ok"], true);
+    assert_eq!(send(&mut writer, 2, "fish", "$marker-fish\n")["ok"], true);
+    assert_eq!(send(&mut writer, 3, "bash", "$marker-bash\n")["ok"], true);
+
+    // The terminal sees the echoed bytes: raw verbatim (first line, no
+    // blank line before it), fish/bash with a leading newline (blank line
+    // before the marker).
+    let text = wait_for(
+        || {
+            let text = surface.with_terminal(|t| t.plain_text()).unwrap().unwrap();
+            (text.contains("marker-raw")
+                && text.contains("marker-fish")
+                && text.contains("marker-bash"))
+            .then_some(text)
+        },
+        Duration::from_secs(10),
+    )
+    .expect("markers never appeared");
+    assert!(text.starts_with("$marker-raw"), "raw must be verbatim, got: {text:?}");
+    assert!(text.contains("\n\n$marker-fish"), "fish needs a leading newline, got: {text:?}");
+    assert!(text.contains("\n\n$marker-bash"), "bash needs a leading newline, got: {text:?}");
+
+    mux_core::server::cleanup(&sock_path);
+}
+
 #[test]
 fn control_socket_broadcasts_surface_resized_once_per_changed_size() {
     let mux = Mux::new(unique_session("test-resize-event"), shell_opts("sleep 30"));

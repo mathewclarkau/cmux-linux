@@ -253,6 +253,7 @@ Params:
 | `surface` | `Id` | required | Must identify a live PTY surface |
 | `text` | `string` | default null | Written before `bytes` when both are present |
 | `bytes` | `Base64` | default null | Decoded with standard base64 |
+| `shell` | `string` | default null | One of `auto`, `fish`, `bash`, `zsh`, `sh`, `nu`, `raw` (default `raw` = verbatim passthrough, unchanged from pre-#35). `auto` resolves the pane's shell from `/proc/<pid>/cmdline` on Linux and falls back to `raw` on lookup failure or non-Linux. For a known shell, a leading `\n` is prefixed to `text` when it starts with a shell metacharacter (`$`, `!`, quote, bracket, `~`, `#`) or contains an unclosed quote, so a pasted `$ pwd` is typed literally into a fish pane (issue #35). `bytes` is never transformed. |
 
 Result:
 
@@ -275,7 +276,7 @@ CLI mapping:
 | Item | Value |
 | --- | --- |
 | Verb | `send` |
-| Flags | `--surface <id> [--text <text>] [--bytes <base64>]` |
+| Flags | `--surface <id> [--text <text>] [--bytes <base64>] [--shell <mode>]` |
 | Plain stdout | no output |
 | JSON stdout | exact result object |
 | Exit codes | common |

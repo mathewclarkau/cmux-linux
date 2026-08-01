@@ -69,7 +69,7 @@ const VERBS: &[VerbSpec] = &[
     },
     VerbSpec {
         name: "send",
-        allowed: &["surface", "text", "bytes", "send-cr"],
+        allowed: &["surface", "text", "bytes", "send-cr", "shell"],
         build: build_send,
         print: print_empty,
         stream: false,
@@ -659,6 +659,19 @@ fn build_send(flags: &FlagMap) -> Result<Value, UsageError> {
     // Default false. See `Command::Send::send_cr` in mux-core/src/server.rs.
     if let Some(send_cr) = flags.optional_bool("send-cr") {
         value["send_cr"] = json!(send_cr);
+    }
+    // `--shell` (issue #35): shell-aware input sanitisation. `raw` (the
+    // default, matching pre-#35 passthrough) writes bytes verbatim; a
+    // known shell prefixes a `\n` when the text could be mis-parsed;
+    // `auto` resolves the pane's shell from /proc on Linux. See
+    // `Command::Send::shell` in mux-core/src/server.rs.
+    if let Some(shell) = flags.optional("shell") {
+        if !matches!(shell.as_str(), "auto" | "fish" | "bash" | "zsh" | "sh" | "nu" | "raw") {
+            return Err(UsageError(format!(
+                "--shell must be one of auto, fish, bash, zsh, sh, nu, raw (got {shell:?})"
+            )));
+        }
+        value["shell"] = json!(shell);
     }
     if value.get("text").is_none() && value.get("bytes").is_none() {
         let mut text = String::new();

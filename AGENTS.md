@@ -50,6 +50,8 @@ The binary subcommands `antigravity`, `codex`, `grok`, `pi`, `aider` (and the ex
 
 **Security gotchas these files all share (review checklist):**
 
+- **Agents dispatching into cmux panes should pass `--shell fish` (or `auto`) to `cmux send`** so shell-aware sanitisation resets the pane's input buffer before metacharacter-leading text (issue #35); default stays `raw`/verbatim.
+
 - **JSON parse errors must propagate, not silently `unwrap_or_default()`.** A schema-drift user config should not be silently overwritten with `Default::default() + our hooks`.
 - **Symlink check before write.** `fs::write` on a symlink path overwrites the *target*, not the symlink. Use `fs::symlink_metadata` to detect, or `OpenOptions::new().custom_flags(libc::O_NOFOLLOW)` to fail open.
 - **Toml edits use line-by-line checks, not `String::contains()`.** A key like `docs.codex_hooks = true` would false-positive-match `contains("codex_hooks = true")`.

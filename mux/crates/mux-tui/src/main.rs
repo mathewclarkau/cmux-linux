@@ -129,6 +129,17 @@ CLI VERBS
   list-agents, browser-reload, list-sessions, kill-session, kill-stale,
   theme list
 
+SEND
+  cmux send --surface <id> --text <text> [--shell auto|fish|bash|zsh|sh|nu|raw]
+      Writes input to a PTY surface (stdin is used when neither --text nor
+      --bytes is given). --shell enables shell-aware sanitisation (issue
+      #35): with fish/bash/zsh/nu, a leading newline is prefixed when the
+      text starts with a shell metacharacter ($, !, quote, bracket, ~, #)
+      or contains an unclosed quote, so '$ pwd\n' is typed literally
+      instead of being interpreted by the shell's line editor. auto
+      resolves the pane's shell from /proc on Linux. Default: raw
+      (verbatim passthrough, unchanged from before).
+
 CLAUDE CODE HOOK INTEGRATION
   cmux claude install-hooks [--uninstall]
       Wires ~/.claude/settings.json's hooks to call `cmux claude hook`
