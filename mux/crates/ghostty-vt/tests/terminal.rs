@@ -113,6 +113,36 @@ fn alt_screen_and_modes() {
 }
 
 #[test]
+fn mouse_wheel_tracking_only_for_consuming_modes() {
+    let mut term = Terminal::new(80, 24, 0, Callbacks::default()).unwrap();
+
+    // No mouse mode: wheel events fall through to the host.
+    assert!(!term.mouse_wheel_tracking());
+
+    // Mode 1000 (normal/click-only, e.g. Claude Code) and X10 mode 9 do
+    // not report wheel motion, so the host must keep alternate-scroll.
+    term.vt_write(b"\x1b[?1000h");
+    assert!(term.mouse_tracking());
+    assert!(!term.mouse_wheel_tracking());
+    term.vt_write(b"\x1b[?1000l\x1b[?9h");
+    assert!(term.mouse_tracking());
+    assert!(!term.mouse_wheel_tracking());
+
+    // Mode 1002 (button-event) consumes the wheel.
+    term.vt_write(b"\x1b[?9l\x1b[?1002h");
+    assert!(term.mouse_wheel_tracking());
+    assert!(term.mouse_tracking());
+
+    // Mode 1003 (any-event) consumes the wheel too.
+    term.vt_write(b"\x1b[?1002l\x1b[?1003h");
+    assert!(term.mouse_wheel_tracking());
+
+    // Off again: wheel falls through to the host.
+    term.vt_write(b"\x1b[?1003l");
+    assert!(!term.mouse_wheel_tracking());
+}
+
+#[test]
 fn plain_text_dump() {
     let mut term = Terminal::new(40, 5, 0, Callbacks::default()).unwrap();
     term.vt_write(b"alpha\r\nbeta");

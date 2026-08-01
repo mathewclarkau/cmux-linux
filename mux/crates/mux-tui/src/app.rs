@@ -2895,7 +2895,7 @@ impl App {
             return Ok(RenderAction::None);
         }
         let Some(sent_arrows) = surface.with_terminal(|term| {
-            if term.active_screen() == Screen::Alternate && !term.mouse_tracking() {
+            if term.active_screen() == Screen::Alternate && !term.mouse_wheel_tracking() {
                 term.scroll_to_bottom();
                 true
             } else {
@@ -2906,8 +2906,11 @@ impl App {
             return Ok(RenderAction::None);
         };
         if sent_arrows {
-            // Alt-screen apps without mouse support get arrow keys
-            // (the usual alternate-scroll behavior).
+            // Alt-screen apps that don't consume the wheel get arrow keys
+            // (the usual alternate-scroll behavior). Button (1002) and
+            // any-motion (1003) tracking report wheel events to the app;
+            // click-only tracking (1000, e.g. Claude Code) and X10 (9) do
+            // not, so they fall through to this path too.
             let seq: &[u8] = if down { b"\x1b[B\x1b[B\x1b[B" } else { b"\x1b[A\x1b[A\x1b[A" };
             surface.write_bytes(seq);
         }
