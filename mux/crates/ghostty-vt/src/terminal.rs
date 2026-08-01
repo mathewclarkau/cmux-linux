@@ -219,6 +219,18 @@ impl Terminal {
         self.get::<bool>(sys::GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING).unwrap_or(false)
     }
 
+    /// Whether the application consumes wheel events itself via DEC
+    /// button-event (1002) or any-event (1003) mouse tracking.
+    ///
+    /// Those are the only two mouse modes that report wheel motion;
+    /// click-only tracking (X10 mode 9 and normal mode 1000) leaves wheel
+    /// events to the terminal host, so an alternate-scroll fallback still
+    /// applies for them. Use this (not [`Self::mouse_tracking`]) when
+    /// deciding whether a wheel event should be translated to arrows.
+    pub fn mouse_wheel_tracking(&self) -> bool {
+        self.mode(1002, false) || self.mode(1003, false)
+    }
+
     /// Number of scrollback rows above the viewport.
     pub fn scrollback_rows(&self) -> usize {
         self.get::<usize>(sys::GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS).unwrap_or(0)
