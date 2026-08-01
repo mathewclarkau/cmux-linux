@@ -476,6 +476,13 @@ impl Surface {
         writer.flush()
     }
 
+    /// Direct PTY child PID (the pane's shell process). Used by
+    /// `send --shell auto` to resolve the pane's shell from
+    /// `/proc/<pid>/cmdline` on Linux (issue #35).
+    pub fn child_pid(&self) -> Option<u32> {
+        self.as_pty().and_then(|pty| pty.child_pid)
+    }
+
     /// Run `f` with exclusive access to the terminal state.
     ///
     /// Browser-aware code should call [`Surface::kind`] first. This

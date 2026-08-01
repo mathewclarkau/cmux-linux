@@ -165,6 +165,53 @@ fn cli_verbs_cover_command_output_errors_and_streams() {
     assert_subscribe_reports_tree_changed(&server);
 }
 
+/// Issue #35: `--shell` is accepted for known values (and doesn't corrupt
+/// a plain command through the real binary/server) and rejected
+/// client-side with exit 2 for unknown ones.
+#[test]
+fn send_shell_flag_validates_and_accepts() {
+    let server = HeadlessServer::start("send-shell");
+    let workspace = cli(&server, &["new-workspace", "--name", "send-shell"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    // Unknown shell values are a client-side usage error (exit 2), like
+    // any other invalid flag value.
+    let bad = cli(
+        &server,
+        &[
+            "send",
+            "--surface",
+            &surface.to_string(),
+            "--text",
+            "echo ok",
+            "--shell",
+            "tcsh",
+        ],
+    );
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("--shell"));
+
+    // Known values are accepted; non-metacharacter text passes through
+    // unchanged (no buffer-reset newline needed).
+    let ok = cli(
+        &server,
+        &[
+            "send",
+            "--surface",
+            &surface.to_string(),
+            "--text",
+            "echo shell-flag-ok\n",
+            "--shell",
+            "fish",
+        ],
+    );
+    assert_success(&ok);
+    assert!(ok.stdout.is_empty(), "send should be quiet on success");
+    let screen = wait_for_screen(&server, surface, "shell-flag-ok");
+    assert!(screen.contains("shell-flag-ok"), "screen did not contain marker; got {screen:?}");
+}
+
 #[test]
 fn report_agent_and_list_agents_round_trip() {
     let server = HeadlessServer::start("agents");

@@ -53,7 +53,7 @@ The generated CLI requires one of `--index` or `--delta` for `select-tab`, `sele
 | `identify` | implemented | none | global flags | one metadata line |
 | `list-workspaces` | implemented | none | global flags | tree lines |
 | `get-resolved-config` | implemented | none | global flags | pretty JSON chrome object |
-| `send` | implemented | `--surface <id>` | `--text <text>`, `--bytes <base64>` | none |
+| `send` | implemented | `--surface <id>` | `--text <text>`, `--bytes <base64>`, `--shell <mode>` | none |
 | `read-screen` | implemented | `--surface <id>` | none | screen text |
 | `vt-state` | implemented | `--surface <id>` | none | `cols=<n> rows=<n> data=<base64>` |
 | `new-tab` | implemented | none | `--pane <id>`, `--cwd <path>`, `--cols <n> --rows <n>` | surface id |
