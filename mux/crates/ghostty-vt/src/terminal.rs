@@ -232,10 +232,9 @@ impl Terminal {
     }
 
     /// Encode a mouse wheel event as a terminal escape sequence using the
-    /// app's current mouse tracking mode and output format (SGR, UTF-8,
-    /// URxVT, X10). Returns `None` when mouse reporting is not active
-    /// (the caller should fall back to arrow keys or scrollback in that
-    /// case).
+    /// app's current mouse reporting format. Returns `None` when mouse
+    /// reporting is not active (the caller should fall back to arrow keys
+    /// or scrollback in that case).
     ///
     /// `down` = wheel down (button 5), `!down` = wheel up (button 4).
     /// `col` / `row` are 0-indexed cell coordinates where the wheel
@@ -245,56 +244,17 @@ impl Terminal {
             return None;
         }
 
-        // Create the encoder and sync its options from the terminal state
-        // (tracking mode + output format are read from the terminal).
-        let mut encoder: sys::GhosttyMouseEncoder = ptr::null_mut();
-        let result = unsafe { sys::ghostty_mouse_encoder_new(ptr::null(), &mut encoder) };
-        if result != sys::GHOSTTY_SUCCESS {
-            return None;
+        let button_code: u8 = if down { 65 } else { 64 };
+        let col1 = col.saturating_add(1) as u32;
+        let row1 = row.saturating_add(1) as u32;
+
+        if self.mode(1006, false) {
+            Some(format!("\x1b[<{button_code};{col1};{row1}M").into_bytes())
+        } else {
+            let col_byte = col1.min(223) as u8;
+            let row_byte = row1.min(223) as u8;
+            Some(vec![0x1b, b'[', b'M', 32 + button_code, 32 + col_byte, 32 + row_byte])
         }
-
-        unsafe { sys::ghostty_mouse_encoder_setopt_from_terminal(encoder, self.raw) };
-
-        // Create the mouse event: press with button 4 (up) or 5 (down).
-        let mut event: sys::GhosttyMouseEvent = ptr::null_mut();
-        let ev_result = unsafe { sys::ghostty_mouse_event_new(ptr::null(), &mut event) };
-        if ev_result != sys::GHOSTTY_SUCCESS {
-            unsafe { sys::ghostty_mouse_encoder_free(encoder) };
-            return None;
-        }
-
-        let button = if down { sys::GHOSTTY_MOUSE_BUTTON_FIVE } else { sys::GHOSTTY_MOUSE_BUTTON_FOUR };
-        unsafe {
-            sys::ghostty_mouse_event_set_action(event, sys::GHOSTTY_MOUSE_ACTION_PRESS);
-            sys::ghostty_mouse_event_set_button(event, button);
-            sys::ghostty_mouse_event_set_mods(event, 0);
-            sys::ghostty_mouse_event_set_position(
-                event,
-                sys::GhosttyMousePosition {
-                    x: col as f32,
-                    y: row as f32,
-                },
-            );
-        }
-
-        // Encode into a buffer. 64 bytes is more than enough for any
-        // mouse encoding format (SGR is the longest at ~20 bytes).
-        let mut buf = [0u8; 64];
-        let mut written: usize = 0;
-        let encode_result = unsafe {
-            sys::ghostty_mouse_encoder_encode(encoder, event, buf.as_mut_ptr() as *mut ::std::os::raw::c_char, buf.len(), &mut written)
-        };
-
-        unsafe {
-            sys::ghostty_mouse_event_free(event);
-            sys::ghostty_mouse_encoder_free(encoder);
-        }
-
-        if encode_result != sys::GHOSTTY_SUCCESS || written == 0 {
-            return None;
-        }
-
-        Some(buf[..written].to_vec())
     }
 
     /// Number of scrollback rows above the viewport.

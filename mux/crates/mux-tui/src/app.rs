@@ -1934,6 +1934,14 @@ impl App {
             }
             // No image → fall through so text Ctrl+V / agent handlers run.
         }
+        // Note: shift+enter is handled by the ghostty keybind
+        // `shift+enter=text:\x0a` (in ~/.config/ghostty/config), which
+        // sends a raw 0x0A byte. crossterm in raw mode maps 0x0A to
+        // Ctrl+J, which the ghostty VT encoder re-encodes as \n — TUIs
+        // like opencode bind ctrl+j to "insert newline". We can't
+        // intercept shift+enter at the KeyEvent level because crossterm
+        // 0.28.1 doesn't parse ghostty's \x1b[27;2;13~ (modifyOtherKeys)
+        // sequence and silently drops the event.
         let Some(input) = keys::key_input_from(key) else { return };
         let Some(surface) = self.active_surface_handle() else { return };
         self.encode_buf.clear();
@@ -2620,12 +2628,23 @@ impl App {
     }
 
     fn copy_text_to_clipboard(&self, text: &str) {
+        // OSC 52: write to the host terminal's clipboard. Works over SSH
+        // when the host terminal allows it (ghostty: clipboard-write=allow).
         let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
         let lock = self.stdout_lock.clone();
         let _guard = lock.lock().unwrap();
         let mut stdout = std::io::stdout();
         let _ = write!(stdout, "\x1b]52;c;{encoded}\x07");
         let _ = stdout.flush();
+        drop(_guard);
+
+        // Fallback: also write via a system clipboard tool (wl-copy /
+        // xclip). OSC 52 silently fails when cmux is nested inside
+        // another terminal, run over SSH to a host that doesn't forward
+        // OSC 52, or the host terminal has clipboard-write=deny. Without
+        // this fallback, the "Copied" toast shows but the clipboard is
+        // empty (reported by a contributor on v0.15+).
+        crate::clipboard::write_text(text);
     }
 
     fn copy_short_id(&mut self, short_id: String) {
@@ -2897,19 +2916,12 @@ impl App {
         let Some(action) = surface.with_terminal(|term| {
             if term.active_screen() == Screen::Alternate {
                 if term.mouse_tracking() {
-                    // App has enabled ANY mouse tracking mode (1000/1002/1003/9).
-                    // Encode the wheel as a mouse button 4/5 event so the app
-                    // can scroll its own transcript (e.g. Claude Code, opencode).
-                    // This mirrors ghostty's own Surface.zig scroll handling.
                     term.encode_mouse_wheel(down, x as u16, y as u16)
                 } else {
-                    // Alt screen with no mouse tracking: send arrow keys
-                    // (alternate-scroll behavior for less/vim/etc).
                     term.scroll_to_bottom();
                     None
                 }
             } else {
-                // Primary screen: scroll cmux's own scrollback.
                 term.scroll_delta(if down { 3 } else { -3 });
                 None
             }
@@ -2918,13 +2930,9 @@ impl App {
         };
         match action {
             Some(mouse_bytes) => {
-                // Mouse-encoded wheel event was produced — send it to the PTY.
                 surface.write_bytes(&mouse_bytes);
             }
             None => {
-                // No mouse encoding (either no mouse tracking on alt screen,
-                // or primary screen scrollback). For the alt-screen no-mouse
-                // case, send arrow keys as the alternate-scroll fallback.
                 if surface.with_terminal(|t| t.active_screen() == Screen::Alternate && !t.mouse_tracking()).unwrap_or(false) {
                     let seq: &[u8] = if down { b"\x1b[B\x1b[B\x1b[B" } else { b"\x1b[A\x1b[A\x1b[A" };
                     surface.write_bytes(seq);

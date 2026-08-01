@@ -17,6 +17,43 @@ pub fn read_text() -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+/// Write text to the desktop clipboard via a system tool (`wl-copy` for
+/// Wayland, `xclip` for X11). Returns true if a tool succeeded.
+///
+/// This is a fallback for when OSC 52 (the terminal-protocol clipboard
+/// write) doesn't reach the host terminal — e.g. when cmux is nested
+/// inside another terminal multiplexer, run over SSH, or the host
+/// terminal has `clipboard-write = deny`. OSC 52 is still tried first
+/// by the caller (it works over SSH when the host allows it); this
+/// function is the local-system safety net.
+pub fn write_text(text: &str) -> bool {
+    // Wayland: wl-copy
+    if let Ok(mut child) = std::process::Command::new("wl-copy").stdin(std::process::Stdio::piped()).spawn() {
+        if let Some(stdin) = child.stdin.as_mut() {
+            use std::io::Write;
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if child.wait().map(|s| s.success()).unwrap_or(false) {
+            return true;
+        }
+    }
+    // X11: xclip
+    if let Ok(mut child) = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+    {
+        if let Some(stdin) = child.stdin.as_mut() {
+            use std::io::Write;
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if child.wait().map(|s| s.success()).unwrap_or(false) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Read a PNG image from the desktop clipboard, if one is present.
 pub fn read_image_png() -> Option<Vec<u8>> {
     // Prefer explicit image MIME types so we don't pull text as "image".
