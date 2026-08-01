@@ -2894,25 +2894,42 @@ impl App {
             }
             return Ok(RenderAction::None);
         }
-        let Some(sent_arrows) = surface.with_terminal(|term| {
-            if term.active_screen() == Screen::Alternate && !term.mouse_wheel_tracking() {
-                term.scroll_to_bottom();
-                true
+        let Some(action) = surface.with_terminal(|term| {
+            if term.active_screen() == Screen::Alternate {
+                if term.mouse_tracking() {
+                    // App has enabled ANY mouse tracking mode (1000/1002/1003/9).
+                    // Encode the wheel as a mouse button 4/5 event so the app
+                    // can scroll its own transcript (e.g. Claude Code, opencode).
+                    // This mirrors ghostty's own Surface.zig scroll handling.
+                    term.encode_mouse_wheel(down, x as u16, y as u16)
+                } else {
+                    // Alt screen with no mouse tracking: send arrow keys
+                    // (alternate-scroll behavior for less/vim/etc).
+                    term.scroll_to_bottom();
+                    None
+                }
             } else {
+                // Primary screen: scroll cmux's own scrollback.
                 term.scroll_delta(if down { 3 } else { -3 });
-                false
+                None
             }
         }) else {
             return Ok(RenderAction::None);
         };
-        if sent_arrows {
-            // Alt-screen apps that don't consume the wheel get arrow keys
-            // (the usual alternate-scroll behavior). Button (1002) and
-            // any-motion (1003) tracking report wheel events to the app;
-            // click-only tracking (1000, e.g. Claude Code) and X10 (9) do
-            // not, so they fall through to this path too.
-            let seq: &[u8] = if down { b"\x1b[B\x1b[B\x1b[B" } else { b"\x1b[A\x1b[A\x1b[A" };
-            surface.write_bytes(seq);
+        match action {
+            Some(mouse_bytes) => {
+                // Mouse-encoded wheel event was produced — send it to the PTY.
+                surface.write_bytes(&mouse_bytes);
+            }
+            None => {
+                // No mouse encoding (either no mouse tracking on alt screen,
+                // or primary screen scrollback). For the alt-screen no-mouse
+                // case, send arrow keys as the alternate-scroll fallback.
+                if surface.with_terminal(|t| t.active_screen() == Screen::Alternate && !t.mouse_tracking()).unwrap_or(false) {
+                    let seq: &[u8] = if down { b"\x1b[B\x1b[B\x1b[B" } else { b"\x1b[A\x1b[A\x1b[A" };
+                    surface.write_bytes(seq);
+                }
+            }
         }
         Ok(RenderAction::Draw)
     }
