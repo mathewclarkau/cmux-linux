@@ -1,0 +1,45 @@
+[package]
+# This crate is NOT part of the cmux-linux workspace at `mux/Cargo.toml`.
+# Keeping it out of the workspace means:
+#   1. The cmux `cargo build` / `cargo check` cycle does not pick it
+#      up, so a missing wasm32 toolchain on a developer box does not
+#      break the main build.
+#   2. We can ship its own pinned wasm32 target without touching the
+#      main workspace's `package.resolver`.
+#   3. `cargo build --release` here compiles only this crate; it
+#      does not pull in wasmtime or any other cmux-linux deps.
+name = "cmux-pifactory-fleet"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+description = "WASM adapter for the pifactory-fleet example cmux plugin (issue #42 AC6)"
+
+[lib]
+# `cdylib` is required for the wasm32-unknown-unknown target — it
+# produces a `.wasm` file with an exported `_start` (and our
+# `_cmux_plugin_main`) symbol that the cmux loader
+# (`mux/crates/mux-tui/src/plugin_host.rs::invoke`) can instantiate.
+crate-type = ["cdylib"]
+
+# No dependencies: this crate is freestanding (`#![no_std]`). Every
+# cmux-side effect is mediated by the three host imports declared in
+# `src/lib.rs`; we do not link against any cmux-linux code.
+[dependencies]
+
+# We do NOT list cmux-linux as a dependency. The plugin's WASM talks
+# to a running cmux through `mux/crates/mux-tui/src/plugin_host.rs`
+# host imports (cmux_token / cmux_call / cmux_log). At runtime the
+# cmux binary is on the user's machine, not in this crate's
+# dependency graph.
+
+# Build profile: tiny output, optimised for size. The cmux loader
+# pre-loads every plugin WASM per invocation (no module cache yet —
+# tracked in `spec/cmux-plugin-execution.md` as a follow-up), so a
+# smaller artifact means a faster first-call UX.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

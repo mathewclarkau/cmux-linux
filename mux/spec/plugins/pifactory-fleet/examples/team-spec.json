@@ -1,0 +1,26 @@
+{
+  "$schema": "https://example.invalid/cmux-pifactory-fleet/team-spec.schema.json",
+  "fleet": "example",
+  "roles": [
+    {
+      "name": "scout",
+      "model": "haiku",
+      "prompt": "Read the README and CLAUDE.md in the workpiece; emit a one-page orientation summary."
+    },
+    {
+      "name": "planner",
+      "model": "sonnet",
+      "prompt": "Based on the scout's orientation, draft a 3-step plan to land the smallest end-to-end slice."
+    },
+    {
+      "name": "builder",
+      "model": "sonnet",
+      "prompt": "Implement the planner's slice. Touch as few files as possible; emit a diff summary when done."
+    },
+    {
+      "name": "reviewer",
+      "model": "opus",
+      "prompt": "Review the builder's diff for correctness, security, and adherence to the workspace's coding conventions."
+    }
+  ]
+}

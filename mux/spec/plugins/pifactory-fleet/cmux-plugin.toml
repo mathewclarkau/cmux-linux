@@ -1,0 +1,71 @@
+# cmux-plugin.toml for the pifactory-fleet example plugin.
+#
+# Conforms to the cmux-linux plugin manifest schema from PR #56
+# (mux/crates/mux-tui/src/plugin.rs). The schema is:
+#
+#   [plugin]
+#   name         = "<plugin id>"           # required, single path component
+#   entry        = "<relative path>"       # required, relative to install dir
+#   verbs        = ["cmux_call", "<verb>", ...]   # required, non-empty
+#
+#   [plugin.capabilities]
+#   socket        = "off" | "read" | "write"
+#   filesystem    = ["/path", ...]          # WASI preopen dirs
+#   env           = ["VAR", ...]            # explicit allowlist (not inherited)
+#   network       = "off" | "outbound"
+#   memory_mib    = <1..=4096>
+#   fuel          = <1..=1_000_000_000>
+#   max_runtime_ms = <1..=600_000>
+#
+# Notes:
+#   - "cmux_call" must appear in `verbs` so the loader
+#     (plugin::lookup_plugin) treats this as an executable plugin.
+#   - The remaining verbs in `verbs` are BOTH the plugin's high-level
+#     verbs (the user's `cmux pifactory-fleet <verb>` argv) AND the
+#     cmux_call verbs the plugin is allowed to forward to the control
+#     socket. The loader validates them against the per-call token's
+#     verb_allowlist on every cmux_call (plugin_host::validate_and_forward).
+
+[plugin]
+name = "pifactory-fleet"
+entry = "bin/fleet.wasm"
+
+# High-level verbs the plugin exposes (user types after `cmux pifactory-fleet`):
+#   ping      identify the parent cmux (read-only smoke test)
+#   status    list-workspaces snapshot
+#   deploy    create a fresh fleet: one workspace per role
+#   dispatch  one new-workspace + one send (single cmux_call, see note)
+#   rollback  close a workspace
+#
+# cmux_call verbs the plugin will forward to the control socket:
+#   identify, list-workspaces, read-screen, new-workspace, send,
+#   close-workspace.
+verbs = [
+    "cmux_call",
+    "ping",
+    "status",
+    "deploy",
+    "dispatch",
+    "rollback",
+    "identify",
+    "list-workspaces",
+    "read-screen",
+    "new-workspace",
+    "send",
+    "close-workspace",
+]
+
+# Capabilities. pifactory-fleet is a write-capable plugin: it dispatches
+# agents into fresh workspaces, sends them text, and closes them on
+# rollback. It needs HOME so it can anchor workpiece paths the way
+# cmux-panel-lib.sh does (FACTORY_ROOT). filesystem stays at the default
+# (the plugin's install dir only) so the plugin cannot read unrelated
+# project files unless the operator adds them to `filesystem` explicitly.
+[plugin.capabilities]
+socket = "write"
+filesystem = []
+env = ["HOME", "USER", "PIFACTORY_ROOT"]
+network = "off"
+memory_mib = 64
+fuel = 1000000
+max_runtime_ms = 5000
