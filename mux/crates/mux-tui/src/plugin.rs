@@ -1247,4 +1247,151 @@ mod tests {
             "rollback should not be in allowlist"
         );
     }
+
+    /// Issue #42 AC6: the pifactory-fleet example plugin ships at
+    /// `mux/spec/plugins/pifactory-fleet/`. This test verifies its
+    /// `cmux-plugin.toml` parses, that the schema values match the
+    /// contract documented in the plugin's README, and that the
+    /// entry path resolves relative to the plugin dir.
+    ///
+    /// Pure manifest-level test: it does not build or load the
+    /// `.wasm` artifact, so it is safe to run without a wasm32
+    /// toolchain installed.
+    #[test]
+    fn example_pifactory_fleet_manifest_parses() {
+        // Resolve the plugin dir from CARGO_MANIFEST_DIR.
+        // mux-tui's manifest dir is `<repo>/mux/crates/mux-tui`;
+        // the plugin sits at `<repo>/mux/spec/plugins/pifactory-fleet`.
+        let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../spec/plugins/pifactory-fleet/cmux-plugin.toml");
+        let manifest_path = manifest_path
+            .canonicalize()
+            .unwrap_or_else(|e| panic!("could not canonicalize {}: {e}", manifest_path.display()));
+        assert!(
+            manifest_path.exists(),
+            "example plugin manifest missing at {}",
+            manifest_path.display()
+        );
+        let content = fs::read_to_string(&manifest_path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", manifest_path.display()));
+        let plugin = parse_manifest(&content)
+            .unwrap_or_else(|e| panic!("pifactory-fleet manifest parse failed: {e}\n{content}"));
+
+        // Schema values the contract requires.
+        assert_eq!(plugin.name, "pifactory-fleet");
+        assert_eq!(plugin.entry, "bin/fleet.wasm");
+        assert!(
+            plugin.verbs.iter().any(|v| v == "cmux_call"),
+            "pifactory-fleet manifest must declare the cmux_call verb"
+        );
+        for verb in ["ping", "status", "deploy", "dispatch", "rollback"] {
+            assert!(
+                plugin.verbs.iter().any(|v| v == verb),
+                "pifactory-fleet manifest must expose {verb:?} as a plugin verb"
+            );
+        }
+        // cmux_call verbs the plugin forwards to the control socket.
+        for verb in [
+            "identify",
+            "list-workspaces",
+            "read-screen",
+            "new-workspace",
+            "send",
+            "close-workspace",
+        ] {
+            assert!(
+                plugin.verbs.iter().any(|v| v == verb),
+                "pifactory-fleet manifest must declare {verb:?} in its cmux_call allowlist"
+            );
+        }
+
+        // Capabilities: socket = "write" (the plugin dispatches
+        // workers and closes workspaces on rollback).
+        let caps = plugin
+            .capabilities
+            .as_ref()
+            .expect("pifactory-fleet manifest must declare [plugin.capabilities]");
+        assert_eq!(
+            caps.socket.as_deref(),
+            Some("write"),
+            "pifactory-fleet needs socket=write to deploy / dispatch / rollback"
+        );
+        assert_eq!(
+            caps.network.as_deref(),
+            Some("off"),
+            "pifactory-fleet must default network=off"
+        );
+
+        // Entry resolution: the manifest's `entry` is relative to
+        // the plugin install dir. Resolve it the same way
+        // `cmd_call` does, then check the source-tree sibling
+        // exists (the install path resolves to a real file only
+        // after `./build.sh` produces bin/fleet.wasm; we tolerate
+        // the source-tree file being absent so the test stays
+        // green before the WASM is built, but we DO confirm the
+        // path is well-formed).
+        let entry_path = manifest_path
+            .parent()
+            .expect("plugin dir is the manifest's parent")
+            .join(&plugin.entry);
+        let entry_str = entry_path.to_string_lossy();
+        assert!(
+            entry_str.ends_with("bin/fleet.wasm"),
+            "entry should resolve under plugin dir's bin/, got {entry_str}"
+        );
+        if entry_path.exists() {
+            // Optional assertion: if bin/fleet.wasm is present (the
+            // developer ran ./build.sh), confirm it is non-empty.
+            let meta = fs::metadata(&entry_path)
+                .unwrap_or_else(|e| panic!("stat {}: {e}", entry_path.display()));
+            assert!(
+                meta.len() > 0,
+                "bin/fleet.wasm should be a non-empty WASM artifact"
+            );
+        }
+    }
+
+    /// Companion to the above: the plugin's source tree should
+    /// contain the build script, the Rust source, and the reference
+    /// shell adapter that document the cmux verbs it wraps.
+    /// Catches accidental deletions of the example plugin's
+    /// supporting files.
+    #[test]
+    fn example_pifactory_fleet_sources_exist() {
+        let plugin_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../spec/plugins/pifactory-fleet");
+        let plugin_dir = plugin_dir
+            .canonicalize()
+            .unwrap_or_else(|e| panic!("could not canonicalize {}: {e}", plugin_dir.display()));
+        for rel in [
+            "cmux-plugin.toml",
+            "README.md",
+            "Cargo.toml",
+            "build.sh",
+            "src/lib.rs",
+            "bin/fleet.sh",
+            "lib/panel.sh",
+            "examples/team-spec.json",
+            ".gitignore",
+        ] {
+            let p = plugin_dir.join(rel);
+            assert!(
+                p.exists(),
+                "pifactory-fleet example plugin is missing {rel} (looked at {})",
+                p.display()
+            );
+        }
+        // build.sh and bin/fleet.sh must be executable so a user
+        // running them from a fresh checkout works.
+        use std::os::unix::fs::PermissionsExt;
+        for rel in ["build.sh", "bin/fleet.sh"] {
+            let meta = fs::metadata(plugin_dir.join(rel))
+                .unwrap_or_else(|e| panic!("stat {rel}: {e}"));
+            assert_ne!(
+                meta.permissions().mode() & 0o111,
+                0,
+                "{rel} must be executable (mode & 0o111 should be nonzero)"
+            );
+        }
+    }
 }

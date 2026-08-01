@@ -1433,3 +1433,63 @@ fn plugin_install_list_uninstall_round_trip() {
         "after uninstall list should report empty: {list2_out}"
     );
 }
+
+/// Issue #42 AC6: the shipped example plugin at
+/// `mux/spec/plugins/pifactory-fleet/` has a valid manifest that
+/// installs and lists correctly via the `cmux plugin` verb group.
+/// This guards against schema drift between the example manifest and
+/// the loader's `ManifestFile` parser.
+#[test]
+fn plugin_shipped_example_manifest_installs() {
+    let server = HeadlessServer::start("plugin-ac6");
+    let data_home = server.dir.join("xdg-data");
+    fs::create_dir_all(&data_home).unwrap();
+
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../spec/plugins/pifactory-fleet/cmux-plugin.toml")
+        .canonicalize()
+        .unwrap_or_else(|_| {
+            panic!(
+                "shipped example manifest not found relative to {}",
+                env!("CARGO_MANIFEST_DIR")
+            )
+        });
+    assert!(
+        manifest_path.exists(),
+        "shipped pifactory-fleet manifest must exist at {}",
+        manifest_path.display()
+    );
+
+    let run = |args: &[&str]| {
+        Command::new(bin())
+            .args(args)
+            .env("XDG_DATA_HOME", &data_home)
+            .env_remove("CMUX_MUX_SOCKET")
+            .output()
+            .unwrap()
+    };
+
+    let manifest_str = manifest_path.to_str().unwrap().to_string();
+    let install = run(&["plugin", "install", &manifest_str]);
+    assert_success(&install);
+
+    let list = run(&["plugin", "list"]);
+    assert_success(&list);
+    let list_out = String::from_utf8_lossy(&list.stdout);
+    assert!(
+        list_out.contains("pifactory-fleet"),
+        "shipped example plugin should list after install: {list_out}"
+    );
+    // The installed entry should preserve the entry path and the
+    // verb allowlist, both of which the loader stores verbatim.
+    // Spot-check both so a regression in `cmd_install`'s copy step
+    // is caught.
+    assert!(
+        list_out.contains("bin/fleet.wasm"),
+        "installed entry path should be preserved: {list_out}"
+    );
+    assert!(
+        list_out.contains("cmux_call"),
+        "verb allowlist should include cmux_call: {list_out}"
+    );
+}
