@@ -63,6 +63,15 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.0
 
       - name: Build
+        # CMUX_GHOSTTY_VT_ZIG_CPU=baseline pins the zig VT-library build
+        # to a portable CPU baseline instead of the GitHub runner's native
+        # ISA. Without this, zig's default target detection selects
+        # runner-native SIMD extensions (e.g. AVX-512 variants on
+        # ubuntu-latest x86_64) that SIGILL on user CPUs lacking them —
+        # the root cause of issue #58's "Host 1" SIGILL failure mode.
+        # See ghostty-vt-sys/build.rs:50-57 for the -Dcpu mechanism.
+        env:
+          CMUX_GHOSTTY_VT_ZIG_CPU: baseline
         run: ./scripts/bootstrap.sh
 
       - name: Package binary

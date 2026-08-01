@@ -38,6 +38,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use anyhow::Context;
 use mux_core::{Mux, SurfaceOptions};
 use session::{RemoteSession, Session};
 
@@ -407,7 +408,8 @@ fn run_attach(args: Args) -> anyhow::Result<()> {
         if args.apply_local_config { resolve_local_overlay(args.config.as_deref()) } else { None };
     let socket_path =
         args.socket.unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
-    let remote = RemoteSession::connect(&socket_path)?;
+    let remote = RemoteSession::connect(&socket_path)
+        .with_context(|| format!("attaching to cmux session socket at {}", socket_path.display()))?;
     // `--print-resolved-config` is an inspection escape for thin-client
     // attaches (issue #40 blocker 1): fetch the server's resolved chrome,
     // layer the local overlay on top, print the merged chrome as JSON,
@@ -523,7 +525,8 @@ fn run_server(args: Args) -> anyhow::Result<()> {
         let id = match id {
             Some(id) => id,
             None => {
-                mux.new_workspace(Some(workspace.name.clone()), None)?;
+                mux.new_workspace(Some(workspace.name.clone()), None)
+                    .with_context(|| format!("creating workspace {}", workspace.name))?;
                 mux.with_state(|state| state.workspaces.last().unwrap().id)
             }
         };
@@ -535,7 +538,8 @@ fn run_server(args: Args) -> anyhow::Result<()> {
         }
     }
     mux.enable_persistence();
-    mux_core::server::serve(mux.clone(), Some(socket_path.clone()))?;
+    mux_core::server::serve(mux.clone(), Some(socket_path.clone()))
+        .with_context(|| format!("binding control socket at {}", socket_path.display()))?;
     // Issue #27: detached companion that unlinks .sock/.pid if we die via
     // SIGKILL (handlers/atexit never run). Harmless no-op on graceful exit.
     socket_watchdog::spawn(std::process::id(), &socket_path);

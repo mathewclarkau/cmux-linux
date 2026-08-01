@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex, Weak};
 use ghostty_vt::{Callbacks, RenderState, Rgb, Terminal};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 
+use anyhow::Context;
+
 use crate::platform;
 use crate::{Mux, MuxEvent, SurfaceId};
 
@@ -279,8 +281,11 @@ impl Surface {
     ) -> anyhow::Result<Arc<Surface>> {
         let size = PtySize { rows: opts.rows, cols: opts.cols, pixel_width: 0, pixel_height: 0 };
         let pty = match &opts.remote {
-            Some(spec) => crate::remote_pty::open_remote_pty(spec, size)?,
-            None => native_pty_system().openpty(size)?,
+            Some(spec) => crate::remote_pty::open_remote_pty(spec, size)
+                .with_context(|| format!("opening remote pty for {spec:?}"))?,
+            None => native_pty_system()
+                .openpty(size)
+                .context("opening local pty (check /dev/ptmx and devpts mount)")?,
         };
 
         let argv = opts
@@ -309,12 +314,18 @@ impl Surface {
             cmd.cwd(cwd);
         }
 
-        let mut child = pty.slave.spawn_command(cmd)?;
+        let mut child = pty
+            .slave
+            .spawn_command(cmd)
+            .with_context(|| format!("spawning pty child: {}", argv.join(" ")))?;
         drop(pty.slave);
         let child_pid = child.process_id();
         let killer = child.clone_killer();
-        let mut reader = pty.master.try_clone_reader()?;
-        let writer = pty.master.take_writer()?;
+        let mut reader = pty
+            .master
+            .try_clone_reader()
+            .context("cloning pty master reader")?;
+        let writer = pty.master.take_writer().context("taking pty master writer")?;
 
         // Query responses generated while parsing pty output are queued
         // here and flushed to the pty after each vt_write (the callback

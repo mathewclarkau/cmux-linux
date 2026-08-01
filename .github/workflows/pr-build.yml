@@ -69,6 +69,12 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.0
 
       - name: Bootstrap (fetch zig 0.15.2)
+        # CMUX_GHOSTTY_VT_ZIG_CPU=baseline matches the release build —
+        # pins the zig VT-library to a portable CPU baseline so PR builds
+        # reproduce the same codegen that ships. See release.yml Build
+        # step and ghostty-vt-sys/build.rs:50-57 (issue #58 SIGILL fix).
+        env:
+          CMUX_GHOSTTY_VT_ZIG_CPU: baseline
         run: |
           ./scripts/bootstrap.sh
           echo "ZIG=$GITHUB_WORKSPACE/.tools/zig-${{ matrix.arch }}-linux-0.15.2/zig" >> "$GITHUB_ENV"
