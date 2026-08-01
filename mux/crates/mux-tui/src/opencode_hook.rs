@@ -15,7 +15,7 @@ import { exec } from "node:child_process"
 function reportAgent(state: string) {
   const surface = process.env.CMUX_MUX_SURFACE
   if (!surface) return
-  exec(`cmux report-agent --surface ${surface} --state ${state} --source opencode`)
+  exec(`cmux report-agent --surface ${surface} --state ${state} --source hook`)
 }
 
 export default async () => {
@@ -217,6 +217,6 @@ mod tests {
         assert!(CMUX_PLUGIN.contains("report-agent"));
         assert!(CMUX_PLUGIN.contains("working"));
         assert!(CMUX_PLUGIN.contains("idle"));
-        assert!(CMUX_PLUGIN.contains("opencode"));
+        assert!(CMUX_PLUGIN.contains("--source hook"));
     }
 }
