@@ -113,3 +113,7 @@ which has the browser, what URL, and how the reload loop is running (and its PID
 they can kill it later). If any step failed (e.g. dev server didn't come up in time),
 say so and what you'd try next — don't claim success you didn't verify.
 "#;
+
+pub const HOTFIX_RACE_SKILL: &str = include_str!(
+    "../../../../.agents/skills/cmux-hotfix-race/SKILL.md"
+);

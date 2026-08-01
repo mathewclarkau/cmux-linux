@@ -32,9 +32,9 @@ fn agents_list_reports_only_claude_as_installed_after_claude_install() {
     assert_success(&listed);
     let output = String::from_utf8(listed.stdout).unwrap();
     let rows = output.lines().skip(1).collect::<Vec<_>>();
-    assert_eq!(rows.len(), 6);
+    assert_eq!(rows.len(), 7);
     assert!(rows.iter().any(|row| row.starts_with("claude\tinstalled\tv0.2.0\t")));
-    for agent in ["antigravity", "codex", "aider", "pi", "grok"] {
+    for agent in ["antigravity", "codex", "aider", "pi", "grok", "opencode"] {
         let row = rows.iter().find(|row| row.starts_with(&format!("{agent}\t"))).unwrap();
         assert!(row.contains("\tnot-installed\t-\t-\t"), "unexpected row: {row}");
     }

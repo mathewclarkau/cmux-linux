@@ -24,6 +24,7 @@ mod help;
 mod hook_merge;
 mod host_colors;
 mod keys;
+mod opencode_hook;
 mod pi_hook;
 mod plugin;
 mod plugin_host;
@@ -74,6 +75,7 @@ USAGE:
   cmux pi install-hooks           Pi agent extension integration (see below)
   cmux aider install-hooks        Aider wrapper integration (see below)
   cmux grok install-hooks         Grok CLI hook integration (see below)
+  cmux opencode install-hooks     opencode plugin integration (see below)
   cmux agents <list|install>     Manage all agent hook integrations (see below)
   cmux plugin <subcommand> Manage cmux-plugin.toml manifests (see below)
   cmux ssh <host> [OPTS]   Open a remote workspace over SSH (see below)
@@ -306,6 +308,9 @@ fn main() {
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("grok") {
         std::process::exit(grok_hook::run(&raw_args[1..]));
+    }
+    if raw_args.first().map(|arg| arg.as_str()) == Some("opencode") {
+        std::process::exit(opencode_hook::run(&raw_args[1..]));
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("theme") {
         match raw_args.get(1).map(String::as_str) {

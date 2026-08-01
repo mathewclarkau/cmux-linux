@@ -19,6 +19,7 @@ const REGISTRY: &[AgentSpec] = &[
     AgentSpec { name: "aider", runner: crate::aider_hook::run, path: aider_path },
     AgentSpec { name: "pi", runner: crate::pi_hook::run, path: pi_path },
     AgentSpec { name: "grok", runner: crate::grok_hook::run, path: grok_path },
+    AgentSpec { name: "opencode", runner: crate::opencode_hook::run, path: opencode_path },
 ];
 
 pub fn run(args: &[String]) -> i32 {
@@ -181,7 +182,14 @@ fn grok_path(global: bool) -> Option<PathBuf> {
     if global {
         home_join(&[".grok", "hooks.json"])
     } else {
-        Some(PathBuf::from(".grok/hooks.json"))
+        Some(PathBuf::from(".grok").join("hooks.json"))
+    }
+}
+fn opencode_path(global: bool) -> Option<PathBuf> {
+    if global {
+        home_join(&[".config", "opencode", "plugin", "cmux.ts"])
+    } else {
+        Some(PathBuf::from(".opencode").join("plugin").join("cmux.ts"))
     }
 }
 
