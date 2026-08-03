@@ -99,6 +99,7 @@ OPTIONS:
                     --apply-local-config), print the merged chrome as JSON,
                     and exit without starting the TUI. For inspecting
                     overlay layering without a live terminal.
+  -V, --version      Print the cmux version and exit.
   -h, --help         Show this help.
 
 KEYS (prefix: Ctrl-b)
@@ -237,6 +238,10 @@ struct Args {
     config: Option<PathBuf>,
 }
 
+/// cmux version, taken from `crates/mux-tui/Cargo.toml` at compile time.
+/// Surfaced by `cmux --version` / `cmux -V` (issue #59).
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
     let mut out = Args {
         attach: false,
@@ -278,6 +283,13 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
                 print!("{USAGE}");
                 std::process::exit(0);
             }
+            // Issue #59: `cmux --version` (and `-V`) should print the
+            // compiled-in version and exit 0 — not the USAGE. Mirrors
+            // the convention used by git, cargo, tmux, and most CLIs.
+            "-V" | "--version" => {
+                println!("cmux {VERSION}");
+                std::process::exit(0);
+            }
             other => usage_exit(&format!("unknown argument {other:?}")),
         }
     }
@@ -289,6 +301,14 @@ fn main() {
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
     if raw_args.first().map(|arg| arg.as_str()) == Some("help") {
         print!("{USAGE}");
+        std::process::exit(0);
+    }
+    // Issue #59: short-circuit `-V` / `--version` as the very first
+    // argument so it works even if the user has somehow shadowed the
+    // flag with a same-named plugin. `parse_args` handles it in any
+    // other position.
+    if matches!(raw_args.first().map(String::as_str), Some("-V" | "--version")) {
+        println!("cmux {VERSION}");
         std::process::exit(0);
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("claude") {

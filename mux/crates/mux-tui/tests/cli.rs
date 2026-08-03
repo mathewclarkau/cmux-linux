@@ -1540,3 +1540,58 @@ fn plugin_shipped_example_manifest_installs() {
         "verb allowlist should include cmux_call: {list_out}"
     );
 }
+
+/// Issue #59: `cmux --version` (and `cmux -V`) should print the
+/// compiled-in version and exit 0 — not the USAGE. The output must
+/// match `env!("CARGO_PKG_VERSION")` from the cmux binary's manifest
+/// so a stale in-source version constant can't drift from the Cargo
+/// version.
+#[test]
+fn version_flag_prints_cargo_version_and_exits_zero() {
+    let expected_version = env!("CARGO_PKG_VERSION");
+
+    let run = |args: &[&str]| {
+        Command::new(bin())
+            .args(args)
+            .env_remove("CMUX_MUX_SOCKET")
+            .output()
+            .unwrap()
+    };
+
+    // Long form.
+    let long = run(&["--version"]);
+    assert_success(&long);
+    let long_out = String::from_utf8_lossy(&long.stdout).trim_end().to_string();
+    assert_eq!(
+        long_out,
+        format!("cmux {expected_version}"),
+        "--version should print `cmux <CARGO_PKG_VERSION>` exactly"
+    );
+    assert!(
+        long.stderr.is_empty(),
+        "--version should not write to stderr; got: {}",
+        String::from_utf8_lossy(&long.stderr)
+    );
+
+    // Short form.
+    let short = run(&["-V"]);
+    assert_success(&short);
+    let short_out = String::from_utf8_lossy(&short.stdout).trim_end().to_string();
+    assert_eq!(
+        short_out,
+        format!("cmux {expected_version}"),
+        "-V should print the same `cmux <CARGO_PKG_VERSION>` line as --version"
+    );
+
+    // `--version` after another flag should still short-circuit (we
+    // exit before consuming further args), proving the handler sits
+    // inside the parse loop and not just as a subcommand dispatch.
+    let mixed = run(&["--headless", "--version"]);
+    assert_success(&mixed);
+    let mixed_out = String::from_utf8_lossy(&mixed.stdout).trim_end().to_string();
+    assert_eq!(
+        mixed_out,
+        format!("cmux {expected_version}"),
+        "--version after another flag should still print the version"
+    );
+}
