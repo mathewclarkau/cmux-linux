@@ -283,9 +283,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
                 print!("{USAGE}");
                 std::process::exit(0);
             }
-            // Issue #59: `cmux --version` (and `-V`) should print the
-            // compiled-in version and exit 0 — not the USAGE. Mirrors
-            // the convention used by git, cargo, tmux, and most CLIs.
+            // Issue #59: print version and exit. Sits next to `-h`/`--help`
+            // so it works in any position (e.g. `cmux --headless -V`).
             "-V" | "--version" => {
                 println!("cmux {VERSION}");
                 std::process::exit(0);
@@ -301,14 +300,6 @@ fn main() {
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
     if raw_args.first().map(|arg| arg.as_str()) == Some("help") {
         print!("{USAGE}");
-        std::process::exit(0);
-    }
-    // Issue #59: short-circuit `-V` / `--version` as the very first
-    // argument so it works even if the user has somehow shadowed the
-    // flag with a same-named plugin. `parse_args` handles it in any
-    // other position.
-    if matches!(raw_args.first().map(String::as_str), Some("-V" | "--version")) {
-        println!("cmux {VERSION}");
         std::process::exit(0);
     }
     if raw_args.first().map(|arg| arg.as_str()) == Some("claude") {
