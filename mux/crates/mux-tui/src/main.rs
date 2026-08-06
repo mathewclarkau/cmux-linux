@@ -99,6 +99,7 @@ OPTIONS:
                     --apply-local-config), print the merged chrome as JSON,
                     and exit without starting the TUI. For inspecting
                     overlay layering without a live terminal.
+  -V, --version      Print the cmux version and exit.
   -h, --help         Show this help.
 
 KEYS (prefix: Ctrl-b)
@@ -237,6 +238,10 @@ struct Args {
     config: Option<PathBuf>,
 }
 
+/// cmux version, taken from `crates/mux-tui/Cargo.toml` at compile time.
+/// Surfaced by `cmux --version` / `cmux -V` (issue #59).
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
     let mut out = Args {
         attach: false,
@@ -276,6 +281,12 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
             }
             "-h" | "--help" => {
                 print!("{USAGE}");
+                std::process::exit(0);
+            }
+            // Issue #59: print version and exit. Sits next to `-h`/`--help`
+            // so it works in any position (e.g. `cmux --headless -V`).
+            "-V" | "--version" => {
+                println!("cmux {VERSION}");
                 std::process::exit(0);
             }
             other => usage_exit(&format!("unknown argument {other:?}")),

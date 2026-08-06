@@ -1540,3 +1540,34 @@ fn plugin_shipped_example_manifest_installs() {
         "verb allowlist should include cmux_call: {list_out}"
     );
 }
+
+/// Issue #59: `cmux --version` / `-V` print `cmux <CARGO_PKG_VERSION>`
+/// and exit 0. Output is pinned to the package version so a stale
+/// hard-coded string cannot drift from Cargo.toml.
+#[test]
+fn version_flag_prints_cargo_version_and_exits_zero() {
+    let expected = format!("cmux {}", env!("CARGO_PKG_VERSION"));
+
+    let run = |args: &[&str]| {
+        Command::new(bin())
+            .args(args)
+            .env_remove("CMUX_MUX_SOCKET")
+            .output()
+            .unwrap()
+    };
+
+    for args in [&["--version"][..], &["-V"][..], &["--headless", "--version"][..]] {
+        let out = run(args);
+        assert_success(&out);
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim_end(),
+            expected,
+            "args {args:?} should print `{expected}`"
+        );
+        assert!(
+            out.stderr.is_empty(),
+            "args {args:?} should write nothing to stderr; got: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
