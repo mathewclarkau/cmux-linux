@@ -17,6 +17,31 @@
 //! {"id":1,"cmd":"identify"}
 //! {"id":1,"ok":true,"data":{"app":"cmux","session":"main",...}}
 //! ```
+//!
+//! ## `rename-session` (issue #63)
+//!
+//! `cmux rename-session --old X --new Y` connects to the `X` socket and
+//! sends `{"cmd":"rename-session","new_name":"Y"}`. The daemon renames
+//! THIS session in place: `rename(2)` the `.sock` and `.pid` to the new
+//! names, flip `Mux.session`, reparent the snapshot file, and keep serving.
+//! The listener **never rebinds**: on a bound `AF_UNIX` `SOCK_STREAM`
+//! socket, `rename(2)` reparents the dirent while the kernel keeps the
+//! listener bound to the inode (pinned by `unix_socket_survives_rename`),
+//! so the daemon stays reachable only at the new path.
+//!
+//! Ordering: pid file moves first; the socket rename is the commit point
+//! (only it changes reachability), so a pid-rename failure bails before
+//! anything is committed. Partial failure is self-healing. A LIVE target
+//! is refused (`session "Y" already exists`); a STALE target is cleared.
+//!
+//! **Lifetime guarantee (AC4):** existing panes keep the `CMUX_MUX_SOCKET`
+//! they inherited at spawn (the old path) for their lifetime — this is
+//! intentional, not a bug. Panes spawned AFTER the rename inherit the new
+//! path (`Mux::refresh_socket_env` rewrites the env on every spawn from
+//! `socket_path()`, the single source of truth). The startup-path socket
+//! watchdog still points at the original path; a SIGKILL after rename is
+//! handled by the next `serve()` stale-clear / `kill-stale` (an L3
+//! follow-up can respawn the watchdog for the new path).
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -107,15 +132,34 @@ pub fn is_session_socket_live(socket_path: &Path) -> bool {
     true
 }
 
-/// Reject session names that are unsafe as filesystem path components
-/// (the name becomes `<name>.sock` / `<name>.pid` /
-/// `<name>.json`). SECURITY: a `/` or `\0` is a path-traversal /
-/// NUL-injection vector (AGENTS.md review checklist).
-///
-/// RED-suite compile scaffolding (issue #63 L2, commit 2): this stub
-/// accepts everything so the T12 table test is RED. The real
-/// validation lands in the `feat(mux-core)` commit and turns T12 green.
-pub fn validate_session_name(_name: &str) -> anyhow::Result<()> {
+/// Reject session names that are unsafe as filesystem path components.
+/// The name becomes `<name>.sock` / `<name>.pid` /
+/// `$XDG_STATE_HOME/cmux/sessions/<name>.json`, so a `/` or `\0` is a
+/// path-traversal / NUL-injection vector (AGENTS.md review checklist).
+/// Called from BOTH the CLI (`run_rename_session`, client-side defence)
+/// and the server (`RenameSession` handler, the security authority).
+pub fn validate_session_name(name: &str) -> anyhow::Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("session name cannot be empty");
+    }
+    if name.contains('/') || name.contains('\\') {
+        anyhow::bail!("session name cannot contain a path separator");
+    }
+    if name.contains('\0') {
+        anyhow::bail!("session name cannot contain NUL");
+    }
+    if name.chars().any(|c| c.is_control()) {
+        anyhow::bail!("session name cannot contain control characters");
+    }
+    if name != name.trim() {
+        anyhow::bail!("session name cannot have leading/trailing whitespace");
+    }
+    if matches!(name, "." | "..") {
+        anyhow::bail!("session name cannot be \".\" or \"..\"");
+    }
+    if name.len() > 255 {
+        anyhow::bail!("session name too long (max 255)");
+    }
     Ok(())
 }
 
@@ -433,6 +477,22 @@ enum Command {
         surface: Option<SurfaceId>,
         #[serde(default)]
         state: Option<String>,
+    },
+    /// Rename THIS daemon's session (issue #63): atomically move its
+    /// `.sock`/`.pid` to the new name, update the logical session name,
+    /// and best-effort reparent the persisted snapshot file. The listener
+    /// keeps accepting at the NEW path — `rename(2)` on a bound `AF_UNIX`
+    /// socket reparents the dirent while the kernel keeps the listener
+    /// bound to the inode (pinned by the `unix_socket_survives_rename`
+    /// unit test), so the daemon never rebinds. Carries only `new_name`:
+    /// the daemon is authoritative about its own identity. Issued by
+    /// `cmux rename-session --old X --new Y` after the CLI has connected
+    /// to the old socket. Backward compatible (no protocol-version bump):
+    /// old servers hit serde's unknown-variant path; the attach client
+    /// never emits it. Response:
+    /// `{"session":"bar","socket_path":"...","pid":<daemon-pid>}`.
+    RenameSession {
+        new_name: String,
     },
 }
 
@@ -1250,6 +1310,74 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                 .map(|(id, report)| agent_report_json(*id, report))
                 .collect::<Vec<_>>();
             Ok(json!({ "agents": agents }))
+        }
+        Command::RenameSession { new_name } => {
+            // Issue #63. Scout-plan Q4 ordering: the socket rename is the
+            // commit point (only it changes reachability), so the pid moves
+            // FIRST — if that fails we bail before touching the socket and
+            // nothing is committed. Partial failure is self-healing (Q4).
+            //
+            // Q4.1: validate (server is the security authority; the CLI also
+            // pre-validates for defence in depth).
+            validate_session_name(&new_name)?;
+
+            let old_name = mux.session_name();
+            let old_sock = mux
+                .socket_path()
+                .ok_or_else(|| anyhow::anyhow!("rename-session issued before the socket was bound"))?;
+            let parent = old_sock
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("socket path has no parent directory"))?;
+            let new_sock = parent.join(format!("{new_name}.sock"));
+            let old_pid = pid_path(&old_sock);
+            let new_pid = pid_path(&new_sock);
+
+            // Q4.2: resolve + clear target. Refuse a LIVE target; clobber a
+            // stale one (mirrors serve()'s stale-clear policy).
+            if is_session_socket_live(&new_sock) {
+                anyhow::bail!("session {new_name:?} already exists");
+            }
+            if new_sock.exists() {
+                let _ = std::fs::remove_file(&new_sock);
+            }
+            if new_pid.exists() {
+                let _ = std::fs::remove_file(&new_pid);
+            }
+
+            // Q4.3: rename the pid file first. If this fails, bail before the
+            // socket rename commits — old state stays fully intact.
+            std::fs::rename(&old_pid, &new_pid)
+                .map_err(|e| anyhow::anyhow!("rename failed: {e}"))?;
+            // Q4.4: rename the socket — the COMMIT point. From here the daemon
+            // is reachable only at new_sock (the listener, bound to the inode,
+            // keeps accepting there: see unix_socket_survives_rename).
+            std::fs::rename(&old_sock, &new_sock)
+                .map_err(|e| anyhow::anyhow!("rename failed: {e}"))?;
+
+            // Q4.5: update state (logical name + canonical socket path).
+            mux.set_session_name(new_name.clone());
+            mux.set_socket_path(new_sock.clone());
+
+            // Q4.6: best-effort reparent of the persisted snapshot. If we only
+            // flipped Mux.session, the next write_snapshot would target the
+            // new path while the old file orphaned, and restore_session on a
+            // fresh `bar` start would find nothing (silent data loss across
+            // rename+restart). Benign race with the debounced persist writer
+            // (it reads Mux.session post-update, so at worst rewrites the new
+            // file with the same tree).
+            let old_snap = platform::session_snapshot_path(&old_name);
+            let new_snap = platform::session_snapshot_path(&new_name);
+            if old_snap.exists() {
+                let _ = std::fs::remove_file(&new_snap);
+                let _ = std::fs::rename(&old_snap, &new_snap);
+            }
+
+            // Q4.7/Q2: response. `pid` proves the same daemon keeps serving.
+            Ok(json!({
+                "session": new_name,
+                "socket_path": new_sock,
+                "pid": std::process::id(),
+            }))
         }
         Command::Subscribe => {
             let events = mux.subscribe();

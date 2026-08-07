@@ -142,6 +142,12 @@ impl Mux {
         *self.socket_path.lock().unwrap() = Some(path);
     }
 
+    /// Update the logical session name. Called by the `rename-session`
+    /// handler after the socket/pid files have moved (issue #63).
+    pub(crate) fn set_session_name(&self, name: String) {
+        *self.session.lock().unwrap() = name;
+    }
+
     /// Update the `CMUX_MUX_SOCKET` entry in a cloned `SurfaceOptions` so a
     /// newly-spawned pane inherits the daemon's *current* live socket path
     /// (not the stale startup path). Existing panes keep whatever they
