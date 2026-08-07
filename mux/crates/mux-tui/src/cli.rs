@@ -1124,7 +1124,6 @@ fn rename_rpc(socket: &std::path::Path, new_name: &str) -> RenameOutcome {
 /// Send `rename-session` to the daemon bound at `socket_path` and return
 /// the new socket path on success. Shared by the picker's `r` flow so the
 /// TUI keybinding and the CLI verb exercise one code path (`rename_rpc`).
-#[allow(dead_code)] // wired by the picker 'r' flow (next commit); unused until then.
 pub(crate) fn rename_session_at(
     socket_path: &std::path::Path,
     new_name: &str,

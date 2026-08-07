@@ -58,6 +58,15 @@ enum Mode {
     },
     /// Inline new-session name prompt (Claim 5). Enter attaches/creates.
     NewSession(TextInput),
+    /// Inline rename of the focused LIVE session (issue #63 L2, Q7).
+    /// `socket_path` is the session's current socket (commit sends
+    /// rename-session over it); `old_name` is shown in the prompt and
+    /// pre-fills the input.
+    RenameSession {
+        socket_path: PathBuf,
+        old_name: String,
+        input: TextInput,
+    },
 }
 
 /// Interactive modal picker. Restores the terminal on every return path
@@ -255,6 +264,66 @@ fn dispatch(
                 InputEvent::None | InputEvent::Changed => Action::Redraw,
             }
         }
+        Mode::RenameSession { socket_path, old_name, input } => {
+            match input.handle_key(key) {
+                InputEvent::Commit => {
+                    let new_name = input.as_str().trim().to_string();
+                    let socket_path = socket_path.clone();
+                    let old_name = old_name.clone();
+                    if new_name.is_empty() {
+                        *status = "session name cannot be empty".to_string();
+                        *mode = Mode::Browse;
+                        return Action::Redraw;
+                    }
+                    // Unchanged name = cancel (no-op).
+                    if new_name == old_name {
+                        *status = format!("unchanged ({old_name})");
+                        *mode = Mode::Browse;
+                        return Action::Redraw;
+                    }
+                    // Server-side validation (defence in depth; the CLI verb
+                    // also validates, but the picker talks to the helper
+                    // directly, so check here too).
+                    if let Err(e) = mux_core::server::validate_session_name(&new_name) {
+                        *status = e.to_string();
+                        *mode = Mode::Browse;
+                        return Action::Redraw;
+                    }
+                    // Refuse if another LIVE session already has the name.
+                    if sessions.iter().any(|s| s.session == new_name && s.live) {
+                        *status = format!("session {new_name:?} already exists");
+                        *mode = Mode::Browse;
+                        return Action::Redraw;
+                    }
+                    match cli::rename_session_at(&socket_path, &new_name) {
+                        Ok(_) => {
+                            *sessions = refresh(global);
+                            // Keep focus on the renamed row (now listed under
+                            // its new name, newest-first).
+                            if let Some(i) = sessions
+                                .iter()
+                                .position(|s| s.session == new_name && s.live)
+                            {
+                                state.select(Some(i));
+                            }
+                            *status = format!("renamed {old_name} → {new_name}");
+                            *mode = Mode::Browse;
+                            Action::Redraw
+                        }
+                        Err(e) => {
+                            *status = format!("rename failed: {e}");
+                            *mode = Mode::Browse;
+                            Action::Redraw
+                        }
+                    }
+                }
+                InputEvent::Cancel => {
+                    *mode = Mode::Browse;
+                    Action::Redraw
+                }
+                InputEvent::None | InputEvent::Changed => Action::Redraw,
+            }
+        }
     }
 }
 
@@ -316,9 +385,22 @@ fn browse_key(
             *mode = Mode::NewSession(TextInput::new(String::new()));
             Action::Redraw
         }
-        // Claim 7: rename stub (Q1: stub message; L2 swap-in, no UX change).
+        // Issue #63 L2 (Q7): rename the focused LIVE session inline. A
+        // stale/unfocused row gets a hint (nothing to rename).
         KeyCode::Char('r') => {
-            *status = "rename not yet available — coming in L2 (rename-session)".to_string();
+            if let Some(i) = state.selected() {
+                if let Some(s) = sessions.get(i) {
+                    if s.live {
+                        *mode = Mode::RenameSession {
+                            socket_path: s.socket_path.clone(),
+                            old_name: s.session.clone(),
+                            input: TextInput::new(s.session.clone()),
+                        };
+                        return Action::Redraw;
+                    }
+                }
+            }
+            *status = "no live session focused to rename (move to a live row)".to_string();
             Action::Redraw
         }
         KeyCode::Esc | KeyCode::Char('q') => Action::Quit,
@@ -426,7 +508,7 @@ fn draw(
         match mode {
             Mode::Browse => {
                 lines.push(Line::from(Span::styled(
-                    "↑/↓ or j/k move · Enter attach · x kill · s kill-stale · n new · r rename · q/Esc quit · Ctrl-C abort",
+                    "↑/↓ or j/k move · Enter attach · x kill · s kill-stale · n new · r rename focused · q/Esc quit · Ctrl-C abort",
                     Style::default().fg(Color::DarkGray),
                 )));
             }
@@ -448,6 +530,18 @@ fn draw(
                 let (visible, cur) = input.visible_text_and_cursor(chunks[1].width as usize);
                 let mut spans =
                     vec![Span::styled("new session name: ", Style::default().fg(Color::Cyan))];
+                spans.push(Span::raw(visible.clone()));
+                if cur < visible.len() {
+                    spans.push(Span::raw(visible[cur..].to_string()));
+                }
+                lines.push(Line::from(spans));
+            }
+            Mode::RenameSession { old_name, input, .. } => {
+                let (visible, cur) = input.visible_text_and_cursor(chunks[1].width as usize);
+                let mut spans = vec![Span::styled(
+                    format!("rename {old_name} → "),
+                    Style::default().fg(Color::Cyan),
+                )];
                 spans.push(Span::raw(visible.clone()));
                 if cur < visible.len() {
                     spans.push(Span::raw(visible[cur..].to_string()));
