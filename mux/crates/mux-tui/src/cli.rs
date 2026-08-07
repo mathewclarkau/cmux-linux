@@ -869,6 +869,7 @@ pub(crate) fn read_pid_file(path: &std::path::Path) -> Option<u32> {
 /// `socket_path` is the exact path to reconnect to; `mtime` is for the
 /// picker's newest-first sort (pid-file mtime preferred — the socket mtime
 /// can shift on each connect — falling back to socket mtime, then `None`).
+#[derive(Clone)]
 pub(crate) struct DiscoveredSession {
     pub(crate) session: String,
     pub(crate) socket_path: PathBuf,
@@ -981,23 +982,15 @@ pub(crate) fn run_attach_session_list_json(global: &GlobalArgs) -> i32 {
     }
 }
 
-fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
-    let target_session = flags.optional("session").or_else(|| global.session.clone());
-    let Some(session_name) = target_session else {
-        eprintln!("cmux: --session is required");
-        return 2;
-    };
-
-    let dir = get_runtime_dir(global);
-    let sock_path = dir.join(format!("{session_name}.sock"));
-    let pid_p = dir.join(format!("{session_name}.pid"));
-
-    if !sock_path.exists() && !pid_p.exists() {
-        eprintln!("cmux: session {session_name:?} not found");
-        return 1;
-    }
-
-    if let Some(pid) = read_pid_file(&pid_p) {
+/// Kill the cmux process owning `socket_path` (SIGTERM, escalate to SIGKILL
+/// after 2s, reap up to 1s more) and remove its `.sock`/`.pid`. Shared by
+/// `run_kill_session` and the picker's kill-focused (Claim 3). Returns true
+/// if the pidfile named a live cmux process that was signalled (regardless
+/// of whether it died in time); false if there was no pid / no cmux process.
+/// The `.sock`/`.pid` are removed unconditionally, matching the historical
+/// `run_kill_session` behaviour.
+pub(crate) fn kill_session_at(socket_path: &std::path::Path, pid: Option<u32>) -> bool {
+    if let Some(pid) = pid {
         if mux_core::server::is_cmux_process(pid) {
             unsafe {
                 libc::kill(pid as libc::pid_t, libc::SIGTERM);
@@ -1023,9 +1016,30 @@ fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
             }
         }
     }
-
-    let _ = std::fs::remove_file(&sock_path);
+    let pid_p = mux_core::server::pid_path(socket_path);
+    let _ = std::fs::remove_file(socket_path);
     let _ = std::fs::remove_file(&pid_p);
+    pid.is_some()
+}
+
+fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
+    let target_session = flags.optional("session").or_else(|| global.session.clone());
+    let Some(session_name) = target_session else {
+        eprintln!("cmux: --session is required");
+        return 2;
+    };
+
+    let dir = get_runtime_dir(global);
+    let sock_path = dir.join(format!("{session_name}.sock"));
+    let pid_p = dir.join(format!("{session_name}.pid"));
+
+    if !sock_path.exists() && !pid_p.exists() {
+        eprintln!("cmux: session {session_name:?} not found");
+        return 1;
+    }
+
+    let pid = read_pid_file(&pid_p);
+    kill_session_at(&sock_path, pid);
 
     if global.json {
         println!("{}", json!({ "ok": true }));

@@ -28,6 +28,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Terminal as RatatuiTerminal;
 
 use crate::cli::{self, DiscoveredSession, GlobalArgs};
+use crate::ui::input::{InputEvent, TextInput};
 
 /// What the picker decided. `main()` maps this to an exit code / attach.
 pub(crate) enum PickerOutcome {
@@ -39,6 +40,24 @@ pub(crate) enum PickerOutcome {
     Quit { destructive: bool },
     /// Ctrl-C.
     CtrlC,
+}
+
+/// Inline modal the loop can be in. `Browse` is the default list; the others
+/// are transient overlays driven by x/s/n that return to `Browse` on commit
+/// or cancel. Kept in the picker state (not App) since this runs pre-attach.
+enum Mode {
+    Browse,
+    /// Confirm killing the focused session (Claim 3). y/N.
+    ConfirmKill {
+        index: usize,
+        name: String,
+    },
+    /// Confirm killing every stale session (Claim 4). y/N.
+    ConfirmKillStale {
+        count: usize,
+    },
+    /// Inline new-session name prompt (Claim 5). Enter attaches/creates.
+    NewSession(TextInput),
 }
 
 /// Interactive modal picker. Restores the terminal on every return path
@@ -90,14 +109,14 @@ fn event_loop(
     terminal: &mut RatatuiTerminal<CrosstermBackend<io::Stdout>>,
     global: &GlobalArgs,
 ) -> anyhow::Result<PickerOutcome> {
-    let sessions = refresh(global);
+    let mut sessions = refresh(global);
     let mut state = ListState::default();
     clamp_selection(&mut state, &sessions);
-    // Claim 3 flips this to true after a kill so Quit exits 1.
-    let destructive = false;
+    let mut destructive = false;
     let mut status = String::new();
+    let mut mode = Mode::Browse;
 
-    draw(terminal, &mut state, &sessions, &status)?;
+    draw(terminal, &mut state, &sessions, &status, &mut mode)?;
     loop {
         // Poll with a short timeout so a future background refresh could
         // re-run discovery; for L1 we just re-loop and redraw on key/resize.
@@ -107,41 +126,146 @@ fn event_loop(
         let key = match event::read()? {
             Event::Key(k) => k,
             Event::Resize(_, _) => {
-                draw(terminal, &mut state, &sessions, &status)?;
+                draw(terminal, &mut state, &sessions, &status, &mut mode)?;
                 continue;
             }
             _ => continue,
         };
-        match handle_key(&key, &mut state, &sessions, &mut status) {
-            Handled::Quit => return Ok(PickerOutcome::Quit { destructive }),
-            Handled::CtrlC => return Ok(PickerOutcome::CtrlC),
-            Handled::Attach(socket_path, name) => {
+        match dispatch(&key, &mut state, &mut sessions, &mut status, &mut mode, global) {
+            Action::Quit => return Ok(PickerOutcome::Quit { destructive }),
+            Action::CtrlC => return Ok(PickerOutcome::CtrlC),
+            Action::Attach(socket_path, name) => {
                 return Ok(PickerOutcome::Attach { socket_path, name });
             }
-            Handled::Continue => {}
-            Handled::Redraw => draw(terminal, &mut state, &sessions, &status)?,
+            Action::None => {}
+            Action::Killed => {
+                destructive = true;
+                clamp_selection(&mut state, &sessions);
+                draw(terminal, &mut state, &sessions, &status, &mut mode)?;
+            }
+            Action::Redraw => {
+                draw(terminal, &mut state, &sessions, &status, &mut mode)?;
+            }
         }
     }
 }
 
-/// Result of dispatching a single key. Claims 3-7 add Kill/KillStale/New/Rename.
-enum Handled {
-    Continue,
+/// What `dispatch` wants the loop to do after handling a key.
+enum Action {
+    None,
     Redraw,
+    /// A session was killed this keystroke; flip `destructive` then redraw.
+    Killed,
     Quit,
     CtrlC,
     Attach(PathBuf, String),
 }
 
-/// Pure key dispatch: reads `state`/`sessions`, may mutate `state`/`status`.
-/// Side effects needing `global`/`sessions` mutation (kill, new, refresh) are
-/// returned as `Handled` variants for `event_loop` to apply.
-fn handle_key(
+/// Route a key to the current mode. Side-effecting variants (kill, new,
+/// refresh) mutate `sessions`/`status`/`mode` directly so the redraw in
+/// `event_loop` reflects them immediately.
+fn dispatch(
+    key: &KeyEvent,
+    state: &mut ListState,
+    sessions: &mut Vec<DiscoveredSession>,
+    status: &mut String,
+    mode: &mut Mode,
+    global: &GlobalArgs,
+) -> Action {
+    // Ctrl-C works from any mode.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        return Action::CtrlC;
+    }
+    match mode {
+        Mode::Browse => browse_key(key, state, sessions, status, mode),
+        Mode::ConfirmKill { index, name } => {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    let idx = *index;
+                    let nm = name.clone();
+                    if let Some(s) = sessions.get(idx).cloned() {
+                        cli::kill_session_at(&s.socket_path, s.pid);
+                        *status = format!("killed {nm}");
+                        *sessions = refresh(global);
+                        destructive_select(state, &sessions, idx);
+                        *mode = Mode::Browse;
+                        return Action::Killed;
+                    }
+                    *mode = Mode::Browse;
+                    Action::Redraw
+                }
+                // any other key = No (Esc, n, Enter, …): cancel
+                _ => {
+                    *mode = Mode::Browse;
+                    Action::Redraw
+                }
+            }
+        }
+        Mode::ConfirmKillStale { count } => {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    // Reuse the cli kill-stale path: it is already built on
+                    // discover_sessions, so semantics match `cmux kill-stale`.
+                    let cleaned = kill_stale(global);
+                    *status = format!("cleaned {cleaned} stale session(s)");
+                    *sessions = refresh(global);
+                    let _ = count; // borrowed only for the prompt label
+                    *mode = Mode::Browse;
+                    Action::Killed
+                }
+                _ => {
+                    *mode = Mode::Browse;
+                    Action::Redraw
+                }
+            }
+        }
+        Mode::NewSession(input) => {
+            match input.handle_key(key) {
+                InputEvent::Commit => {
+                    let name = input.as_str().trim().to_string();
+                    if name.is_empty() {
+                        *status = "session name cannot be empty".to_string();
+                        *mode = Mode::Browse;
+                        return Action::Redraw;
+                    }
+                    // Q4 (approved): if the name matches a LIVE session,
+                    // attach to it; if stale, kill-stale then create fresh.
+                    let existing = sessions.iter().find(|s| s.session == name).cloned();
+                    match existing {
+                        Some(s) if s.live => {
+                            Action::Attach(s.socket_path.clone(), s.session.clone())
+                        }
+                        Some(_) => {
+                            // stale同名: clean it, then create fresh below.
+                            kill_stale(global);
+                            *sessions = refresh(global);
+                            let sock = mux_core::server::default_socket_path(&name);
+                            Action::Attach(sock, name)
+                        }
+                        None => {
+                            let sock = mux_core::server::default_socket_path(&name);
+                            Action::Attach(sock, name)
+                        }
+                    }
+                }
+                InputEvent::Cancel => {
+                    *mode = Mode::Browse;
+                    Action::Redraw
+                }
+                InputEvent::None | InputEvent::Changed => Action::Redraw,
+            }
+        }
+    }
+}
+
+/// Keys for the default Browse mode.
+fn browse_key(
     key: &KeyEvent,
     state: &mut ListState,
     sessions: &[DiscoveredSession],
     status: &mut String,
-) -> Handled {
+    mode: &mut Mode,
+) -> Action {
     let len = sessions.len();
     let selected = state.selected();
     match key.code {
@@ -152,7 +276,7 @@ fn handle_key(
             if let Some(i) = selected {
                 if let Some(s) = sessions.get(i) {
                     if s.live {
-                        return Handled::Attach(s.socket_path.clone(), s.session.clone());
+                        return Action::Attach(s.socket_path.clone(), s.session.clone());
                     }
                     // Q2 (approved): stale stays focusable but Enter does
                     // not attach — the socket isn't connectable.
@@ -160,30 +284,70 @@ fn handle_key(
                         "{} is unreachable (socket not connectable) — cannot attach",
                         s.session
                     );
-                    return Handled::Redraw;
+                    return Action::Redraw;
                 }
             }
-            Handled::Continue
+            Action::None
         }
-        KeyCode::Esc | KeyCode::Char('q') => Handled::Quit,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Handled::CtrlC,
-        // Claims 3-7 add x (kill focused), s (kill stale), n (new), r (rename stub).
-        _ => Handled::Continue,
+        // Claim 3: kill focused. `x` (not `k`) — k is 'navigate up' per
+        // cmux USAGE ("h/j/k/l move focus") and matches the whole codebase.
+        KeyCode::Char('x') => {
+            if let Some(i) = selected {
+                if let Some(s) = sessions.get(i) {
+                    *mode = Mode::ConfirmKill { index: i, name: s.session.clone() };
+                    return Action::Redraw;
+                }
+            }
+            Action::None
+        }
+        // Claim 4: kill all stale.
+        KeyCode::Char('s') => {
+            let count = sessions.iter().filter(|s| !s.live).count();
+            if count == 0 {
+                *status = "no stale sessions to clean".to_string();
+                Action::Redraw
+            } else {
+                *mode = Mode::ConfirmKillStale { count };
+                Action::Redraw
+            }
+        }
+        // Claim 5: new session (inline name prompt).
+        KeyCode::Char('n') => {
+            *mode = Mode::NewSession(TextInput::new(String::new()));
+            Action::Redraw
+        }
+        // Claim 7: rename stub (Q1: stub message; L2 swap-in, no UX change).
+        KeyCode::Char('r') => {
+            *status = "rename not yet available — coming in L2 (rename-session)".to_string();
+            Action::Redraw
+        }
+        KeyCode::Esc | KeyCode::Char('q') => Action::Quit,
+        _ => Action::None,
     }
 }
 
 /// Apply an up/down move, returning Redraw iff the selection changed.
-fn move_cursor(state: &mut ListState, selected: Option<usize>, len: usize, down: bool) -> Handled {
+fn move_cursor(state: &mut ListState, selected: Option<usize>, len: usize, down: bool) -> Action {
     if len == 0 {
-        return Handled::Continue;
+        return Action::None;
     }
     let i = selected.unwrap_or(0);
     let next = if down { i + 1 } else { i.saturating_sub(1) };
     if next >= len || next == i {
-        Handled::Continue
+        Action::None
     } else {
         state.select(Some(next));
-        Handled::Redraw
+        Action::Redraw
+    }
+}
+
+/// After a kill shrinks the list, keep a sensible focus (same index clamped,
+/// or the new last item) so the user isn't dropped to the top every time.
+fn destructive_select(state: &mut ListState, sessions: &[DiscoveredSession], was: usize) {
+    if sessions.is_empty() {
+        state.select(None);
+    } else {
+        state.select(Some(was.min(sessions.len() - 1)));
     }
 }
 
@@ -193,6 +357,22 @@ fn refresh(global: &GlobalArgs) -> Vec<DiscoveredSession> {
     let mut sessions = cli::discover_sessions(global);
     sessions.sort_by(|a, b| b.mtime.cmp(&a.mtime));
     sessions
+}
+
+/// Kill every stale session (reuses the cli kill-stale semantics) and return
+/// how many were cleaned. Mirrors `run_kill_stale` but without JSON output.
+fn kill_stale(global: &GlobalArgs) -> usize {
+    let mut sessions = cli::discover_sessions(global);
+    sessions.sort_by(|a, b| a.session.cmp(&b.session));
+    let mut cleaned = 0;
+    for s in &sessions {
+        if !s.live {
+            let _ = std::fs::remove_file(&s.socket_path);
+            let _ = std::fs::remove_file(mux_core::server::pid_path(&s.socket_path));
+            cleaned += 1;
+        }
+    }
+    cleaned
 }
 
 fn clamp_selection(state: &mut ListState, sessions: &[DiscoveredSession]) {
@@ -208,11 +388,12 @@ fn draw(
     state: &mut ListState,
     sessions: &[DiscoveredSession],
     status: &str,
+    mode: &mut Mode,
 ) -> io::Result<()> {
     terminal.draw(|f| {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(2)])
+            .constraints([Constraint::Min(3), Constraint::Length(3)])
             .split(f.area());
 
         let items: Vec<ListItem> = sessions
@@ -230,7 +411,7 @@ fn draw(
             })
             .collect();
         let title = if sessions.is_empty() {
-            " cmux sessions — none found (q to quit) "
+            " cmux sessions — none found (n new, q to quit) "
         } else {
             " cmux sessions — pick one to attach "
         };
@@ -240,9 +421,40 @@ fn draw(
             .highlight_symbol("▶ ");
         f.render_stateful_widget(list, chunks[0], state);
 
-        // Footer: keymap hints on row 1, transient status (if any) on row 2.
-        let hints = "↑/↓ or j/k move · Enter attach · q/Esc quit · Ctrl-C abort";
-        let mut lines = vec![Line::from(hints)];
+        // Footer: mode prompt (if any) on row 1, keymap hints + status on row 2.
+        let mut lines = Vec::new();
+        match mode {
+            Mode::Browse => {
+                lines.push(Line::from(Span::styled(
+                    "↑/↓ or j/k move · Enter attach · x kill · s kill-stale · n new · r rename · q/Esc quit · Ctrl-C abort",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            Mode::ConfirmKill { name, .. } => {
+                lines.push(Line::from(Span::styled(
+                    format!("Kill {name}?  y/N  (any other key cancels)"),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                )));
+            }
+            Mode::ConfirmKillStale { count } => {
+                lines.push(Line::from(Span::styled(
+                    format!("Kill {count} stale session(s)?  y/N  (any other key cancels)"),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                )));
+            }
+            Mode::NewSession(input) => {
+                // visible_text_and_cursor takes &mut self (it lazily
+                // recomputes scroll); `input` is &mut via the &mut Mode.
+                let (visible, cur) = input.visible_text_and_cursor(chunks[1].width as usize);
+                let mut spans =
+                    vec![Span::styled("new session name: ", Style::default().fg(Color::Cyan))];
+                spans.push(Span::raw(visible.clone()));
+                if cur < visible.len() {
+                    spans.push(Span::raw(visible[cur..].to_string()));
+                }
+                lines.push(Line::from(spans));
+            }
+        }
         if !status.is_empty() {
             lines.push(Line::from(Span::styled(
                 status,
