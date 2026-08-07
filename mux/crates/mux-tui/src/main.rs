@@ -125,7 +125,7 @@ KEYS (prefix: Ctrl-b)
   1-9  select tab
   %  split right       \"  split down          x    close tab
   ,  rename pane       $    rename workspace
-  Tab  next screen     S    new screen
+  Tab  next screen     S    session manager
   h/j/k/l or arrows    move focus              d    quit (attach: detach)
   w  next workspace    W    new workspace       s    toggle sidebar
   <  browser back      >    browser forward     r/u  browser reload/edit URL
