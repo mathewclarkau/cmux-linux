@@ -1197,10 +1197,14 @@ fn run_rename_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
         }
     };
     // CLI-side name validation (defence in depth; exit 2 before connecting).
-    // The server re-validates as the security authority.
-    if let Err(err) = mux_core::server::validate_session_name(&new) {
-        eprintln!("cmux: {err}");
-        return 2;
+    // The server re-validates as the security authority. Validate both the
+    // source (`--old`) and destination (`--new`) so a bad `--old` yields a
+    // clean "session name …" error instead of a cryptic "session not found".
+    for name in [&old, &new] {
+        if let Err(err) = mux_core::server::validate_session_name(name) {
+            eprintln!("cmux: {err}");
+            return 2;
+        }
     }
 
     let dir = get_runtime_dir(global);

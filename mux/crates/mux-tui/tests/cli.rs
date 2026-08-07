@@ -2011,11 +2011,12 @@ fn rename_rejects_invalid_names() {
             String::from_utf8_lossy(&out.stderr)
         );
         let err = String::from_utf8_lossy(&out.stderr).to_lowercase();
-        // At this commit the verb is unknown, so the error is the
-        // unknown-verb/argument rejection (plus a USAGE dump) rather than a
-        // real name-validation rejection. Require the validation message AND
-        // the absence of the unknown-verb fallback so the assertion only
-        // passes once the feature genuinely rejects bad names client-side.
+        // Regression guard: bad names must be rejected by validate_session_name
+        // (exit 2, "session name") and never fall through to the generic
+        // unknown-verb/argument path. Require the validation message AND the
+        // absence of the unknown-verb fallback so that a future regression —
+        // where a bad name slips past validation and surfaces as an
+        // unknown-verb rejection — is caught.
         assert!(
             !err.contains("unknown argument")
                 && !err.contains("unknown verb")

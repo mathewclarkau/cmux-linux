@@ -1350,9 +1350,14 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                 .map_err(|e| anyhow::anyhow!("rename failed: {e}"))?;
             // Q4.4: rename the socket — the COMMIT point. From here the daemon
             // is reachable only at new_sock (the listener, bound to the inode,
-            // keeps accepting there: see unix_socket_survives_rename).
-            std::fs::rename(&old_sock, &new_sock)
-                .map_err(|e| anyhow::anyhow!("rename failed: {e}"))?;
+            // keeps accepting there: see unix_socket_survives_rename). If this
+            // rename fails (near-impossible: same FS, adjacent syscalls) we
+            // undo the pid move above so the pre-rename fs state is exactly
+            // restored (old.sock bound, old.pid present, no `new.*` artefacts).
+            if let Err(e) = std::fs::rename(&old_sock, &new_sock) {
+                let _ = std::fs::rename(&new_pid, &old_pid);
+                return Err(anyhow::anyhow!("rename failed: {e}"));
+            }
 
             // Q4.5: update state (logical name + canonical socket path).
             mux.set_session_name(new_name.clone());
