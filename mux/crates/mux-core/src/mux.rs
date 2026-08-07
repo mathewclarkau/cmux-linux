@@ -2,6 +2,7 @@
 //! and broadcasts [`MuxEvent`]s to subscribed frontends.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -83,7 +84,16 @@ pub struct Mux {
     /// `Mux` a test or one-shot CLI invocation creates would write a
     /// session file to the real `$XDG_STATE_HOME`.
     persistence_enabled: std::sync::atomic::AtomicBool,
-    pub session: String,
+    /// Logical session name. Interior-mutable because a running daemon is
+    /// shared across the accept/conn/persist threads (`Arc<Mux>`) and can
+    /// be renamed in place by the `rename-session` command (issue #63).
+    /// Use [`session_name`](Self::session_name) to read it.
+    session: Mutex<String>,
+    /// The daemon's currently-bound control-socket path: the single source
+    /// of truth read at shutdown (`cleanup`) and at every surface spawn
+    /// (so panes spawned after a rename inherit the new `CMUX_MUX_SOCKET`).
+    /// `None` until `server::serve` calls [`set_socket_path`](Self::set_socket_path).
+    socket_path: Mutex<Option<PathBuf>>,
 }
 
 impl Mux {
@@ -107,8 +117,46 @@ impl Mux {
             default_colors: Mutex::new(DefaultColors::default()),
             resolved_chrome: Mutex::new(None),
             persistence_enabled: std::sync::atomic::AtomicBool::new(false),
-            session,
+            session: Mutex::new(session),
+            socket_path: Mutex::new(None),
         })
+    }
+
+    /// The logical session name (cloned; cheap vs. a JSON encode). Renamed
+    /// in place by `rename-session` (issue #63).
+    pub fn session_name(&self) -> String {
+        self.session.lock().unwrap().clone()
+    }
+
+    /// The daemon's currently-bound control-socket path, or `None` before
+    /// `server::serve` has bound. The single source of truth for the live
+    /// socket location (moves on rename).
+    pub fn socket_path(&self) -> Option<PathBuf> {
+        self.socket_path.lock().unwrap().clone()
+    }
+
+    /// Record the bound socket path. Called by `server::serve` immediately
+    /// after a successful `transport::listen` (before the accept thread
+    /// spawns, so the value is set before any client can connect).
+    pub(crate) fn set_socket_path(&self, path: PathBuf) {
+        *self.socket_path.lock().unwrap() = Some(path);
+    }
+
+    /// Update the logical session name. Called by the `rename-session`
+    /// handler after the socket/pid files have moved (issue #63).
+    pub(crate) fn set_session_name(&self, name: String) {
+        *self.session.lock().unwrap() = name;
+    }
+
+    /// Update the `CMUX_MUX_SOCKET` entry in a cloned `SurfaceOptions` so a
+    /// newly-spawned pane inherits the daemon's *current* live socket path
+    /// (not the stale startup path). Existing panes keep whatever they
+    /// inherited at spawn — this is the AC4 lifetime guarantee (issue #63).
+    fn refresh_socket_env(&self, opts: &mut SurfaceOptions) {
+        if let Some(p) = self.socket_path() {
+            opts.extra_env.retain(|(k, _)| k != "CMUX_MUX_SOCKET");
+            opts.extra_env.push(("CMUX_MUX_SOCKET".into(), p.display().to_string()));
+        }
     }
 
     fn next_id(&self) -> u64 {
@@ -137,6 +185,10 @@ impl Mux {
     ) -> anyhow::Result<Arc<Surface>> {
         let id = self.next_id();
         let mut opts = self.surface_options.clone();
+        // New panes inherit the daemon's *current* live socket path (issue #63
+        // AC4): existing panes keep what they got at spawn; panes spawned
+        // after a rename get the new path.
+        self.refresh_socket_env(&mut opts);
         if cwd.is_some() {
             opts.cwd = cwd;
         }
@@ -159,6 +211,7 @@ impl Mux {
     ) -> anyhow::Result<Arc<Surface>> {
         let id = self.next_id();
         let mut opts = self.surface_options.clone();
+        self.refresh_socket_env(&mut opts);
         opts.remote = Some(remote);
         if let Some((cols, rows)) = size {
             opts.cols = cols.max(1);
@@ -175,7 +228,8 @@ impl Mux {
         size: Option<(u16, u16)>,
     ) -> Arc<Surface> {
         let id = self.next_id();
-        let opts = self.surface_options.clone();
+        let mut opts = self.surface_options.clone();
+        self.refresh_socket_env(&mut opts);
         let size = size.unwrap_or((opts.cols, opts.rows));
         let cell_pixels = *self.cell_pixels.lock().unwrap();
         let surface = browser::new_surface(id, url.clone(), size, cell_pixels, &opts);
@@ -274,7 +328,7 @@ impl Mux {
     }
 
     fn snapshot_path(&self) -> std::path::PathBuf {
-        crate::platform::session_snapshot_path(&self.session)
+        crate::platform::session_snapshot_path(&self.session_name())
     }
 
     fn write_snapshot(&self) {
@@ -817,7 +871,8 @@ impl Mux {
             (pane_id, size)
         };
         let id = self.next_id();
-        let opts = self.surface_options.clone();
+        let mut opts = self.surface_options.clone();
+        self.refresh_socket_env(&mut opts);
         let size = size.unwrap_or((opts.cols, opts.rows));
         let cell_pixels = *self.cell_pixels.lock().unwrap();
         let surface = browser::new_surface(id, url.clone(), size, cell_pixels, &opts);
