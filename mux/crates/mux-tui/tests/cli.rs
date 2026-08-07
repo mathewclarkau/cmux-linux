@@ -1919,15 +1919,19 @@ fn rename_preserves_inherited_cmux_socket_in_existing_panes() {
     assert_success(&ws);
     let surface_pre: u64 =
         String::from_utf8(ws.stdout).unwrap().trim().parse().unwrap();
-    let probe = "printf 'E=%s\\n' \"$CMUX_MUX_SOCKET\"\\n";
+    let old_sock_str = old_sock.display().to_string();
+    // Fish is the default surface shell; the trailing real `\n` submits
+    // the line (no --send-cr needed — matches the cli_verbs marker probe).
+    let probe = "printf 'E=%s\\n' \"$CMUX_MUX_SOCKET\"\n";
     let send = run_against(
         &old_sock,
         &dir,
         &["send", "--surface", &surface_pre.to_string(), "--text", probe],
     );
     assert_success(&send);
-    let before = wait_for_screen_at(&old_sock, surface_pre, "E=");
-    let old_sock_str = old_sock.display().to_string();
+    // Poll for the actual path VALUE (only present after the shell expands
+    // the var), not a substring of the typed command.
+    let before = wait_for_screen_at(&old_sock, surface_pre, &old_sock_str);
     assert!(
         before.contains(&old_sock_str),
         "pre-rename pane should carry the old socket path; screen was {before:?}"
@@ -1941,18 +1945,23 @@ fn rename_preserves_inherited_cmux_socket_in_existing_panes() {
     );
     assert_success(&rename);
     let new_sock = dir.join("bar.sock");
+    let new_sock_str = new_sock.display().to_string();
 
     // Existing pane: env is unchanged for its lifetime (AC4 first half).
+    // Re-probe and clear the screen's prior line by checking the LAST `E=`
+    // value: it must still be the old path, never the new one.
     let send2 = run_against(
         &new_sock,
         &dir,
         &["send", "--surface", &surface_pre.to_string(), "--text", probe],
     );
     assert_success(&send2);
-    let after = wait_for_screen_at(&new_sock, surface_pre, "E=");
+    // Existing pane keeps the OLD value (env inherited at spawn, unchanged).
+    let after = wait_for_screen_at(&new_sock, surface_pre, &old_sock_str);
     assert!(
-        after.contains(&old_sock_str) && !after.contains(&new_sock.display().to_string().split('/').last().unwrap()),
-        "existing pane must keep the old CMUX_MUX_SOCKET after rename; screen was {after:?}"
+        after.contains(&old_sock_str) && !after.contains(&new_sock_str),
+        "existing pane must keep the old CMUX_MUX_SOCKET after rename; \
+         screen was {after:?}"
     );
 
     // New pane spawned after the rename inherits the refreshed path.
@@ -1966,9 +1975,10 @@ fn rename_preserves_inherited_cmux_socket_in_existing_panes() {
         &["send", "--surface", &surface_post.to_string(), "--text", probe],
     );
     assert_success(&send3);
-    let post = wait_for_screen_at(&new_sock, surface_post, "E=");
+    // New pane inherits the refreshed (new) path.
+    let post = wait_for_screen_at(&new_sock, surface_post, &new_sock_str);
     assert!(
-        post.contains(&new_sock.display().to_string()),
+        post.contains(&new_sock_str),
         "post-rename pane should carry the new socket path; screen was {post:?}"
     );
 

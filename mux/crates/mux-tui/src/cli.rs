@@ -336,6 +336,17 @@ const VERBS: &[VerbSpec] = &[
         print: print_empty,
         stream: false,
     },
+    // `rename-session` is special-cased in `run_command` (it does its own
+    // socket discovery + connect + exit-code map, like list/kill-session).
+    // The VerbSpec exists so `verb_by_name` recognises it during arg
+    // parsing; `build_rename_session` only carries the flags.
+    VerbSpec {
+        name: "rename-session",
+        allowed: &["old", "new"],
+        build: build_rename_session,
+        print: print_empty,
+        stream: false,
+    },
 ];
 
 pub fn is_cli_invocation(args: &[String]) -> bool {
@@ -450,6 +461,7 @@ fn run_command(args: CliArgs) -> i32 {
         "list-sessions" => return run_list_sessions(&args.global, &args.flags),
         "kill-session" => return run_kill_session(&args.global, &args.flags),
         "kill-stale" => return run_kill_stale(&args.global, &args.flags),
+        "rename-session" => return run_rename_session(&args.global, &args.flags),
         _ => {}
     }
     let request = match (args.verb.build)(&args.flags) {
@@ -848,6 +860,17 @@ fn build_kill_session(flags: &FlagMap) -> Result<Value, UsageError> {
     Ok(value)
 }
 
+/// `rename-session` parser: carry the `--old`/`--new` flags. The real
+/// connect/send (and CLI-side name validation + exit-code map) live in
+/// `run_rename_session`, which is special-cased in `run_command` like
+/// the other name-keyed verbs (list/kill-session/kill-stale).
+fn build_rename_session(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({});
+    flags.insert_optional_string(&mut value, "old");
+    flags.insert_optional_string(&mut value, "new");
+    Ok(value)
+}
+
 pub(crate) fn get_runtime_dir(global: &GlobalArgs) -> PathBuf {
     global
         .socket
@@ -1022,19 +1045,94 @@ pub(crate) fn kill_session_at(socket_path: &std::path::Path, pid: Option<u32>) -
     pid.is_some()
 }
 
+/// Outcome of a `rename-session` RPC. Distinguishes a transport failure
+/// (CLI exit 3) from a server-reported error (CLI exit 1) so the verb's
+/// exit-code table (scout-plan Q5) can map them separately. Shared by the
+/// CLI verb (`run_rename_session`) and the picker helper.
+enum RenameOutcome {
+    /// Server reported ok:true. Carries the new socket path and the
+    /// (unchanged) daemon pid from the response.
+    Ok { socket_path: PathBuf, pid: u64 },
+    /// Server reported ok:false (rename refused/failed) or a malformed reply.
+    ServerErr(String),
+    /// Could not (re)establish the socket connection or the transport died.
+    ConnectErr(String),
+}
+
+/// Connect to the daemon at `socket`, send `{"cmd":"rename-session",
+/// "new_name":new_name}`, and read one response (skipping any pushed
+/// events). Returns the parsed outcome. Used by both `run_rename_session`
+/// (CLI verb) and `rename_session_at` (picker helper) so they share one
+/// code path.
+fn rename_rpc(socket: &std::path::Path, new_name: &str) -> RenameOutcome {
+    let mut stream = match transport::connect(socket) {
+        Ok(stream) => stream,
+        Err(err) => {
+            return RenameOutcome::ConnectErr(format!(
+                "cannot connect to session socket {}: {err}",
+                socket.display()
+            ))
+        }
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    let request = json!({ "cmd": "rename-session", "new_name": new_name, "id": REQUEST_ID });
+    let mut line = match serde_json::to_vec(&request) {
+        Ok(line) => line,
+        Err(err) => return RenameOutcome::ServerErr(format!("failed to encode request: {err}")),
+    };
+    line.push(b'\n');
+    if let Err(err) = stream.write_all(&line) {
+        return RenameOutcome::ConnectErr(format!("transport error: {err}"));
+    }
+    let mut reader = BufReader::new(stream);
+    let mut buf = String::new();
+    loop {
+        buf.clear();
+        match reader.read_line(&mut buf) {
+            Ok(0) => return RenameOutcome::ServerErr("transport closed before response".into()),
+            Ok(_) => {}
+            Err(err) => return RenameOutcome::ConnectErr(format!("transport error: {err}")),
+        }
+        let value: Value = match serde_json::from_str(&buf) {
+            Ok(value) => value,
+            Err(err) => return RenameOutcome::ServerErr(format!("bad response: {err}")),
+        };
+        if value.get("event").is_some() {
+            continue;
+        }
+        if value.get("ok").and_then(Value::as_bool) == Some(true) {
+            let data = value.get("data").unwrap_or(&Value::Null);
+            let socket_path = data
+                .get("socket_path")
+                .and_then(Value::as_str)
+                .map(PathBuf::from);
+            let pid = data.get("pid").and_then(Value::as_u64);
+            match (socket_path, pid) {
+                (Some(p), Some(pid)) => return RenameOutcome::Ok { socket_path: p, pid },
+                _ => {
+                    return RenameOutcome::ServerErr(
+                        "rename response missing socket_path/pid".into()
+                    )
+                }
+            }
+        }
+        let err = value.get("error").and_then(Value::as_str).unwrap_or("rename failed");
+        return RenameOutcome::ServerErr(err.to_string());
+    }
+}
+
 /// Send `rename-session` to the daemon bound at `socket_path` and return
 /// the new socket path on success. Shared by the picker's `r` flow so the
-/// TUI keybinding and the CLI verb exercise one code path.
-///
-/// RED-suite compile scaffolding (issue #63 L2, commit 2): this stub
-/// always errors so the T11 helper test is RED. The real connect/send
-/// lands in the `feat(mux-tui)` commit and turns T11 green.
-#[allow(dead_code)] // wired by the picker 'r' flow (commit 6); unused until then.
+/// TUI keybinding and the CLI verb exercise one code path (`rename_rpc`).
+#[allow(dead_code)] // wired by the picker 'r' flow (next commit); unused until then.
 pub(crate) fn rename_session_at(
-    _socket_path: &std::path::Path,
-    _new_name: &str,
+    socket_path: &std::path::Path,
+    new_name: &str,
 ) -> Result<PathBuf, String> {
-    Err("rename-session not yet implemented".to_string())
+    match rename_rpc(socket_path, new_name) {
+        RenameOutcome::Ok { socket_path, .. } => Ok(socket_path),
+        RenameOutcome::ServerErr(e) | RenameOutcome::ConnectErr(e) => Err(e),
+    }
 }
 
 fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
@@ -1078,6 +1176,79 @@ fn run_kill_stale(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
         println!("{}", json!({ "ok": true, "cleaned": cleaned }));
     }
     0
+}
+
+/// `cmux rename-session --old <name> --new <name>` (issue #63). Resolves
+/// the old session's socket the same way `kill-session` does (parent of
+/// `--socket`, else `runtime_dir()`), pre-checks the target, then connects
+/// and issues `rename-session`. Exit-code table (scout-plan Q5):
+///   0 success · 1 old not found / server ok:false · 2 bad/missing flags,
+///     invalid name, or target already live · 3 connect/transport failure.
+fn run_rename_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
+    // Parse --old/--new (UsageError -> exit 2).
+    let old = match flags.required("old") {
+        Ok(v) => v,
+        Err(err) => {
+            eprintln!("cmux: {}", err.0);
+            return 2;
+        }
+    };
+    let new = match flags.required("new") {
+        Ok(v) => v,
+        Err(err) => {
+            eprintln!("cmux: {}", err.0);
+            return 2;
+        }
+    };
+    // CLI-side name validation (defence in depth; exit 2 before connecting).
+    // The server re-validates as the security authority.
+    if let Err(err) = mux_core::server::validate_session_name(&new) {
+        eprintln!("cmux: {err}");
+        return 2;
+    }
+
+    let dir = get_runtime_dir(global);
+    let old_sock = dir.join(format!("{old}.sock"));
+    let old_pid = dir.join(format!("{old}.pid"));
+    let new_sock = dir.join(format!("{new}.sock"));
+
+    // Old session must be present (mirrors kill-session's not-found exit 1).
+    if !old_sock.exists() && !old_pid.exists() {
+        eprintln!("cmux: session {old:?} not found");
+        return 1;
+    }
+    // Criterion 5: refuse a LIVE target BEFORE connecting (exit 2). The
+    // server re-checks inside the handler to cover direct API use and the
+    // connect-vs-precheck race.
+    if mux_core::server::is_session_socket_live(&new_sock) {
+        eprintln!("cmux: session {new:?} already exists");
+        return 2;
+    }
+
+    match rename_rpc(&old_sock, &new) {
+        RenameOutcome::Ok { socket_path, pid } => {
+            if global.json {
+                println!(
+                    "{}",
+                    json!({
+                        "session": new,
+                        "socket_path": socket_path.display().to_string(),
+                        "pid": pid,
+                    })
+                );
+            }
+            // Plain mode is quiet, consistent with kill-session/rename-workspace.
+            0
+        }
+        RenameOutcome::ServerErr(err) => {
+            eprintln!("cmux: {err}");
+            1
+        }
+        RenameOutcome::ConnectErr(err) => {
+            eprintln!("{err}");
+            3
+        }
+    }
 }
 
 fn selector_request(flags: &FlagMap) -> Result<Value, UsageError> {

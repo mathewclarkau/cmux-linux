@@ -185,6 +185,10 @@ impl Mux {
     ) -> anyhow::Result<Arc<Surface>> {
         let id = self.next_id();
         let mut opts = self.surface_options.clone();
+        // New panes inherit the daemon's *current* live socket path (issue #63
+        // AC4): existing panes keep what they got at spawn; panes spawned
+        // after a rename get the new path.
+        self.refresh_socket_env(&mut opts);
         if cwd.is_some() {
             opts.cwd = cwd;
         }
@@ -207,6 +211,7 @@ impl Mux {
     ) -> anyhow::Result<Arc<Surface>> {
         let id = self.next_id();
         let mut opts = self.surface_options.clone();
+        self.refresh_socket_env(&mut opts);
         opts.remote = Some(remote);
         if let Some((cols, rows)) = size {
             opts.cols = cols.max(1);

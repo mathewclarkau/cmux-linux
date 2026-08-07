@@ -641,7 +641,7 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     {
         mux_core::process::kill_remaining_children();
     }
-    mux_core::server::cleanup(&socket_path);
+    mux_core::server::cleanup(&mux.socket_path().unwrap_or_else(|| socket_path.clone()));
     result
 }
 
