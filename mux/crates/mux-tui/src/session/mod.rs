@@ -316,6 +316,17 @@ impl Session {
         }
     }
 
+    /// The control-socket path this session is bound to, or `None` for a
+    /// local session that has not yet been served. Exposed so the
+    /// session-manager overlay can tag its own `[current]` row by
+    /// comparing sockets (issue #63 L3).
+    pub fn socket_path(&self) -> Option<std::path::PathBuf> {
+        match self {
+            Session::Local(mux) => mux.socket_path(),
+            Session::Remote(remote) => Some(remote.socket_path()),
+        }
+    }
+
     pub fn focus_pane(&self, pane: PaneId) {
         match self {
             Session::Local(mux) => {
@@ -684,6 +695,8 @@ impl SurfaceHandle {
 #[cfg(test)]
 mod tests {
     use super::resize_action;
+    use super::Session;
+    use mux_core::{Mux, SurfaceOptions};
 
     #[test]
     fn first_layout_after_attach_sends_ordered_resize() {
@@ -717,5 +730,16 @@ mod tests {
         let desired = (123, 65);
         assert!(!resize_action(desired, Some(desired), desired, false));
         assert!(!resize_action(desired, Some(desired), desired, true));
+    }
+
+    /// Issue #63 L3: `Session::socket_path` reports the live socket so the
+    /// session-manager overlay can tag its own `[current]` row. A local
+    /// session delegates to `Mux::socket_path`; a freshly-created mux (not
+    /// yet served) reports `None`.
+    #[test]
+    fn local_session_reports_none_before_serve() {
+        let mux = Mux::new("smgr-sock", SurfaceOptions::default());
+        let unserved = Session::Local(mux);
+        assert_eq!(unserved.socket_path(), None);
     }
 }
