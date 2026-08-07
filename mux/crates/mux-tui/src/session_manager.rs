@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::cli::DiscoveredSession;
-use crate::session::TreeView;
+use crate::cli::{one_shot_rpc, DiscoveredSession, OneShotOutcome};
+use crate::session::{parse_tree, TreeView};
 use crate::ui::input::{InputEvent, TextInput};
 
 /// Which overlay column currently holds the cursor.
@@ -466,6 +466,28 @@ pub fn prefetch_targets(left_sel: usize, lookahead: usize, len: usize) -> Vec<us
         return Vec::new();
     }
     (left_sel..(left_sel + lookahead + 1).min(len)).collect()
+}
+
+/// One-shot worker: connect to `socket`, issue `list-workspaces`, and parse
+/// the reply into a [`WorkspaceColumn`] via the same `parse_tree` the remote
+/// attach path uses. Reuses [`crate::cli::one_shot_rpc`] (the connect →
+/// write → read-line-loop → skip-events path shared with `rename_rpc`), so
+/// the overlay's cross-session preview rides the identical wire path as
+/// `cmux list-workspaces`. Any transport or server error maps to
+/// `Unreachable` so a dead socket renders one column, never a half-open
+/// stream. Runs on a worker thread (all socket I/O off the UI thread);
+/// the result lands via `AppEvent::SessionManagerUpdate`.
+pub fn fetch_workspaces(socket: &Path) -> WorkspaceColumn {
+    let request = serde_json::json!({ "cmd": "list-workspaces", "id": 1 });
+    match one_shot_rpc(socket, request) {
+        OneShotOutcome::Ok(value) => {
+            // The server wraps the tree under "data"; fall back to the
+            // whole value for robustness (older replies / direct data).
+            let data = value.get("data").unwrap_or(&value);
+            WorkspaceColumn::Ready(parse_tree(data))
+        }
+        OneShotOutcome::ServerErr(_) | OneShotOutcome::ConnectErr(_) => WorkspaceColumn::Unreachable,
+    }
 }
 
 #[cfg(test)]
