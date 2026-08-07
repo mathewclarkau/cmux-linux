@@ -378,6 +378,7 @@ pub enum Action {
     BrowserEditUrl,
     Detach,
     OpenFuzzyFinder,
+    OpenSessionManager,
     ShowHelp,
 }
 
@@ -417,6 +418,7 @@ impl Action {
             Action::BrowserEditUrl => "browser-edit-url",
             Action::Detach => "detach",
             Action::OpenFuzzyFinder => "open-fuzzy-finder",
+            Action::OpenSessionManager => "open-session-manager",
             Action::ShowHelp => "show-help",
         }
     }
@@ -457,6 +459,7 @@ impl Action {
             Action::BrowserEditUrl => "Edit browser URL",
             Action::Detach => "Detach",
             Action::OpenFuzzyFinder => "Open fuzzy finder",
+            Action::OpenSessionManager => "Open session manager",
             Action::ShowHelp => "Show help",
         }
     }
@@ -497,6 +500,7 @@ impl Action {
             Action::BrowserEditUrl => "Edit the browser URL",
             Action::Detach => "Detach from the current session",
             Action::OpenFuzzyFinder => "Open the fuzzy finder",
+            Action::OpenSessionManager => "Open the session manager overlay",
             Action::ShowHelp => "Show this key binding help",
         }
     }
@@ -536,6 +540,7 @@ impl Action {
             | Action::ScrollDown
             | Action::Detach
             | Action::OpenFuzzyFinder
+            | Action::OpenSessionManager
             | Action::ShowHelp => HelpCategory::Misc,
         }
     }
@@ -629,6 +634,7 @@ impl Default for Keys {
                 bind(KeyCode::Char('u'), Action::BrowserEditUrl),
                 bind(KeyCode::Char('d'), Action::Detach),
                 bind(KeyCode::Char('G'), Action::OpenFuzzyFinder),
+                bind(KeyCode::Char('S'), Action::OpenSessionManager),
                 bind(KeyCode::Char('?'), Action::ShowHelp),
             ],
         }
@@ -819,6 +825,7 @@ fn all_actions() -> &'static [Action] {
         Action::BrowserEditUrl,
         Action::Detach,
         Action::OpenFuzzyFinder,
+        Action::OpenSessionManager,
         Action::ShowHelp,
     ]
 }
@@ -1841,6 +1848,64 @@ sidebar_rail = 77
         assert_eq!(
             keys.action_for(&KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
             Some(Action::ShowHelp)
+        );
+    }
+
+    /// T14 (issue #63 L3): capital `S` (leader prefix + S) opens the
+    /// session manager overlay. Mirrors `default_g_opens_fuzzy_finder`.
+    /// `S` was previously stale help text ("new screen" is `c` today) and
+    /// is otherwise unbound, so binding it here is safe.
+    #[test]
+    fn default_capital_s_opens_session_manager() {
+        let keys = Keys::default();
+        assert_eq!(
+            keys.action_for(&KeyEvent::new(KeyCode::Char('S'), KeyModifiers::NONE)),
+            Some(Action::OpenSessionManager)
+        );
+    }
+
+    /// T15 (issue #63 L3 / #40): the new action is in `all_actions()` so a
+    /// user can rebind it ("open-session-manager" = "..."), and it survives
+    /// the server-chrome `to_raw_map` → `apply` round trip a thin client
+    /// relies on.
+    #[test]
+    fn session_manager_action_is_rebindable_and_round_trips() {
+        assert!(
+            all_actions().contains(&Action::OpenSessionManager),
+            "OpenSessionManager must be in all_actions() to be rebindable"
+        );
+
+        // Rebind it to ctrl-o and confirm the binding takes.
+        let mut keys = Keys::default();
+        let mut raw: HashMap<String, Value> = HashMap::new();
+        raw.insert("open-session-manager".to_string(), Value::String("ctrl+o".to_string()));
+        keys.apply(&raw);
+        assert_eq!(
+            keys.action_for(&KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
+            Some(Action::OpenSessionManager),
+            "rebinding open-session-manager to ctrl+o should take effect"
+        );
+        // The default `S` chord should be gone after the rebind (apply
+        // replaces ALL default chords for the action).
+        assert_eq!(
+            keys.action_for(&KeyEvent::new(KeyCode::Char('S'), KeyModifiers::NONE)),
+            None,
+            "default S chord should be cleared by the rebind"
+        );
+
+        // The default binding round-trips through to_raw_map → apply so a
+        // thin-client attach reproduces the server's resolved keys (#40).
+        let raw = Keys::default().to_raw_map();
+        assert!(
+            raw.get("open-session-manager").is_some(),
+            "open-session-manager must appear in to_raw_map"
+        );
+        let mut round_tripped = Keys { prefix: Keys::default().prefix, bindings: Vec::new() };
+        round_tripped.apply(&raw);
+        assert_eq!(
+            round_tripped.action_for(&KeyEvent::new(KeyCode::Char('S'), KeyModifiers::NONE)),
+            Some(Action::OpenSessionManager),
+            "default S binding must survive the to_raw_map → apply round trip"
         );
     }
 

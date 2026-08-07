@@ -1479,6 +1479,10 @@ impl App {
                 self.open_help();
                 return Ok(RenderAction::Draw);
             }
+            // Fully wired (overlay open + key dispatch) in the next commit;
+            // this arm exists so the exhaustive match compiles with the
+            // new variant present.
+            Action::OpenSessionManager => {}
         }
         self.status_message = None;
         Ok(RenderAction::Draw)
