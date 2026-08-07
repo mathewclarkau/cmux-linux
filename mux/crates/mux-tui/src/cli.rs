@@ -20,10 +20,10 @@ struct CliArgs {
 }
 
 #[derive(Default)]
-struct GlobalArgs {
-    session: Option<String>,
-    socket: Option<PathBuf>,
-    json: bool,
+pub(crate) struct GlobalArgs {
+    pub(crate) session: Option<String>,
+    pub(crate) socket: Option<PathBuf>,
+    pub(crate) json: bool,
 }
 
 #[derive(Default)]
@@ -848,7 +848,7 @@ fn build_kill_session(flags: &FlagMap) -> Result<Value, UsageError> {
     Ok(value)
 }
 
-fn get_runtime_dir(global: &GlobalArgs) -> PathBuf {
+pub(crate) fn get_runtime_dir(global: &GlobalArgs) -> PathBuf {
     global
         .socket
         .as_ref()
@@ -856,7 +856,7 @@ fn get_runtime_dir(global: &GlobalArgs) -> PathBuf {
         .unwrap_or_else(mux_core::platform::runtime_dir)
 }
 
-fn read_pid_file(path: &std::path::Path) -> Option<u32> {
+pub(crate) fn read_pid_file(path: &std::path::Path) -> Option<u32> {
     if let Ok(content) = std::fs::read_to_string(path) {
         content.trim().parse::<u32>().ok()
     } else {
@@ -864,38 +864,64 @@ fn read_pid_file(path: &std::path::Path) -> Option<u32> {
     }
 }
 
-fn run_list_sessions(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
+/// One discovered cmux session (issue #63 L1).
+///
+/// `socket_path` is the exact path to reconnect to; `mtime` is for the
+/// picker's newest-first sort (pid-file mtime preferred — the socket mtime
+/// can shift on each connect — falling back to socket mtime, then `None`).
+pub(crate) struct DiscoveredSession {
+    pub(crate) session: String,
+    pub(crate) socket_path: PathBuf,
+    pub(crate) pid: Option<u32>,
+    pub(crate) live: bool,
+    pub(crate) mtime: Option<std::time::SystemTime>,
+}
+
+/// Socket-centric discovery of cmux sessions in the runtime dir honoured
+/// by `global` (parent of `--socket`, else `platform::runtime_dir()`).
+/// One row per `*.sock`: derive the pid via `server::pid_path`, liveness via
+/// `server::is_session_socket_live`, and an mtime for uptime sort. Shared by
+/// `run_list_sessions`, `run_kill_stale`, `run_attach_session_list_json`,
+/// and the interactive picker. Returned unsorted (read_dir order is
+/// filesystem-dependent); callers sort as needed.
+pub(crate) fn discover_sessions(global: &GlobalArgs) -> Vec<DiscoveredSession> {
     let dir = get_runtime_dir(global);
-    let mut session_names = std::collections::BTreeSet::new();
-
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if ext == "sock" || ext == "pid" {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        session_names.insert(stem.to_string());
-                    }
-                }
-            }
+    let mut out = Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(_) => return out,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("sock") {
+            continue;
         }
-    }
-
-    struct SessionInfo {
-        session: String,
-        pid: Option<u32>,
-        status: &'static str,
-    }
-
-    let mut sessions = Vec::new();
-    for name in session_names {
-        let sock_path = dir.join(format!("{name}.sock"));
-        let pid_p = dir.join(format!("{name}.pid"));
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let pid_p = mux_core::server::pid_path(&path);
         let pid = read_pid_file(&pid_p);
-        let is_live = mux_core::server::is_session_socket_live(&sock_path);
-        let status = if is_live { "live" } else { "stale" };
-        sessions.push(SessionInfo { session: name, pid, status });
+        let live = mux_core::server::is_session_socket_live(&path);
+        let mtime = std::fs::metadata(&pid_p)
+            .and_then(|m| m.modified())
+            .or_else(|_| std::fs::metadata(&path).and_then(|m| m.modified()))
+            .ok();
+        out.push(DiscoveredSession {
+            session: stem.to_string(),
+            socket_path: path,
+            pid,
+            live,
+            mtime,
+        });
     }
+    out
+}
+
+fn run_list_sessions(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
+    let mut sessions = discover_sessions(global);
+    // Preserve the historical alphabetical order: the old impl built the
+    // name set from a BTreeSet, and read_dir order is filesystem-dependent.
+    sessions.sort_by(|a, b| a.session.cmp(&b.session));
 
     if global.json {
         let json_list: Vec<Value> = sessions
@@ -905,7 +931,7 @@ fn run_list_sessions(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
                     "session": s.session,
                     "name": s.session,
                     "pid": s.pid,
-                    "status": s.status,
+                    "status": if s.live { "live" } else { "stale" },
                 })
             })
             .collect();
@@ -919,9 +945,39 @@ fn run_list_sessions(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
     } else {
         for s in &sessions {
             let pid_str = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".to_string());
-            println!("{} {} {}", s.session, pid_str, s.status);
+            let status = if s.live { "live" } else { "stale" };
+            println!("{} {} {}", s.session, pid_str, status);
         }
         0
+    }
+}
+
+/// `cmux attach --session-list --json` (issue #63 L1): non-interactive
+/// discovery dump. Same shape as `run_list_sessions`'s JSON branch PLUS a
+/// `socket_path` per entry, so a caller can reconnect to the exact socket
+/// — important when discovery is scoped by `--socket <parent>/x.sock` and
+/// `runtime_dir()` would resolve elsewhere. Exit 0; 3 on write error.
+pub(crate) fn run_attach_session_list_json(global: &GlobalArgs) -> i32 {
+    let mut sessions = discover_sessions(global);
+    sessions.sort_by(|a, b| a.session.cmp(&b.session));
+    let json_list: Vec<Value> = sessions
+        .iter()
+        .map(|s| {
+            json!({
+                "session": s.session,
+                "name": s.session,
+                "pid": s.pid,
+                "status": if s.live { "live" } else { "stale" },
+                "socket_path": s.socket_path.display().to_string(),
+            })
+        })
+        .collect();
+    let payload = json!({ "sessions": json_list });
+    if serde_json::to_writer(io::stdout(), &payload).is_ok() {
+        println!();
+        0
+    } else {
+        3
     }
 }
 
@@ -978,29 +1034,13 @@ fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
 }
 
 fn run_kill_stale(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
-    let dir = get_runtime_dir(global);
-    let mut session_names = std::collections::BTreeSet::new();
-
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if ext == "sock" || ext == "pid" {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        session_names.insert(stem.to_string());
-                    }
-                }
-            }
-        }
-    }
-
+    let mut sessions = discover_sessions(global);
+    sessions.sort_by(|a, b| a.session.cmp(&b.session));
     let mut cleaned = 0;
-    for name in session_names {
-        let sock_path = dir.join(format!("{name}.sock"));
-        let pid_p = dir.join(format!("{name}.pid"));
-        if !mux_core::server::is_session_socket_live(&sock_path) {
-            let _ = std::fs::remove_file(&sock_path);
-            let _ = std::fs::remove_file(&pid_p);
+    for s in &sessions {
+        if !s.live {
+            let _ = std::fs::remove_file(&s.socket_path);
+            let _ = std::fs::remove_file(mux_core::server::pid_path(&s.socket_path));
             cleaned += 1;
         }
     }

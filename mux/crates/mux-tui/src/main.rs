@@ -99,6 +99,12 @@ OPTIONS:
                     --apply-local-config), print the merged chrome as JSON,
                     and exit without starting the TUI. For inspecting
                     overlay layering without a live terminal.
+  --session-list     Attach only: discover sessions and either print them
+                    (--json) or open the interactive picker instead of
+                    attaching directly.
+  --json             With --session-list: print the discovered sessions as
+                    JSON (one object per session, including socket_path)
+                    and exit without attaching.
   -V, --version      Print the cmux version and exit.
   -h, --help         Show this help.
 
@@ -236,6 +242,11 @@ struct Args {
     show_local_config_resolution: bool,
     print_resolved_config: bool,
     config: Option<PathBuf>,
+    // Issue #63 L1: `cmux attach --session-list [--json]` — discover
+    // sessions and either dump them as JSON or open the interactive picker
+    // before attaching. Parsed on the `attach` subcommand in parse_args.
+    session_list: bool,
+    json: bool,
 }
 
 /// cmux version, taken from `crates/mux-tui/Cargo.toml` at compile time.
@@ -253,6 +264,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
         show_local_config_resolution: false,
         print_resolved_config: false,
         config: None,
+        session_list: false,
+        json: false,
     };
     let mut args = args.into_iter().peekable();
     if args.peek().map(|s| s.as_str()) == Some("attach") {
@@ -269,6 +282,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
                     Some(args.next().unwrap_or_else(|| usage_exit("--socket needs a value")).into())
             }
             "--headless" => out.headless = true,
+            // Issue #63 L1: attach-only session discovery flags.
+            "--session-list" => out.session_list = true,
+            "--json" => out.json = true,
             "--term" => {
                 out.term = Some(args.next().unwrap_or_else(|| usage_exit("--term needs a value")))
             }
@@ -422,6 +438,19 @@ fn main() {
     let args = parse_args(raw_args);
     if args.show_local_config_resolution {
         return show_local_config_resolution(args);
+    }
+    if args.session_list {
+        let global = cli::GlobalArgs {
+            session: Some(args.session.clone()),
+            socket: args.socket.clone(),
+            json: args.json,
+        };
+        if args.json {
+            std::process::exit(cli::run_attach_session_list_json(&global));
+        }
+        // Interactive picker (Claims 2-7) is wired in the next commit; the
+        // --json short-circuit above is the only L1 path that is headlessly
+        // tested. Without --json we fall through and attach to args.session.
     }
     let result = if args.attach { run_attach(args) } else { run_server(args) };
     if let Err(e) = result {
