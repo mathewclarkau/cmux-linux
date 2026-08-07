@@ -1372,6 +1372,50 @@ pub fn cleanup(path: &Path) {
 mod tests {
     use super::*;
 
+    /// Foundation pin for `cmux rename-session` (issue #63 L2, scout-plan
+    /// Q1). On a bound `AF_UNIX` `SOCK_STREAM` listener, `rename(2)`
+    /// reparents the dirent while the kernel keeps the listener bound to
+    /// the inode. The listener therefore keeps accepting at the NEW path
+    /// and the OLD path ceases to be connectable. The rename-session
+    /// daemon mechanism relies on this — it never rebinds, it just
+    /// `rename(2)`s the `.sock`. This test pins the kernel property so a
+    /// future platform or libc quirk can't silently regress the whole
+    /// feature.
+    #[test]
+    fn unix_socket_survives_rename() {
+        use std::os::unix::net::{UnixListener, UnixStream};
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir()
+            .join(format!("cmux-t0-rename-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("old.sock");
+        let new = dir.join("new.sock");
+
+        let listener = UnixListener::bind(&old).unwrap();
+        std::fs::rename(&old, &new).unwrap();
+
+        // The old dirent is gone -> connecting there must fail.
+        assert!(
+            UnixStream::connect(&old).is_err(),
+            "old socket path should not be connectable after rename"
+        );
+        // The new dirent resolves to the same bound inode -> connectable.
+        let client = UnixStream::connect(&new)
+            .expect("new socket path should be connectable after rename");
+        // The listener (bound to the inode, not the dirent) still accepts
+        // the connection that arrived at the new path.
+        let (_accepted, _addr) = listener
+            .accept()
+            .expect("listener must accept a connection after the rename");
+
+        drop(client);
+        drop(listener);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn workspace_color_accepts_hex_and_named_presets() {
         assert_eq!(parse_workspace_color("#1234ab").unwrap(), Rgb { r: 0x12, g: 0x34, b: 0xab });
