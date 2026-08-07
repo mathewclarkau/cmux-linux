@@ -22,7 +22,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::cli::DiscoveredSession;
 use crate::session::TreeView;
-use crate::ui::input::TextInput;
+use crate::ui::input::{InputEvent, TextInput};
 
 /// Which overlay column currently holds the cursor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,9 +95,6 @@ pub enum SessionManagerAction {
     Redraw,
     /// q / Esc / leader-S: close the overlay and restore focus.
     Close,
-    /// The focused session's workspaces need a lazy fetch (App spawns a
-    /// worker). Emitted implicitly via [`SessionManagerState::fetch_requests`].
-    RequestFetch(PathBuf),
     /// Kill the session at this row index (App calls `cli::kill_session_at`).
     KillSession(usize),
     /// Commit the rename: App calls `cli::rename_session_at(socket, new_name)`.
@@ -112,6 +109,9 @@ pub enum SessionManagerAction {
     AttachOtherSessionWorkspace { socket: PathBuf, index: usize },
     /// A transient status line message (e.g. "unreachable — cannot attach").
     SetStatus(String),
+    /// Re-run discovery and reset the right column (the App rebuilds the
+    /// session list and clears the workspace cache).
+    Refresh,
 }
 
 /// Overlay state. Constructed by the App on open (which seeds the current
@@ -156,8 +156,22 @@ impl SessionManagerState {
     /// Indices of sessions passing the active `/` filter (or every session
     /// when the filter is inactive). Unit-testable: the predicate is pure.
     pub fn filtered_sessions(&self) -> Vec<usize> {
-        // STUB (commit 4 RED): returns every row unfiltered so T4 fails.
-        (0..self.sessions.len()).collect()
+        let query = match &self.filter {
+            Some(f) => f.as_str(),
+            None => return (0..self.sessions.len()).collect(),
+        };
+        self.sessions
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| {
+                let titles = self.workspace_titles(&s.socket_path);
+                if passes_filter(query, &s.session, &titles) {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// The session row currently under the left-column cursor.
@@ -174,11 +188,242 @@ impl SessionManagerState {
         }
     }
 
+    /// Workspace titles (names) for the right-column filter when a tree is
+    /// `Ready`; empty otherwise. Cheap (no clone of the tree).
+    fn workspace_titles(&self, socket: &Path) -> Vec<String> {
+        match self.workspaces.get(socket) {
+            Some(WorkspaceColumn::Ready(tree)) => {
+                tree.workspaces.iter().map(|w| w.name.clone()).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// Route a key to an action. Pure (no I/O); the App interprets the
     /// returned [`SessionManagerAction`].
-    pub fn handle_key(&mut self, _key: KeyEvent) -> SessionManagerAction {
-        // STUB (commit 4 RED): does nothing so T5-T9 fail.
-        SessionManagerAction::None
+    pub fn handle_key(&mut self, key: KeyEvent) -> SessionManagerAction {
+        // Ctrl-C aborts from any mode.
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            return SessionManagerAction::Close;
+        }
+        match self.mode.clone() {
+            Mode::ConfirmKill { index, name } => match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.mode = Mode::Browse;
+                    self.status = format!("killed {name}");
+                    SessionManagerAction::KillSession(index)
+                }
+                _ => {
+                    self.mode = Mode::Browse;
+                    SessionManagerAction::Redraw
+                }
+            },
+            Mode::Rename { socket_path, old_name, mut input } => {
+                match input.handle_key(&key) {
+                    InputEvent::Commit => {
+                        let new_name = input.as_str().trim().to_string();
+                        self.mode = Mode::Browse;
+                        if new_name.is_empty() {
+                            self.status = "session name cannot be empty".to_string();
+                            return SessionManagerAction::Redraw;
+                        }
+                        if new_name == old_name {
+                            self.status = format!("unchanged ({old_name})");
+                            return SessionManagerAction::Redraw;
+                        }
+                        SessionManagerAction::RenameSession { socket: socket_path, new_name }
+                    }
+                    InputEvent::Cancel => {
+                        self.mode = Mode::Browse;
+                        SessionManagerAction::Redraw
+                    }
+                    InputEvent::Changed | InputEvent::None => {
+                        self.mode = Mode::Rename { socket_path, old_name, input };
+                        SessionManagerAction::Redraw
+                    }
+                }
+            }
+            Mode::Browse => self.browse_key(key),
+        }
+    }
+
+    /// Keys for the default Browse mode (left/right navigation, filter, and
+    /// the row actions). The `/` filter, when active, captures typeable
+    /// input; `Esc` clears an active filter first and only closes on a
+    /// second press.
+    fn browse_key(&mut self, key: KeyEvent) -> SessionManagerAction {
+        // Filter-active: typeable input routes to the filter box.
+        if let Some(input) = self.filter.as_mut() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.filter = None;
+                    self.left_sel = self.filtered_sessions().first().copied().unwrap_or(0);
+                    return SessionManagerAction::Redraw;
+                }
+                KeyCode::Enter => {
+                    // Keep the filter but drop into browse; Enter on a row acts.
+                    return self.left_enter();
+                }
+                _ => {}
+            }
+            match input.handle_key(&key) {
+                InputEvent::Cancel => {
+                    self.filter = None;
+                    self.left_sel = self.filtered_sessions().first().copied().unwrap_or(0);
+                    SessionManagerAction::Redraw
+                }
+                InputEvent::Commit | InputEvent::Changed | InputEvent::None => {
+                    // Clamping the cursor to the (possibly shrunk) filtered
+                    // set keeps the selection valid as the query tightens.
+                    let visible = self.filtered_sessions();
+                    if !visible.iter().any(|&i| i == self.left_sel) {
+                        self.left_sel = visible.first().copied().unwrap_or(0);
+                        self.right_sel = 0;
+                    }
+                    SessionManagerAction::Redraw
+                }
+            }
+        } else {
+            self.unfiltered_browse_key(key)
+        }
+    }
+
+    fn unfiltered_browse_key(&mut self, key: KeyEvent) -> SessionManagerAction {
+        match key.code {
+            KeyCode::Char('q') => SessionManagerAction::Close,
+            KeyCode::Esc => SessionManagerAction::Close,
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.move_left(true);
+                SessionManagerAction::Redraw
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.move_left(false);
+                SessionManagerAction::Redraw
+            }
+            KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => {
+                if self.focused_workspaces().is_some() {
+                    self.focus = Column::Right;
+                    return SessionManagerAction::Redraw;
+                }
+                SessionManagerAction::None
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.focus = Column::Left;
+                SessionManagerAction::Redraw
+            }
+            KeyCode::Char('R') => SessionManagerAction::Refresh,
+            KeyCode::Char('/') => {
+                self.filter = Some(TextInput::new(String::new()));
+                SessionManagerAction::Redraw
+            }
+            KeyCode::Enter => {
+                if self.focus == Column::Right {
+                    self.right_enter()
+                } else {
+                    self.left_enter()
+                }
+            }
+            KeyCode::Char('r') => self.start_rename(),
+            KeyCode::Char('x') | KeyCode::Char('K') => self.start_kill(),
+            _ => SessionManagerAction::None,
+        }
+    }
+
+    /// Left-column Enter: attach to / hint at the focused session row.
+    fn left_enter(&mut self) -> SessionManagerAction {
+        let Some(s) = self.focused_session().cloned() else {
+            return SessionManagerAction::None;
+        };
+        if !s.live {
+            return SessionManagerAction::SetStatus(format!(
+                "{} is unreachable (socket not connectable) — cannot attach",
+                s.session
+            ));
+        }
+        if s.socket_path == self.own_socket {
+            return SessionManagerAction::SetStatus(
+                "already attached to this session".to_string(),
+            );
+        }
+        SessionManagerAction::AttachSession { socket: s.socket_path }
+    }
+
+    /// Right-column Enter: focus a workspace in the focused session
+    /// (in-place for the current session; remote-focus + reattach otherwise).
+    fn right_enter(&mut self) -> SessionManagerAction {
+        let Some(s) = self.focused_session().cloned() else {
+            return SessionManagerAction::None;
+        };
+        let index = self.right_sel;
+        if s.socket_path == self.own_socket {
+            SessionManagerAction::FocusWorkspaceInPlace { index }
+        } else {
+            SessionManagerAction::AttachOtherSessionWorkspace { socket: s.socket_path, index }
+        }
+    }
+
+    fn start_rename(&mut self) -> SessionManagerAction {
+        let Some(s) = self.focused_session().cloned() else {
+            return SessionManagerAction::None;
+        };
+        if !s.live {
+            return SessionManagerAction::SetStatus(
+                "no live session focused to rename".to_string(),
+            );
+        }
+        self.mode = Mode::Rename {
+            socket_path: s.socket_path,
+            old_name: s.session.clone(),
+            input: TextInput::new(s.session),
+        };
+        SessionManagerAction::Redraw
+    }
+
+    fn start_kill(&mut self) -> SessionManagerAction {
+        let Some(s) = self.focused_session().cloned() else {
+            return SessionManagerAction::None;
+        };
+        self.mode = Mode::ConfirmKill { index: self.left_sel, name: s.session };
+        SessionManagerAction::Redraw
+    }
+
+    /// Move the left cursor one step within the filtered-visible set.
+    fn move_left(&mut self, down: bool) {
+        let visible = self.filtered_sessions();
+        if visible.is_empty() {
+            return;
+        }
+        let pos = visible.iter().position(|&i| i == self.left_sel).unwrap_or(0);
+        let next = if down { pos + 1 } else { pos.saturating_sub(1) };
+        if next >= visible.len() {
+            return;
+        }
+        if visible[next] != self.left_sel {
+            self.left_sel = visible[next];
+            self.right_sel = 0;
+            self.focus = Column::Left;
+        }
+    }
+
+    /// Drain the focus + one-lookahead sockets whose column is still
+    /// `NotFetched`, marking each `Loading` so the App does not re-spawn a
+    /// worker for the same socket. Called by the App after each redraw.
+    pub fn fetch_requests(&mut self) -> Vec<PathBuf> {
+        let targets = prefetch_targets(self.left_sel, 1, self.sessions.len());
+        let mut out = Vec::new();
+        for i in targets {
+            let Some(s) = self.sessions.get(i) else { continue };
+            let socket = s.socket_path.clone();
+            let needs = matches!(
+                self.workspaces.get(&socket),
+                None | Some(WorkspaceColumn::NotFetched)
+            );
+            if needs {
+                self.workspaces.insert(socket.clone(), WorkspaceColumn::Loading);
+                out.push(socket);
+            }
+        }
+        out
     }
 
     /// Drain a pending reattach target after the App decided to quit.
@@ -195,26 +440,32 @@ impl SessionManagerState {
 /// Index of the session whose socket == the running TUI's socket. `None`
 /// when the running session is absent from the discovered set (e.g. a
 /// `--socket` override pointing outside the runtime dir). Pure.
-pub fn current_index(sessions: &[DiscoveredSession], _own: &Path) -> Option<usize> {
-    // STUB (commit 4 RED): always None so T1 fails.
-    let _ = sessions;
-    None
+pub fn current_index(sessions: &[DiscoveredSession], own: &Path) -> Option<usize> {
+    sessions.iter().position(|s| s.socket_path == own)
 }
 
 /// Substring filter predicate (case-insensitive) on the session name OR any
 /// workspace title. An empty query passes everything. Pure, so the filter
 /// is testable without sockets.
-pub fn passes_filter(_query: &str, _session: &str, _ws_titles: &[String]) -> bool {
-    // STUB (commit 4 RED): always passes so T2 fails.
-    true
+pub fn passes_filter(query: &str, session: &str, ws_titles: &[String]) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let needle = query.to_lowercase();
+    if session.to_lowercase().contains(&needle) {
+        return true;
+    }
+    ws_titles.iter().any(|t| t.to_lowercase().contains(&needle))
 }
 
 /// Which row indices should be prefetched given the current focus and a
 /// lookahead count (focus + the next `lookahead` rows), clamped to `len`
 /// and de-duplicated. Pure.
-pub fn prefetch_targets(_left_sel: usize, _lookahead: usize, _len: usize) -> Vec<usize> {
-    // STUB (commit 4 RED): returns nothing so T3 fails.
-    Vec::new()
+pub fn prefetch_targets(left_sel: usize, lookahead: usize, len: usize) -> Vec<usize> {
+    if left_sel >= len {
+        return Vec::new();
+    }
+    (left_sel..(left_sel + lookahead + 1).min(len)).collect()
 }
 
 #[cfg(test)]
@@ -400,7 +651,8 @@ mod tests {
         // `r` enters rename mode.
         let enter = state.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
         assert!(matches!(enter, SessionManagerAction::Redraw), "r must enter rename mode (Redraw), got {enter:?}");
-        // Type a new name.
+        // Rename pre-fills with the old name; clear it (Ctrl-U) then type the new.
+        state.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
         state.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
         state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
         state.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
