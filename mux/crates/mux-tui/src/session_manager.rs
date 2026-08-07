@@ -99,9 +99,10 @@ pub enum SessionManagerAction {
     KillSession(usize),
     /// Commit the rename: App calls `cli::rename_session_at(socket, new_name)`.
     RenameSession { socket: PathBuf, new_name: String },
-    /// Attach to another session (case b, left row Enter). The App does the
-    /// quit+reattach (`RunOutcome::Reattach`).
-    AttachSession { socket: PathBuf },
+    /// Attach to another session (case b, left row Enter). The App quits and
+    /// the caller re-attaches via `RunOutcome::Reattach`; the target socket
+    /// is recorded in `SessionManagerState::pending_reattach`.
+    AttachSession,
     /// Focus a workspace in the *current* session in-process (case a).
     FocusWorkspaceInPlace { index: usize },
     /// Focus a workspace in an *other* session remotely (select-workspace
@@ -352,7 +353,10 @@ impl SessionManagerState {
                 "already attached to this session".to_string(),
             );
         }
-        SessionManagerAction::AttachSession { socket: s.socket_path }
+        // Record the reattach target so `take_reattach_target` can drain it
+        // after the App quits; the action lets the App know to stop the loop.
+        self.pending_reattach = Some(s.socket_path.clone());
+        SessionManagerAction::AttachSession
     }
 
     /// Right-column Enter: focus a workspace in the focused session
@@ -365,6 +369,9 @@ impl SessionManagerState {
         if s.socket_path == self.own_socket {
             SessionManagerAction::FocusWorkspaceInPlace { index }
         } else {
+            // Remote-focus + reattach: record the target (drained by
+            // `take_reattach_target` after the App quits).
+            self.pending_reattach = Some(s.socket_path.clone());
             SessionManagerAction::AttachOtherSessionWorkspace { socket: s.socket_path, index }
         }
     }
@@ -816,6 +823,19 @@ mod tests {
                     if *socket == Path::new("/run/other.sock") && index == 2
             ),
             "Enter on other-session workspace must emit reattach, got {action:?}"
+        );
+        // Commit 10: the state records the reattach target so the App can
+        // drain it (take_reattach_target) after quitting — the contract
+        // RunOutcome::Reattach rides on.
+        assert_eq!(
+            state.take_reattach_target(),
+            Some(PathBuf::from("/run/other.sock")),
+            "reattach must record the target socket for the App to drain"
+        );
+        assert_eq!(
+            state.take_reattach_target(),
+            None,
+            "take_reattach_target must drain (second call is None)"
         );
     }
 

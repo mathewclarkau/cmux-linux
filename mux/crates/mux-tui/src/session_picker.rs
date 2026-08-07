@@ -440,14 +440,6 @@ fn refresh(global: &GlobalArgs) -> Vec<DiscoveredSession> {
     sessions
 }
 
-/// Kill every stale session (reuses the cli kill-stale semantics) and return
-/// how many were cleaned. Thin wrapper over the shared `cli::kill_stale` so
-/// the picker, the `kill-stale` verb, and the in-TUI session manager (L3)
-/// share one code path.
-fn kill_stale(global: &GlobalArgs) -> usize {
-    cli::kill_stale(global)
-}
-
 fn clamp_selection(state: &mut ListState, sessions: &[DiscoveredSession]) {
     if sessions.is_empty() {
         state.select(None);

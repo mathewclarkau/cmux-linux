@@ -60,6 +60,17 @@ enum RenderAction {
     Draw,
 }
 
+/// Outcome of `app::run` (issue #63 L3). `Done` is the normal exit; `Reattach`
+/// asks the caller to tear down the TUI and re-attach to a different session
+/// socket — the only clean way to switch the running TUI to another session,
+/// since the App owns its `Session` and cannot hot-swap it in place. The
+/// session-manager overlay sets this when the user picks another session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunOutcome {
+    Done,
+    Reattach(std::path::PathBuf),
+}
+
 impl RenderAction {
     fn merge(self, other: Self) -> Self {
         match (self, other) {
@@ -602,7 +613,11 @@ fn server_base_config(session: &Session) -> Option<crate::config::Config> {
     Some(crate::config::Config::from_server_chrome(&data))
 }
 
-pub fn run(session: Session, session_label: String, overlay: Option<crate::config::Overlay>) -> anyhow::Result<()> {
+pub fn run(
+    session: Session,
+    session_label: String,
+    overlay: Option<crate::config::Overlay>,
+) -> anyhow::Result<RunOutcome> {
     // For a thin-client attach (issue #40 blocker 1) the local `Overlay`
     // must layer on top of the *server's* resolved config, not the
     // laptop's own `config::load()`. So a remote attach fetches the
@@ -748,9 +763,19 @@ pub fn run(session: Session, session_label: String, overlay: Option<crate::confi
     if let Some(writer) = app.graphics_writer.as_mut() {
         writer.shutdown(Duration::from_millis(200));
     }
+    // If the session-manager overlay asked to switch sessions, drain its
+    // pending reattach target before the App (and overlay state) drop.
+    let reattach = app
+        .session_manager
+        .as_mut()
+        .and_then(|state| state.take_reattach_target());
     let _ = std::panic::take_hook();
     restore_terminal(Some(&stdout_lock))?;
-    result
+    result?;
+    Ok(match reattach {
+        Some(socket) => RunOutcome::Reattach(socket),
+        None => RunOutcome::Done,
+    })
 }
 
 fn restore_terminal(stdout_lock: Option<&Arc<Mutex<()>>>) -> anyhow::Result<()> {
@@ -1626,25 +1651,18 @@ impl App {
                 // The focus change shows up via the next mux event redraw;
                 // keep the overlay open so the user can pick again.
             }
-            SessionManagerAction::AttachSession { socket } => {
-                // Case (b): quit+reattach lands in a later commit. For now
-                // surface the intent as a status so the key is observable.
-                if let Some(state) = self.session_manager.as_mut() {
-                    state.status =
-                        format!("reattach to {} (wired next)", socket.display());
-                }
+            SessionManagerAction::AttachSession => {
+                // Case (b): the state already recorded the reattach target;
+                // quit so `app::run` returns RunOutcome::Reattach(socket)
+                // and the caller reconnects.
+                self.quit = true;
             }
             SessionManagerAction::AttachOtherSessionWorkspace { socket, index } => {
                 // Best-effort remote focus (one-shot select-workspace) so the
-                // target session lands on the chosen workspace; the TUI
-                // switch itself arrives with the reattach plumbing.
+                // target session lands on the chosen workspace before the TUI
+                // re-attaches; the state already recorded the reattach target.
                 let _ = crate::cli::select_workspace_remote(&socket, index);
-                if let Some(state) = self.session_manager.as_mut() {
-                    state.status = format!(
-                        "focused {} → workspace {index} (switch wired next)",
-                        socket.display()
-                    );
-                }
+                self.quit = true;
             }
         }
         // After any non-close action, kick off fetches for newly-focused rows.
