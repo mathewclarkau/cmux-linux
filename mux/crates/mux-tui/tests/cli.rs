@@ -1076,6 +1076,144 @@ fn kill_stale_removes_stale_pair_and_leaves_live_untouched() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// `cmux attach --session-list --json` lists discovered sessions with a
+/// `socket_path` per entry (issue #63, layer L1). Same shape as
+/// `list-sessions --json` plus `socket_path`; exit 0. Modelled on
+/// `list_sessions_lists_active_headless_session` (:904).
+#[test]
+fn attach_session_list_json_includes_socket_path() {
+    let dir = unique_temp_dir("attach-sl");
+    fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("test-attach.sock");
+    let mut child = Command::new(bin())
+        .args(["--headless", "--socket"])
+        .arg(&socket)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let pid_file = dir.join("test-attach.pid");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if socket.exists() && pid_file.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(socket.exists(), "socket must exist");
+    assert!(pid_file.exists(), "pid file must exist");
+
+    let output = Command::new(bin())
+        .args(["attach", "--session-list", "--json", "--socket"])
+        .arg(&socket)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let sessions = value["sessions"].as_array().expect("sessions array");
+    let entry = sessions
+        .iter()
+        .find(|s| s["session"] == "test-attach")
+        .expect("sessions should contain test-attach");
+    assert_eq!(entry["status"], "live", "test-attach should be live, got {entry}");
+    let sp = entry["socket_path"].as_str().expect("socket_path field");
+    assert!(
+        sp.ends_with("test-attach.sock"),
+        "socket_path should end with test-attach.sock, got {sp}"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Stale entries (dead pidfile, unconnectable socket) appear with
+/// `status == "stale"` and a `socket_path`, alongside live entries.
+#[test]
+fn attach_session_list_json_marks_stale() {
+    let dir = unique_temp_dir("attach-sl-stale");
+    fs::create_dir_all(&dir).unwrap();
+    let live_socket = dir.join("live-att.sock");
+    let mut child = Command::new(bin())
+        .args(["--headless", "--socket"])
+        .arg(&live_socket)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let live_pid = dir.join("live-att.pid");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if live_socket.exists() && live_pid.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(live_socket.exists());
+    assert!(live_pid.exists());
+
+    // Fake stale pair (nonexistent PID 999999, unconnectable socket).
+    let stale_socket = dir.join("stale-att.sock");
+    let stale_pid = dir.join("stale-att.pid");
+    fs::write(&stale_socket, "fake").unwrap();
+    fs::write(&stale_pid, "999999\n").unwrap();
+
+    let output = Command::new(bin())
+        .args(["attach", "--session-list", "--json", "--socket"])
+        .arg(&live_socket)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let sessions = value["sessions"].as_array().expect("sessions array");
+    let stale = sessions
+        .iter()
+        .find(|s| s["session"] == "stale-att")
+        .expect("sessions should contain stale-att");
+    assert_eq!(stale["status"], "stale", "stale-att should be stale, got {stale}");
+    let stale_sp = stale["socket_path"].as_str().expect("socket_path field");
+    assert!(stale_sp.ends_with("stale-att.sock"));
+    let live = sessions
+        .iter()
+        .find(|s| s["session"] == "live-att")
+        .expect("sessions should contain live-att");
+    assert_eq!(live["status"], "live");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// An empty runtime dir yields `{"sessions":[]}` and exit 0.
+#[test]
+fn attach_session_list_json_empty() {
+    let dir = unique_temp_dir("attach-sl-empty");
+    fs::create_dir_all(&dir).unwrap();
+    // Point --socket at a path inside the empty dir; discovery scans the
+    // parent (the dir) and finds no *.sock.
+    let socket = dir.join("nothing.sock");
+    let output = Command::new(bin())
+        .args(["attach", "--session-list", "--json", "--socket"])
+        .arg(&socket)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let sessions = value["sessions"].as_array().expect("sessions array");
+    assert!(sessions.is_empty(), "expected no sessions, got {sessions:?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn serve_recovers_from_stale_socket() {
     let dir = unique_temp_dir("recover-stale");
