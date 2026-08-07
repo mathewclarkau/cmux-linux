@@ -29,6 +29,7 @@ mod pi_hook;
 mod plugin;
 mod plugin_host;
 mod session;
+mod session_picker;
 mod skill_content;
 mod socket_watchdog;
 mod ssh_bootstrap;
@@ -435,7 +436,7 @@ fn main() {
     if cli::is_cli_invocation(&raw_args) {
         std::process::exit(cli::run(&raw_args, USAGE));
     }
-    let args = parse_args(raw_args);
+    let mut args = parse_args(raw_args);
     if args.show_local_config_resolution {
         return show_local_config_resolution(args);
     }
@@ -448,9 +449,26 @@ fn main() {
         if args.json {
             std::process::exit(cli::run_attach_session_list_json(&global));
         }
-        // Interactive picker (Claims 2-7) is wired in the next commit; the
-        // --json short-circuit above is the only L1 path that is headlessly
-        // tested. Without --json we fall through and attach to args.session.
+        // Interactive picker (Claims 2-7). It restores the terminal on every
+        // exit path before returning, so the subsequent app::run (Attach)
+        // starts from a clean screen.
+        match session_picker::run(&global) {
+            Ok(session_picker::PickerOutcome::Attach { socket_path, name }) => {
+                // Use the EXACT discovered socket_path (not a recomputed
+                // default_socket_path(name)) so --socket-scoped discovery
+                // reconnects even if runtime_dir() would resolve elsewhere.
+                args.socket = Some(socket_path);
+                args.session = name;
+            }
+            Ok(session_picker::PickerOutcome::Quit { destructive }) => {
+                std::process::exit(if destructive { 1 } else { 0 });
+            }
+            Ok(session_picker::PickerOutcome::CtrlC) => std::process::exit(2),
+            Err(e) => {
+                eprintln!("cmux: {e}");
+                std::process::exit(1);
+            }
+        }
     }
     let result = if args.attach { run_attach(args) } else { run_server(args) };
     if let Err(e) = result {
