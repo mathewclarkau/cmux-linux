@@ -109,6 +109,16 @@ OPTIONS:
   -V, --version      Print the cmux version and exit.
   -h, --help         Show this help.
 
+SESSION PICKER  (cmux attach --session-list, without --json)
+  Lists every discovered cmux session (newest first) and lets you pick one
+  to attach in-process. Stale (unconnectable) sessions are shown grey and
+  labelled [unreachable]. Exit codes: 0 clean quit, 1 after a destructive
+  kill + quit, 2 Ctrl-C, 0 on attach (then the normal attach/detach flow).
+    ↑/↓ or j/k  move focus        Enter  attach to focused (live only)
+    x  kill focused session (y/N)    s  kill every stale session (y/N)
+    n  new session (inline name)     r  rename (stub; L2 will wire it in)
+    q / Esc  quit                    Ctrl-C  abort (exit 2)
+
 KEYS (prefix: Ctrl-b)
   c  new tab in pane   B    new browser tab    n/p  next/prev tab
   1-9  select tab
