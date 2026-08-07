@@ -1192,6 +1192,20 @@ fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
 }
 
 fn run_kill_stale(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
+    let cleaned = kill_stale(global);
+    if global.json {
+        println!("{}", json!({ "ok": true, "cleaned": cleaned }));
+    }
+    0
+}
+
+/// Kill every stale (socket-not-connectable) session in the runtime dir
+/// honoured by `global` and return how many were cleaned. Mirrors the
+/// historical `run_kill_stale` semantics (remove `.sock` + `.pid` for each
+/// `!live` row). Shared by the `kill-stale` CLI verb, the interactive
+/// pre-attach picker (L1), and the in-TUI session manager (L3) so all three
+/// exercise one code path.
+pub(crate) fn kill_stale(global: &GlobalArgs) -> usize {
     let mut sessions = discover_sessions(global);
     sessions.sort_by(|a, b| a.session.cmp(&b.session));
     let mut cleaned = 0;
@@ -1202,11 +1216,7 @@ fn run_kill_stale(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
             cleaned += 1;
         }
     }
-
-    if global.json {
-        println!("{}", json!({ "ok": true, "cleaned": cleaned }));
-    }
-    0
+    cleaned
 }
 
 /// `cmux rename-session --old <name> --new <name>` (issue #63). Resolves

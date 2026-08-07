@@ -215,7 +215,7 @@ fn dispatch(
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
                     // Reuse the cli kill-stale path: it is already built on
                     // discover_sessions, so semantics match `cmux kill-stale`.
-                    let cleaned = kill_stale(global);
+                    let cleaned = cli::kill_stale(global);
                     *status = format!("cleaned {cleaned} stale session(s)");
                     *sessions = refresh(global);
                     let _ = count; // borrowed only for the prompt label
@@ -246,7 +246,7 @@ fn dispatch(
                         }
                         Some(_) => {
                             // stale同名: clean it, then create fresh below.
-                            kill_stale(global);
+                            cli::kill_stale(global);
                             *sessions = refresh(global);
                             let sock = mux_core::server::default_socket_path(&name);
                             Action::Attach(sock, name)
@@ -441,19 +441,11 @@ fn refresh(global: &GlobalArgs) -> Vec<DiscoveredSession> {
 }
 
 /// Kill every stale session (reuses the cli kill-stale semantics) and return
-/// how many were cleaned. Mirrors `run_kill_stale` but without JSON output.
+/// how many were cleaned. Thin wrapper over the shared `cli::kill_stale` so
+/// the picker, the `kill-stale` verb, and the in-TUI session manager (L3)
+/// share one code path.
 fn kill_stale(global: &GlobalArgs) -> usize {
-    let mut sessions = cli::discover_sessions(global);
-    sessions.sort_by(|a, b| a.session.cmp(&b.session));
-    let mut cleaned = 0;
-    for s in &sessions {
-        if !s.live {
-            let _ = std::fs::remove_file(&s.socket_path);
-            let _ = std::fs::remove_file(mux_core::server::pid_path(&s.socket_path));
-            cleaned += 1;
-        }
-    }
-    cleaned
+    cli::kill_stale(global)
 }
 
 fn clamp_selection(state: &mut ListState, sessions: &[DiscoveredSession]) {
