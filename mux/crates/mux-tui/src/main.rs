@@ -29,6 +29,7 @@ mod pi_hook;
 mod plugin;
 mod plugin_host;
 mod session;
+mod session_picker;
 mod skill_content;
 mod socket_watchdog;
 mod ssh_bootstrap;
@@ -99,8 +100,24 @@ OPTIONS:
                     --apply-local-config), print the merged chrome as JSON,
                     and exit without starting the TUI. For inspecting
                     overlay layering without a live terminal.
+  --session-list     Attach only: discover sessions and either print them
+                    (--json) or open the interactive picker instead of
+                    attaching directly.
+  --json             With --session-list: print the discovered sessions as
+                    JSON (one object per session, including socket_path)
+                    and exit without attaching.
   -V, --version      Print the cmux version and exit.
   -h, --help         Show this help.
+
+SESSION PICKER  (cmux attach --session-list, without --json)
+  Lists every discovered cmux session (newest first) and lets you pick one
+  to attach in-process. Stale (unconnectable) sessions are shown grey and
+  labelled [unreachable]. Exit codes: 0 clean quit, 1 after a destructive
+  kill + quit, 2 Ctrl-C, 0 on attach (then the normal attach/detach flow).
+    ↑/↓ or j/k  move focus        Enter  attach to focused (live only)
+    x  kill focused session (y/N)    s  kill every stale session (y/N)
+    n  new session (inline name)     r  rename (stub; L2 will wire it in)
+    q / Esc  quit                    Ctrl-C  abort (exit 2)
 
 KEYS (prefix: Ctrl-b)
   c  new tab in pane   B    new browser tab    n/p  next/prev tab
@@ -236,6 +253,11 @@ struct Args {
     show_local_config_resolution: bool,
     print_resolved_config: bool,
     config: Option<PathBuf>,
+    // Issue #63 L1: `cmux attach --session-list [--json]` — discover
+    // sessions and either dump them as JSON or open the interactive picker
+    // before attaching. Parsed on the `attach` subcommand in parse_args.
+    session_list: bool,
+    json: bool,
 }
 
 /// cmux version, taken from `crates/mux-tui/Cargo.toml` at compile time.
@@ -253,6 +275,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
         show_local_config_resolution: false,
         print_resolved_config: false,
         config: None,
+        session_list: false,
+        json: false,
     };
     let mut args = args.into_iter().peekable();
     if args.peek().map(|s| s.as_str()) == Some("attach") {
@@ -269,6 +293,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
                     Some(args.next().unwrap_or_else(|| usage_exit("--socket needs a value")).into())
             }
             "--headless" => out.headless = true,
+            // Issue #63 L1: attach-only session discovery flags.
+            "--session-list" => out.session_list = true,
+            "--json" => out.json = true,
             "--term" => {
                 out.term = Some(args.next().unwrap_or_else(|| usage_exit("--term needs a value")))
             }
@@ -419,9 +446,39 @@ fn main() {
     if cli::is_cli_invocation(&raw_args) {
         std::process::exit(cli::run(&raw_args, USAGE));
     }
-    let args = parse_args(raw_args);
+    let mut args = parse_args(raw_args);
     if args.show_local_config_resolution {
         return show_local_config_resolution(args);
+    }
+    if args.session_list {
+        let global = cli::GlobalArgs {
+            session: Some(args.session.clone()),
+            socket: args.socket.clone(),
+            json: args.json,
+        };
+        if args.json {
+            std::process::exit(cli::run_attach_session_list_json(&global));
+        }
+        // Interactive picker (Claims 2-7). It restores the terminal on every
+        // exit path before returning, so the subsequent app::run (Attach)
+        // starts from a clean screen.
+        match session_picker::run(&global) {
+            Ok(session_picker::PickerOutcome::Attach { socket_path, name }) => {
+                // Use the EXACT discovered socket_path (not a recomputed
+                // default_socket_path(name)) so --socket-scoped discovery
+                // reconnects even if runtime_dir() would resolve elsewhere.
+                args.socket = Some(socket_path);
+                args.session = name;
+            }
+            Ok(session_picker::PickerOutcome::Quit { destructive }) => {
+                std::process::exit(if destructive { 1 } else { 0 });
+            }
+            Ok(session_picker::PickerOutcome::CtrlC) => std::process::exit(2),
+            Err(e) => {
+                eprintln!("cmux: {e}");
+                std::process::exit(1);
+            }
+        }
     }
     let result = if args.attach { run_attach(args) } else { run_server(args) };
     if let Err(e) = result {
