@@ -194,7 +194,7 @@ fn read_clipboard_bytes(wl_args: &[&str], x_args: &[&str]) -> Option<Vec<u8>> {
     let x11 = env_is_set("DISPLAY");
     match (wayland, x11) {
         (true, false) => run_capture(wl_args).or_else(|| run_capture(x_args)),
-        (false, true) => run_capture(x_args).or_else(|| run_capture(wl_args)),
+        (false, true) => run_capture(x_args),
         _ => run_capture(wl_args).or_else(|| run_capture(x_args)),
     }
 }
