@@ -2188,3 +2188,47 @@ fn overlay_fetch_workspaces_parses_remote_tree() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// T11 (issue #63 L3, scout plan): focusing a workspace in an *other* session
+/// from the overlay sends a one-shot `select-workspace` RPC over that
+/// session's socket (the path `cli::select_workspace_remote` rides). Spawns
+/// two named daemons, adds workspaces to beta, issues `select-workspace
+/// --index 1` against beta's socket, and asserts beta's `list-workspaces`
+/// afterwards reports workspace index 1 active. This proves the overlay's
+/// right-column Enter on another session remotely moves that session's focus.
+#[test]
+fn overlay_select_workspace_focuses_remotely() {
+    let dir = unique_temp_dir("smgr-select");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "beta");
+    let sock = dir.join("beta.sock");
+
+    // Three workspaces; the first is active by default.
+    assert_success(&run_against(&sock, &dir, &["new-workspace", "--name", "one"]));
+    assert_success(&run_against(&sock, &dir, &["new-workspace", "--name", "two"]));
+    assert_success(&run_against(&sock, &dir, &["new-workspace", "--name", "three"]));
+
+    // Remotely focus workspace index 1 ("two") the way the overlay does.
+    let select = run_against(&sock, &dir, &["select-workspace", "--index", "1"]);
+    assert_success(&select);
+
+    // beta's tree now reports index 1 active.
+    let list = run_against(&sock, &dir, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let active = value["workspaces"]
+        .as_array()
+        .expect("workspaces array")
+        .iter()
+        .find(|ws| ws["active"].as_bool() == Some(true))
+        .expect("an active workspace");
+    assert_eq!(
+        active["name"].as_str(),
+        Some("two"),
+        "select-workspace --index 1 should make 'two' active"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+

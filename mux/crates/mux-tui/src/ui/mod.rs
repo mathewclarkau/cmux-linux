@@ -46,6 +46,8 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
         crate::help::draw(app, frame);
     } else if app.finder.is_some() {
         crate::finder::draw(app, frame);
+    } else if app.session_manager.is_some() {
+        crate::session_manager::draw(app, frame);
     } else if app.menu.is_none() {
         if let Some((x, y)) = cursor {
             frame.set_cursor_position(Position::new(x, y));

@@ -1166,6 +1166,24 @@ pub(crate) fn rename_session_at(
     }
 }
 
+/// Send `select-workspace` (by index) as a one-shot RPC to the daemon at
+/// `socket` so a *different* session lands on workspace `index`. Used by the
+/// in-TUI session manager overlay (issue #63 L3) to focus a workspace in
+/// another session before the running TUI switches to it. Reuses
+/// `one_shot_rpc`, the same path the rename flow rides. Best-effort: an
+/// unreachable socket yields `Err` (the caller renders an `[unreachable]`
+/// column rather than crashing).
+pub(crate) fn select_workspace_remote(
+    socket: &std::path::Path,
+    index: usize,
+) -> Result<(), String> {
+    let request = json!({ "cmd": "select-workspace", "index": index, "id": REQUEST_ID });
+    match one_shot_rpc(socket, request) {
+        OneShotOutcome::Ok(_) => Ok(()),
+        OneShotOutcome::ServerErr(e) | OneShotOutcome::ConnectErr(e) => Err(e),
+    }
+}
+
 fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
     let target_session = flags.optional("session").or_else(|| global.session.clone());
     let Some(session_name) = target_session else {

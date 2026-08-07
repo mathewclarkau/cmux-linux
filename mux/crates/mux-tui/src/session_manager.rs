@@ -139,9 +139,16 @@ pub struct SessionManagerState {
 
 impl SessionManagerState {
     pub fn new(own_socket: PathBuf, sessions: Vec<DiscoveredSession>) -> Self {
+        let mut workspaces = HashMap::new();
+        // Every discovered session starts NotFetched; the App overrides the
+        // current session's column with a Ready tree (free, from App::tree)
+        // and worker threads fill the rest as they gain focus.
+        for s in &sessions {
+            workspaces.insert(s.socket_path.clone(), WorkspaceColumn::NotFetched);
+        }
         SessionManagerState {
             sessions,
-            workspaces: HashMap::new(),
+            workspaces,
             left_sel: 0,
             right_sel: 0,
             focus: Column::Left,
@@ -490,6 +497,182 @@ pub fn fetch_workspaces(socket: &Path) -> WorkspaceColumn {
     }
 }
 
+/// Render the session manager overlay (issue #63 L3). A centred modal split
+/// into a left sessions column and a right workspaces column, with a footer
+/// for the `/` filter input, the rename/confirm prompts, and a status line.
+/// Mirrors the finder/help overlay shape; no socket I/O (the state already
+/// owns the preview trees the worker threads filled in).
+pub fn draw(app: &mut crate::app::App, frame: &mut ratatui::Frame) {
+    use ratatui::layout::{Constraint, Direction, Layout};
+    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+
+    let area = frame.area();
+    let width = 80u16.min(area.width.saturating_sub(2)).max(40);
+    let height = 20u16.min(area.height.saturating_sub(2)).max(10);
+    let rect = ratatui::layout::Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+
+    let Some(state) = app.session_manager.as_ref() else { return };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(4), Constraint::Length(3)])
+        .split(rect);
+    let body = chunks[0];
+    let footer = chunks[1];
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(body);
+    let left_area = columns[0];
+    let right_area = columns[1];
+
+    // Left column: filtered session rows with [current]/[unreachable] tags.
+    let visible = state.filtered_sessions();
+    let dim = Style::default().fg(Color::DarkGray);
+    let current_tag = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let items: Vec<ListItem> = visible
+        .iter()
+        .map(|&i| {
+            let s = &state.sessions[i];
+            let is_current = s.socket_path == state.own_socket;
+            let mut spans = Vec::new();
+            if is_current {
+                spans.push(Span::styled("[current] ", current_tag));
+            }
+            if !s.live {
+                spans.push(Span::styled(format!("[unreachable] {}", s.session), dim));
+            } else {
+                spans.push(Span::raw(s.session.clone()));
+            }
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+    let mut left_state = ListState::default();
+    // Map the raw cursor to its position in the filtered view.
+    let cursor_pos = visible.iter().position(|&i| i == state.left_sel);
+    left_state.select(cursor_pos);
+    let left_title = format!(" sessions ({}) ", visible.len());
+    let left_block = Block::default()
+        .borders(Borders::ALL)
+        .title(left_title)
+        .border_style(if state.focus == Column::Left {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        });
+    frame.render_stateful_widget(
+        List::new(items)
+            .block(left_block)
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .highlight_symbol("▶ "),
+        left_area,
+        &mut left_state,
+    );
+
+    // Right column: the focused session's workspace preview.
+    let focused = state.focused_session();
+    let right_title = match focused {
+        Some(s) => format!(" workspaces: {} ", s.session),
+        None => " workspaces ".to_string(),
+    };
+    let right_block = Block::default()
+        .borders(Borders::ALL)
+        .title(right_title)
+        .border_style(if state.focus == Column::Right {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        });
+    let right_lines: Vec<Line> = match focused.and_then(|s| state.workspaces.get(&s.socket_path)) {
+        Some(WorkspaceColumn::Ready(tree)) => {
+            let mut lines = Vec::new();
+            for (i, ws) in tree.workspaces.iter().enumerate() {
+                let style = if i == state.right_sel {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                let marker = if i == tree.active_workspace { "● " } else { "  " };
+                lines.push(Line::from(Span::styled(
+                    format!("{marker}{}", ws.name),
+                    style,
+                )));
+            }
+            lines
+        }
+        Some(WorkspaceColumn::Loading) => vec![Line::from(Span::styled(
+            " loading… ",
+            Style::default().fg(Color::DarkGray),
+        ))],
+        Some(WorkspaceColumn::Unreachable) => vec![Line::from(Span::styled(
+            " [unreachable] — socket not connectable ",
+            dim,
+        ))],
+        Some(WorkspaceColumn::NotFetched) | None => vec![Line::from(Span::styled(
+            " (focus a session to preview its workspaces) ",
+            Style::default().fg(Color::DarkGray),
+        ))],
+    };
+    frame.render_widget(
+        Paragraph::new(right_lines).block(right_block),
+        right_area,
+    );
+
+    // Footer: the active prompt (filter / rename / confirm-kill) on row 1,
+    // keymap hints + status on row 2.
+    let mut lines = Vec::new();
+    match &state.mode {
+        Mode::Browse => {
+            if let Some(input) = &state.filter {
+                let mut spans = vec![Span::styled("/ ", Style::default().fg(Color::Cyan))];
+                spans.push(Span::raw(input.as_str().to_string()));
+                lines.push(Line::from(spans));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "j/k move · Tab/l right · h/Left left · Enter attach/focus · r rename · x kill · / filter · R refresh · q/Esc close",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+        Mode::ConfirmKill { name, .. } => {
+            lines.push(Line::from(Span::styled(
+                format!("Kill {name}?  y/N  (any other key cancels)"),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            )));
+        }
+        Mode::Rename { old_name, input, .. } => {
+            let mut spans = vec![Span::styled(
+                format!("rename {old_name} → "),
+                Style::default().fg(Color::Cyan),
+            )];
+            spans.push(Span::raw(input.as_str().to_string()));
+            lines.push(Line::from(spans));
+        }
+    }
+    if !state.status.is_empty() {
+        lines.push(Line::from(Span::styled(
+            state.status.as_str(),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" session manager ")
+                .border_style(Style::default().fg(Color::DarkGray)),
+        ),
+        footer,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     //! Pure state-machine + filter + discovery tests (scout-plan T1-T9).
@@ -509,20 +692,15 @@ mod tests {
     }
 
     /// A minimal tree with `n` workspaces named w0..wN-1, for right-column
-    /// fixtures.
+    /// fixtures. Built via `parse_tree` so the fixture exercises the same
+    /// JSON→tree path the worker uses.
     fn mk_tree(n: usize) -> TreeView {
-        let workspaces = (0..n)
-            .map(|i| crate::session::WorkspaceView {
-                id: i as u64,
-                short_id: format!("w{i}"),
-                name: format!("w{i}"),
-                color: None,
-                icon: None,
-                screens: Vec::new(),
-                active_screen: 0,
+        let workspaces: Vec<serde_json::Value> = (0..n)
+            .map(|i| {
+                serde_json::json!({ "id": i, "name": format!("w{i}"), "active": i == 0, "screens": [] })
             })
             .collect();
-        TreeView { workspaces, active_workspace: 0 }
+        parse_tree(&serde_json::json!({ "workspaces": workspaces }))
     }
 
     /// T1 — AC6: `current_index` tags the running session's row.
