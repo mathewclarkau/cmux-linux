@@ -2232,3 +2232,88 @@ fn overlay_select_workspace_focuses_remotely() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// T12 (issue #63 L3, scout plan): an `[unreachable]` socket row is reported
+/// by discovery and `kill-session` cleans it without crashing. The overlay
+/// drives `cli::kill_session_at` on such rows; this guards that a stale
+/// `.sock`/`.pid` pair (no live process) is listed as stale and removable,
+/// matching AC8 (unreachable rows must be killable and must not crash).
+#[test]
+fn overlay_kill_unreachable_does_not_crash_discovery() {
+    let dir = unique_temp_dir("smgr-unreachable");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "live");
+    let live_sock = dir.join("live.sock");
+
+    // Create a STALE socket/pid pair with no live process behind it.
+    let stale_sock = dir.join("ghost.sock");
+    let stale_pid = dir.join("ghost.pid");
+    std::os::unix::net::UnixListener::bind(&stale_sock)
+        .expect("bind stale socket");
+    fs::write(&stale_pid, "999999").unwrap(); // a pid that is not alive
+
+    // list-sessions --json reports both, ghost as stale.
+    let list = run_against(&live_sock, &dir, &["--json", "list-sessions"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let by_name: std::collections::HashMap<&str, &str> = value["sessions"]
+        .as_array()
+        .expect("sessions array")
+        .iter()
+        .map(|s| (s["name"].as_str().unwrap_or(""), s["status"].as_str().unwrap_or("")))
+        .collect();
+    assert_eq!(by_name.get("live").copied(), Some("live"));
+    assert_eq!(
+        by_name.get("ghost").copied(),
+        Some("stale"),
+        "ghost should be reported stale/unreachable"
+    );
+
+    // kill-session on the stale row cleans it (no crash).
+    let kill = run_against(&stale_sock, &dir, &["kill-session", "--session", "ghost"]);
+    assert_success(&kill);
+    assert!(!stale_sock.exists(), "stale socket removed by kill-session");
+    assert!(!stale_pid.exists(), "stale pid removed by kill-session");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// T13 (issue #63 L3, scout plan): the overlay's rename path and the L2
+/// `rename-session` CLI verb agree — both end with the session serving at the
+/// new socket and gone from the old. This is the same wire path
+/// (`cli::rename_session_at` over `one_shot_rpc`); the L2 suite covers the
+/// helper directly, so here we just confirm a rename issued via the verb is
+/// observable through `list-sessions` the way the overlay's `r` flow expects.
+#[test]
+fn overlay_rename_reuses_l2_helper() {
+    let dir = unique_temp_dir("smgr-rename");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "pre");
+    let pre_sock = dir.join("pre.sock");
+
+    let rename = run_against(&pre_sock, &dir, &["rename-session", "--old", "pre", "--new", "post"]);
+    assert_success(&rename);
+    let post_sock = dir.join("post.sock");
+    assert!(post_sock.exists(), "new socket exists after rename");
+    assert!(!pre_sock.exists(), "old socket gone after rename");
+
+    // list-sessions now reports 'post' live and 'pre' absent — the shape the
+    // overlay's rebuilt left column will show after a rename.
+    let list = run_against(&post_sock, &dir, &["--json", "list-sessions"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let names: Vec<&str> = value["sessions"]
+        .as_array()
+        .expect("sessions array")
+        .iter()
+        .map(|s| s["name"].as_str().unwrap_or(""))
+        .collect();
+    assert!(names.iter().any(|n| *n == "post"), "post should be listed: {names:?}");
+    assert!(!names.iter().any(|n| *n == "pre"), "pre should be gone: {names:?}");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+

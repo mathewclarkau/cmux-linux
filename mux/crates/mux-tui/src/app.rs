@@ -1615,8 +1615,11 @@ impl App {
                 // session's seeded tree).
                 self.refresh_session_manager();
             }
-            SessionManagerAction::KillSession(_) | SessionManagerAction::RenameSession { .. } => {
-                // Wired in the next commit (issue #63 L3 commit 9).
+            SessionManagerAction::KillSession(index) => {
+                self.session_manager_kill(index);
+            }
+            SessionManagerAction::RenameSession { socket, new_name } => {
+                self.session_manager_rename(socket, new_name);
             }
             SessionManagerAction::FocusWorkspaceInPlace { index } => {
                 self.session.select_workspace(Some(index), None);
@@ -1684,6 +1687,65 @@ impl App {
         }
         state.right_sel = 0;
         state.status.clear();
+    }
+
+    /// Kill the session at `index` (issue #63 L3, `x`/`K` + y). Reuses
+    /// `cli::kill_session_at` (the L1 path), then rebuilds the left column
+    /// and clamps the cursor so a shrinking list doesn't drop focus.
+    fn session_manager_kill(&mut self, index: usize) {
+        let target = self
+            .session_manager
+            .as_ref()
+            .and_then(|s| s.sessions.get(index))
+            .cloned();
+        let Some(target) = target else { return };
+        crate::cli::kill_session_at(&target.socket_path, target.pid);
+        // Rebuild discovery in place (same scope as open/refresh).
+        self.refresh_session_manager();
+        if let Some(state) = self.session_manager.as_mut() {
+            state.status = format!("killed {}", target.session);
+            // Clamp the cursor to the same row index (or the new last row).
+            if state.sessions.is_empty() {
+                state.left_sel = 0;
+            } else {
+                state.left_sel = index.min(state.sessions.len() - 1);
+            }
+        }
+        // The killed session may have been the focused preview; re-fetch.
+        self.spawn_session_manager_fetches();
+    }
+
+    /// Rename the session at `socket` to `new_name` (issue #63 L3, `r`).
+    /// Reuses `cli::rename_session_at` (the L2 path); on success the socket
+    /// moves, so the right-column map is rekeyed and discovery is rebuilt.
+    fn session_manager_rename(&mut self, socket: std::path::PathBuf, new_name: String) {
+        match crate::cli::rename_session_at(&socket, &new_name) {
+            Ok(new_socket) => {
+                if let Some(state) = self.session_manager.as_mut() {
+                    // Rekey the right-column entry to the new socket.
+                    if let Some(column) = state.workspaces.remove(&socket) {
+                        state.workspaces.insert(new_socket.clone(), column);
+                    }
+                    state.status = format!("renamed → {new_name}");
+                }
+                self.refresh_session_manager();
+                // Land on the renamed row (now listed under its new name).
+                if let Some(state) = self.session_manager.as_mut() {
+                    if let Some(idx) = state
+                        .sessions
+                        .iter()
+                        .position(|s| s.session == new_name && s.live)
+                    {
+                        state.left_sel = idx;
+                    }
+                }
+            }
+            Err(err) => {
+                if let Some(state) = self.session_manager.as_mut() {
+                    state.status = format!("rename failed: {err}");
+                }
+            }
+        }
     }
 
     /// Handle keys captured by the help overlay. Typeable input is fed to the
