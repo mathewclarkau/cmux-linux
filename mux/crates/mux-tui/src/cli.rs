@@ -892,7 +892,7 @@ pub(crate) fn read_pid_file(path: &std::path::Path) -> Option<u32> {
 /// `socket_path` is the exact path to reconnect to; `mtime` is for the
 /// picker's newest-first sort (pid-file mtime preferred — the socket mtime
 /// can shift on each connect — falling back to socket mtime, then `None`).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct DiscoveredSession {
     pub(crate) session: String,
     pub(crate) socket_path: PathBuf,

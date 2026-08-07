@@ -22,7 +22,7 @@ use mux_core::{
 use serde_json::json;
 
 pub use remote::{RemoteSession, RemoteSurface};
-pub use tree::TreeView;
+pub use tree::{parse_tree, TreeView, WorkspaceView};
 
 pub enum Session {
     Local(Arc<Mux>),

@@ -29,6 +29,7 @@ mod pi_hook;
 mod plugin;
 mod plugin_host;
 mod session;
+mod session_manager;
 mod session_picker;
 mod skill_content;
 mod socket_watchdog;
