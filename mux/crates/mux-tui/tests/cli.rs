@@ -1709,3 +1709,507 @@ fn version_flag_prints_cargo_version_and_exits_zero() {
         );
     }
 }
+
+// =====================================================================
+// cmux rename-session (issue #63 L2) — full TDD acceptance suite.
+//
+// These tests are written RED (cookbook Rule 5) before the feature is
+// implemented. At this commit the `rename-session` verb does not exist
+// yet, so every end-to-end test fails because the invocation is rejected
+// (unknown verb) rather than performing the rename; the helper/unit tests
+// fail against compile-scaffolding stubs. The implementation commits turn
+// them green. The manual-spawn + `XDG_RUNTIME_DIR` harness mirrors
+// `list_sessions_lists_active_headless_session` / `kill_session_*`.
+// =====================================================================
+
+/// Spawn a headless daemon as `--session <name>` on `<dir>/<name>.sock` in
+/// an isolated `XDG_RUNTIME_DIR`, wait for `.sock`+`.pid`, return the child.
+fn spawn_named_headless(dir: &std::path::Path, name: &str) -> Child {
+    let socket = dir.join(format!("{name}.sock"));
+    let mut child = Command::new(bin())
+        .args(["--headless", "--session"])
+        .arg(name)
+        .args(["--socket"])
+        .arg(&socket)
+        .env("XDG_RUNTIME_DIR", dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid_file = dir.join(format!("{name}.pid"));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if socket.exists() && pid_file.exists() {
+            return child;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    panic!("daemon {name:?} did not come up at {}", socket.display());
+}
+
+/// Read the daemon pid recorded in `<dir>/<name>.pid`.
+fn read_pid_file(path: &std::path::Path) -> u32 {
+    fs::read_to_string(path)
+        .unwrap_or_else(|_| panic!("pid file {} should exist", path.display()))
+        .trim()
+        .parse::<u32>()
+        .unwrap()
+}
+
+/// Run a cmux CLI subcommand against `--socket <socket>` with CMUX_MUX_SOCKET
+/// unset (so resolution is deterministic) and return its output.
+fn run_against(socket: &std::path::Path, xdg: &std::path::Path, args: &[&str]) -> Output {
+    let mut cmd = Command::new(bin());
+    cmd.args(["--socket"]).arg(socket).args(args);
+    cmd.env("XDG_RUNTIME_DIR", xdg).env_remove("CMUX_MUX_SOCKET");
+    cmd.output().unwrap()
+}
+
+/// Poll `read-screen` until `needle` appears on the surface (or timeout).
+fn wait_for_screen_at(socket: &std::path::Path, surface: u64, needle: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut last = String::new();
+    while Instant::now() < deadline {
+        let out = run_against(socket, std::path::Path::new("/tmp"), &[
+            "read-screen",
+            "--surface",
+            &surface.to_string(),
+        ]);
+        last = String::from_utf8_lossy(&out.stdout).to_string();
+        if last.contains(needle) {
+            return last;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    last
+}
+
+/// AC1: rename moves `.sock`+`.pid` to the new name and the SAME daemon
+/// keeps serving at the new path (pid unchanged).
+#[test]
+fn rename_session_moves_socket_and_pid_and_keeps_serving() {
+    let dir = unique_temp_dir("rename-t1");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "old");
+    let old_sock = dir.join("old.sock");
+    let old_pid = dir.join("old.pid");
+    let daemon_pid = read_pid_file(&old_pid);
+
+    let rename = run_against(
+        &old_sock,
+        &dir,
+        &["rename-session", "--old", "old", "--new", "bar"],
+    );
+    assert_success(&rename);
+
+    let new_sock = dir.join("bar.sock");
+    let new_pid = dir.join("bar.pid");
+    assert!(new_sock.exists(), "new socket should exist after rename");
+    assert!(new_pid.exists(), "new pid file should exist after rename");
+    assert!(!old_sock.exists(), "old socket should be gone after rename");
+    assert!(!old_pid.exists(), "old pid file should be gone after rename");
+
+    // Same daemon keeps serving at the new path.
+    let identify = run_against(&new_sock, &dir, &["--json", "identify"]);
+    assert_success(&identify);
+    let v: serde_json::Value = serde_json::from_slice(&identify.stdout).unwrap();
+    assert_eq!(v["session"].as_str(), Some("bar"), "identify should report the new name");
+    assert_eq!(
+        v["pid"].as_u64(),
+        Some(daemon_pid as u64),
+        "same daemon pid should serve after rename"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// AC2: after rename, the old socket is no longer connectable (exit 3)
+/// while the new path serves the same daemon; protocol version unchanged.
+#[test]
+fn rename_makes_old_socket_unreachable_and_keeps_protocol() {
+    let dir = unique_temp_dir("rename-t2");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "old");
+    let old_sock = dir.join("old.sock");
+    let daemon_pid = read_pid_file(&dir.join("old.pid"));
+
+    let rename = run_against(
+        &old_sock,
+        &dir,
+        &["rename-session", "--old", "old", "--new", "bar"],
+    );
+    assert_success(&rename);
+
+    // New path serves the same daemon; protocol must NOT bump (scout Q2).
+    let new_sock = dir.join("bar.sock");
+    let id_new = run_against(&new_sock, &dir, &["--json", "identify"]);
+    assert_success(&id_new);
+    let v: serde_json::Value = serde_json::from_slice(&id_new.stdout).unwrap();
+    assert_eq!(v["session"].as_str(), Some("bar"));
+    assert_eq!(v["pid"].as_u64(), Some(daemon_pid as u64));
+    assert_eq!(v["protocol"].as_u64(), Some(6), "rename must not bump the protocol version");
+
+    // Old path is gone -> connect fails with exit 3 (transport convention).
+    let id_old = run_against(&old_sock, &dir, &["identify"]);
+    assert_eq!(id_old.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&id_old.stderr).contains("cannot connect"));
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// AC3: after rename, the old session name is gone from discovery and the
+/// new name is listed as live.
+#[test]
+fn old_session_name_gone_after_rename() {
+    let dir = unique_temp_dir("rename-t3");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "old");
+    let old_sock = dir.join("old.sock");
+
+    let rename = run_against(
+        &old_sock,
+        &dir,
+        &["rename-session", "--old", "old", "--new", "bar"],
+    );
+    assert_success(&rename);
+
+    let list = run_against(&old_sock, &dir, &["--json", "list-sessions"]);
+    // old.sock is gone, so list-sessions resolves its runtime dir from
+    // XDG_RUNTIME_DIR and discovers bar.sock live, old.sock absent.
+    // (list-sessions does not need a connectable --socket.)
+    let v: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap_or_else(|_| {
+        let s = String::from_utf8_lossy(&list.stdout);
+        panic!("list-sessions produced non-JSON output: {s}\nstderr: {}",
+            String::from_utf8_lossy(&list.stderr))
+    });
+    let sessions = v["sessions"].as_array().expect("sessions array");
+    assert!(
+        sessions.iter().any(|s| s["session"] == "bar" && s["status"] == "live"),
+        "bar should be listed live after rename, got {v}"
+    );
+    assert!(
+        !sessions.iter().any(|s| s["session"] == "old"),
+        "old should be absent after rename, got {v}"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// AC4: existing panes keep the `CMUX_MUX_SOCKET` they inherited at spawn
+/// (the old path) for their lifetime; panes spawned AFTER the rename
+/// inherit the new path. This is the lifetime guarantee (intentional, not
+/// a bug) documented in USAGE and the server.rs docstring.
+#[test]
+fn rename_preserves_inherited_cmux_socket_in_existing_panes() {
+    let dir = unique_temp_dir("rename-t4");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "old");
+    let old_sock = dir.join("old.sock");
+
+    // Existing pane (spawned before the rename).
+    let ws = run_against(&old_sock, &dir, &["new-workspace", "--name", "pre"]);
+    assert_success(&ws);
+    let surface_pre: u64 =
+        String::from_utf8(ws.stdout).unwrap().trim().parse().unwrap();
+    let probe = "printf 'E=%s\\n' \"$CMUX_MUX_SOCKET\"\\n";
+    let send = run_against(
+        &old_sock,
+        &dir,
+        &["send", "--surface", &surface_pre.to_string(), "--text", probe],
+    );
+    assert_success(&send);
+    let before = wait_for_screen_at(&old_sock, surface_pre, "E=");
+    let old_sock_str = old_sock.display().to_string();
+    assert!(
+        before.contains(&old_sock_str),
+        "pre-rename pane should carry the old socket path; screen was {before:?}"
+    );
+
+    // Rename old -> bar.
+    let rename = run_against(
+        &old_sock,
+        &dir,
+        &["rename-session", "--old", "old", "--new", "bar"],
+    );
+    assert_success(&rename);
+    let new_sock = dir.join("bar.sock");
+
+    // Existing pane: env is unchanged for its lifetime (AC4 first half).
+    let send2 = run_against(
+        &new_sock,
+        &dir,
+        &["send", "--surface", &surface_pre.to_string(), "--text", probe],
+    );
+    assert_success(&send2);
+    let after = wait_for_screen_at(&new_sock, surface_pre, "E=");
+    assert!(
+        after.contains(&old_sock_str) && !after.contains(&new_sock.display().to_string().split('/').last().unwrap()),
+        "existing pane must keep the old CMUX_MUX_SOCKET after rename; screen was {after:?}"
+    );
+
+    // New pane spawned after the rename inherits the refreshed path.
+    let ws2 = run_against(&new_sock, &dir, &["new-workspace", "--name", "post"]);
+    assert_success(&ws2);
+    let surface_post: u64 =
+        String::from_utf8(ws2.stdout).unwrap().trim().parse().unwrap();
+    let send3 = run_against(
+        &new_sock,
+        &dir,
+        &["send", "--surface", &surface_post.to_string(), "--text", probe],
+    );
+    assert_success(&send3);
+    let post = wait_for_screen_at(&new_sock, surface_post, "E=");
+    assert!(
+        post.contains(&new_sock.display().to_string()),
+        "post-rename pane should carry the new socket path; screen was {post:?}"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// AC5: renaming onto a LIVE target session fails with exit 2
+/// ("already exists") and leaves the source untouched.
+#[test]
+fn rename_to_existing_live_session_fails_exit_2() {
+    let dir = unique_temp_dir("rename-t5");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child_old = spawn_named_headless(&dir, "old");
+    let mut child_bar = spawn_named_headless(&dir, "bar");
+    let old_sock = dir.join("old.sock");
+
+    let rename = run_against(
+        &old_sock,
+        &dir,
+        &["rename-session", "--old", "old", "--new", "bar"],
+    );
+    assert_eq!(
+        rename.status.code(),
+        Some(2),
+        "rename onto a live session must exit 2; stderr: {}",
+        String::from_utf8_lossy(&rename.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&rename.stderr).to_lowercase().contains("already exists"),
+        "stderr should explain the target is in use; got {}",
+        String::from_utf8_lossy(&rename.stderr)
+    );
+
+    // Source must be untouched (nothing moved).
+    assert!(old_sock.exists(), "old socket must survive a refused rename");
+    assert!(
+        mux_core::server::is_session_socket_live(&old_sock),
+        "old session must still be live after a refused rename"
+    );
+
+    let _ = child_old.kill();
+    let _ = child_old.wait();
+    let _ = child_bar.kill();
+    let _ = child_bar.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Target policy (mirrors `serve()`'s stale-clear): a STALE target
+/// (dead pid) is cleared and the rename succeeds.
+#[test]
+fn rename_to_stale_target_clears_and_succeeds() {
+    let dir = unique_temp_dir("rename-t6");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "old");
+    let old_sock = dir.join("old.sock");
+
+    // Synthetic stale target pair (dead pid).
+    let stale_sock = dir.join("bar.sock");
+    let stale_pid = dir.join("bar.pid");
+    fs::write(&stale_sock, b"").unwrap();
+    fs::write(&stale_pid, "999999\n").unwrap();
+
+    let rename = run_against(
+        &old_sock,
+        &dir,
+        &["rename-session", "--old", "old", "--new", "bar"],
+    );
+    assert_success(&rename);
+
+    // bar.sock is now live under the daemon's pid; old.sock is gone.
+    assert!(mux_core::server::is_session_socket_live(&stale_sock));
+    assert_eq!(
+        read_pid_file(&stale_pid),
+        child.id(),
+        "bar.pid should now record the (live) daemon pid"
+    );
+    assert!(!old_sock.exists(), "old socket should be gone after rename");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// AC6 (defence in depth): invalid `--new` names are rejected CLIENT-side
+/// (exit 2, "session name") and never reach the socket. A literal NUL
+/// cannot be carried by execve, so it is covered by the unit test T12
+/// (`validate_session_name_table`) rather than here.
+#[test]
+fn rename_rejects_invalid_names() {
+    let dir = unique_temp_dir("rename-t7");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "old");
+    let old_sock = dir.join("old.sock");
+
+    let overlong = "a".repeat(256);
+    let bad_names: &[&str] = &[
+        "",
+        "a/b",
+        "a\\b",
+        "..",
+        ".",
+        " foo",
+        "foo ",
+        "\t",
+        &overlong,
+    ];
+    for bad in bad_names {
+        let out = run_against(
+            &old_sock,
+            &dir,
+            &["rename-session", "--old", "old", "--new", bad],
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "invalid name {bad:?} should exit 2; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let err = String::from_utf8_lossy(&out.stderr).to_lowercase();
+        // At this commit the verb is unknown, so the error is the
+        // unknown-verb/argument rejection (plus a USAGE dump) rather than a
+        // real name-validation rejection. Require the validation message AND
+        // the absence of the unknown-verb fallback so the assertion only
+        // passes once the feature genuinely rejects bad names client-side.
+        assert!(
+            !err.contains("unknown argument")
+                && !err.contains("unknown verb")
+                && !err.contains("unexpected argument"),
+            "invalid name {bad:?} must not hit the unknown-verb path; got {err:?}"
+        );
+        assert!(
+            err.contains("session name"),
+            "invalid name {bad:?} should explain the session-name rejection; got {err:?}"
+        );
+        // Source must be untouched by every rejected attempt.
+        assert!(old_sock.exists(), "old socket must survive a rejected rename ({bad:?})");
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// AC2/T8: after rename, `identify` reports the new session name and the
+/// protocol version is still 6 (rename is an additive command variant).
+#[test]
+fn identify_reports_new_name_after_rename() {
+    let dir = unique_temp_dir("rename-t8");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "old");
+    let old_sock = dir.join("old.sock");
+
+    let rename = run_against(
+        &old_sock,
+        &dir,
+        &["rename-session", "--old", "old", "--new", "bar"],
+    );
+    assert_success(&rename);
+
+    let id = run_against(&dir.join("bar.sock"), &dir, &["--json", "identify"]);
+    assert_success(&id);
+    let v: serde_json::Value = serde_json::from_slice(&id.stdout).unwrap();
+    assert_eq!(v["session"].as_str(), Some("bar"));
+    assert_eq!(v["protocol"].as_u64(), Some(6));
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// AC1/T9: the pid FILE contents are unchanged across the rename (only the
+/// filename moves) and the daemon process is alive throughout.
+#[test]
+fn pid_file_contents_unchanged_after_rename() {
+    let dir = unique_temp_dir("rename-t9");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "old");
+    let old_pid = dir.join("old.pid");
+    let pid_before = read_pid_file(&old_pid);
+    assert!(mux_core::server::is_process_alive(pid_before));
+
+    let rename = run_against(
+        &dir.join("old.sock"),
+        &dir,
+        &["rename-session", "--old", "old", "--new", "bar"],
+    );
+    assert_success(&rename);
+
+    let pid_after = read_pid_file(&dir.join("bar.pid"));
+    assert_eq!(pid_after, pid_before, "pid file contents must be identical after rename");
+    assert!(mux_core::server::is_process_alive(pid_after), "daemon must stay alive across rename");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// AC7/T10: after rename, the session-list / kill-session / kill-stale verbs
+/// work against the renamed session with no regressions.
+#[test]
+fn rename_no_regressions_on_list_kill_killstale() {
+    let dir = unique_temp_dir("rename-t10");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "old");
+    let old_sock = dir.join("old.sock");
+
+    let rename = run_against(
+        &old_sock,
+        &dir,
+        &["rename-session", "--old", "old", "--new", "bar"],
+    );
+    assert_success(&rename);
+
+    let new_sock = dir.join("bar.sock");
+    // list-sessions sees bar live, old absent.
+    let list = run_against(&new_sock, &dir, &["--json", "list-sessions"]);
+    assert_success(&list);
+    let v: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let sessions = v["sessions"].as_array().expect("sessions array");
+    assert!(sessions.iter().any(|s| s["session"] == "bar" && s["status"] == "live"));
+    assert!(!sessions.iter().any(|s| s["session"] == "old"));
+
+    // kill-session on the renamed name terminates the daemon & cleans up.
+    let kill = run_against(&new_sock, &dir, &["kill-session", "--session", "bar"]);
+    assert_success(&kill);
+    let _ = child.wait();
+    assert!(!new_sock.exists(), "bar.sock should be removed by kill-session");
+    assert!(!dir.join("bar.pid").exists(), "bar.pid should be removed by kill-session");
+
+    // kill-stale is a clean no-op now.
+    let stale = run_against(&new_sock, &dir, &["kill-stale"]);
+    assert_success(&stale);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// T11 (`rename_session_at_renames_via_socket`) lives in `cli.rs`'s own
+// `#[cfg(test)]` module: mux-tui is a bin-only crate, so this integration
+// test file links only against the `mux-core` lib + the `cmux` binary and
+// cannot import the `pub(crate)` helper. The in-process unit test there
+// drives a `mux-core` server directly (no subprocess) and exercises the
+// exact code path the picker's `r` flow uses.

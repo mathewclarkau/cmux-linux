@@ -1022,6 +1022,21 @@ pub(crate) fn kill_session_at(socket_path: &std::path::Path, pid: Option<u32>) -
     pid.is_some()
 }
 
+/// Send `rename-session` to the daemon bound at `socket_path` and return
+/// the new socket path on success. Shared by the picker's `r` flow so the
+/// TUI keybinding and the CLI verb exercise one code path.
+///
+/// RED-suite compile scaffolding (issue #63 L2, commit 2): this stub
+/// always errors so the T11 helper test is RED. The real connect/send
+/// lands in the `feat(mux-tui)` commit and turns T11 green.
+#[allow(dead_code)] // wired by the picker 'r' flow (commit 6); unused until then.
+pub(crate) fn rename_session_at(
+    _socket_path: &std::path::Path,
+    _new_name: &str,
+) -> Result<PathBuf, String> {
+    Err("rename-session not yet implemented".to_string())
+}
+
 fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
     let target_session = flags.optional("session").or_else(|| global.session.clone());
     let Some(session_name) = target_session else {
@@ -1322,5 +1337,53 @@ fn atom(value: Option<&Value>) -> String {
         Some(Value::String(text)) => serde_json::to_string(text).unwrap_or_default(),
         Some(Value::Null) | None => "null".to_string(),
         Some(value) => value.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for `cli` internals that a bin-only crate cannot expose to its
+    //! integration-test file (`tests/cli.rs` links only against `mux-core`
+    //! + the `cmux` binary, not `mux-tui`'s private modules). These unit
+    //! tests can call `pub(crate)` helpers directly and drive an in-process
+    //! `mux-core` server — no subprocess spawn needed.
+    use super::*;
+    use mux_core::{server, Mux, SurfaceOptions};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// AC7/picker (scout-plan T11): the non-TUI helper the picker's `r` flow
+    /// uses (`rename_session_at`) renames a live session over a direct socket
+    /// connection. Driven against an in-process `mux-core` server so no
+    // `CARGO_BIN_EXE_cmux` (unavailable to in-source unit tests of a bin
+    // crate) is needed. The accept thread outlives the assertion but dies
+    // with the test process; the temp socket is unique per run.
+    #[test]
+    fn rename_session_at_renames_via_socket() {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let dir = PathBuf::from("/tmp")
+            .join(format!("cmux-t11-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old_sock = dir.join("old.sock");
+
+        // In-process daemon on old.sock (session "old").
+        let mux = Mux::new("old", SurfaceOptions::default());
+        server::serve(mux, Some(old_sock.clone())).expect("serve should bind old.sock");
+
+        let new_sock =
+            rename_session_at(&old_sock, "bar").expect("rename_session_at should succeed");
+        assert!(new_sock.exists(), "returned new socket path should exist");
+        assert_eq!(
+            new_sock.file_name().and_then(|n| n.to_str()),
+            Some("bar.sock"),
+            "helper should return the new socket path"
+        );
+        assert!(server::is_session_socket_live(&new_sock));
+        assert!(!old_sock.exists(), "old socket should be gone after helper rename");
+
+        // Best-effort cleanup of the (now-renamed) files; the leaked accept
+        // thread is reaped when the test process exits.
+        let _ = std::fs::remove_file(&new_sock);
+        let _ = std::fs::remove_file(server::pid_path(&new_sock));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

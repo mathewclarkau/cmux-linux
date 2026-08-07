@@ -107,6 +107,18 @@ pub fn is_session_socket_live(socket_path: &Path) -> bool {
     true
 }
 
+/// Reject session names that are unsafe as filesystem path components
+/// (the name becomes `<name>.sock` / `<name>.pid` /
+/// `<name>.json`). SECURITY: a `/` or `\0` is a path-traversal /
+/// NUL-injection vector (AGENTS.md review checklist).
+///
+/// RED-suite compile scaffolding (issue #63 L2, commit 2): this stub
+/// accepts everything so the T12 table test is RED. The real
+/// validation lands in the `feat(mux-core)` commit and turns T12 green.
+pub fn validate_session_name(_name: &str) -> anyhow::Result<()> {
+    Ok(())
+}
+
 #[derive(Deserialize)]
 struct Request {
     id: Option<Value>,
@@ -1414,6 +1426,39 @@ mod tests {
         drop(client);
         drop(listener);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_session_name_table() {
+        // Issue #63 L2 (scout-plan Q6/T12): names become filesystem paths
+        // (`<name>.sock`/`<name>.pid`/`<name>.json`), so `/`, `\0`, control
+        // chars, `.`, `..`, leading/trailing whitespace and overlong names
+        // must be rejected; ordinary names (incl. unicode) accepted.
+        for good in ["main", "foo-bar", "a_b", "café", "session.number"] {
+            assert!(
+                validate_session_name(good).is_ok(),
+                "{good:?} should be a valid session name"
+            );
+        }
+        let overlong = "a".repeat(256);
+        for bad in [
+            "",
+            "a/b",
+            "a\\b",
+            "..",
+            ".",
+            " foo",
+            "foo ",
+            "\0",
+            "a\u{1}b",
+            "\t",
+            &overlong,
+        ] {
+            assert!(
+                validate_session_name(bad).is_err(),
+                "{bad:?} should be rejected as a session name"
+            );
+        }
     }
 
     #[test]
