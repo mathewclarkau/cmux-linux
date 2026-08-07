@@ -1102,16 +1102,13 @@ fn rename_rpc(socket: &std::path::Path, new_name: &str) -> RenameOutcome {
         }
         if value.get("ok").and_then(Value::as_bool) == Some(true) {
             let data = value.get("data").unwrap_or(&Value::Null);
-            let socket_path = data
-                .get("socket_path")
-                .and_then(Value::as_str)
-                .map(PathBuf::from);
+            let socket_path = data.get("socket_path").and_then(Value::as_str).map(PathBuf::from);
             let pid = data.get("pid").and_then(Value::as_u64);
             match (socket_path, pid) {
                 (Some(p), Some(pid)) => return RenameOutcome::Ok { socket_path: p, pid },
                 _ => {
                     return RenameOutcome::ServerErr(
-                        "rename response missing socket_path/pid".into()
+                        "rename response missing socket_path/pid".into(),
                     )
                 }
             }
@@ -1530,8 +1527,7 @@ mod tests {
     #[test]
     fn rename_session_at_renames_via_socket() {
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let dir = PathBuf::from("/tmp")
-            .join(format!("cmux-t11-{}-{stamp}", std::process::id()));
+        let dir = PathBuf::from("/tmp").join(format!("cmux-t11-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let old_sock = dir.join("old.sock");
 

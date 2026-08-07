@@ -300,9 +300,8 @@ fn dispatch(
                             *sessions = refresh(global);
                             // Keep focus on the renamed row (now listed under
                             // its new name, newest-first).
-                            if let Some(i) = sessions
-                                .iter()
-                                .position(|s| s.session == new_name && s.live)
+                            if let Some(i) =
+                                sessions.iter().position(|s| s.session == new_name && s.live)
                             {
                                 state.select(Some(i));
                             }

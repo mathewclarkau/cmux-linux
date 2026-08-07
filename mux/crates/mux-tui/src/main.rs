@@ -116,7 +116,7 @@ SESSION PICKER  (cmux attach --session-list, without --json)
   kill + quit, 2 Ctrl-C, 0 on attach (then the normal attach/detach flow).
     ↑/↓ or j/k  move focus        Enter  attach to focused (live only)
     x  kill focused session (y/N)    s  kill every stale session (y/N)
-    n  new session (inline name)     r  rename (stub; L2 will wire it in)
+    n  new session (inline name)     r  rename focused session (inline)
     q / Esc  quit                    Ctrl-C  abort (exit 2)
 
 KEYS (prefix: Ctrl-b)
@@ -147,7 +147,7 @@ CLI VERBS
   focus-pane, select-tab, select-screen, select-workspace, move-tab,
   move-workspace, scroll-surface, subscribe, attach-surface, report-agent,
   list-agents, browser-reload, list-sessions, kill-session, kill-stale,
-  theme list
+  rename-session, theme list
 
 SEND
   cmux send --surface <id> --text <text> [--shell auto|fish|bash|zsh|sh|nu|raw]
@@ -159,6 +159,21 @@ SEND
       instead of being interpreted by the shell's line editor. auto
       resolves the pane's shell from /proc on Linux. Default: raw
       (verbatim passthrough, unchanged from before).
+
+RENAME-SESSION
+  cmux rename-session --old <name> --new <name> [--json]
+      Renames a live cmux session in place: moves its .sock/.pid to the new
+      name, updates the session name, reparents the snapshot file, and keeps
+      the SAME daemon serving at the new path (the listener is never rebound
+      — rename(2) reparents the socket dirent while the kernel keeps it
+      bound). A live target is refused; a stale target is cleared first.
+      Exit codes: 0 success · 1 source not found / server error · 2 bad/missing
+      flags, invalid name, or target already live · 3 connect failure.
+      Lifetime guarantee (AC4): EXISTING panes keep the CMUX_MUX_SOCKET they
+      inherited at spawn (the old path) for their lifetime — this is
+      intentional, not a bug. Panes spawned AFTER the rename inherit the new
+      path. See the server.rs docstring for the mechanism and the watchdog
+      caveat (a SIGKILL after rename is cleaned by the next serve()/kill-stale).
 
 CLAUDE CODE HOOK INTEGRATION
   cmux claude install-hooks [--uninstall]
@@ -380,9 +395,8 @@ fn main() {
                 // Resolve the session's control-socket path the same
                 // way cli::list does. The plugin's cmux_call host
                 // imports write back to this socket.
-                let raw_socket: Option<PathBuf> = std::env::var_os("CMUX_MUX_SOCKET")
-                    .map(PathBuf::from)
-                    .or_else(|| {
+                let raw_socket: Option<PathBuf> =
+                    std::env::var_os("CMUX_MUX_SOCKET").map(PathBuf::from).or_else(|| {
                         let mut idx = 0;
                         while idx + 1 < raw_args.len() {
                             if raw_args[idx] == "--socket" {
@@ -492,8 +506,9 @@ fn run_attach(args: Args) -> anyhow::Result<()> {
         if args.apply_local_config { resolve_local_overlay(args.config.as_deref()) } else { None };
     let socket_path =
         args.socket.unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
-    let remote = RemoteSession::connect(&socket_path)
-        .with_context(|| format!("attaching to cmux session socket at {}", socket_path.display()))?;
+    let remote = RemoteSession::connect(&socket_path).with_context(|| {
+        format!("attaching to cmux session socket at {}", socket_path.display())
+    })?;
     // `--print-resolved-config` is an inspection escape for thin-client
     // attaches (issue #40 blocker 1): fetch the server's resolved chrome,
     // layer the local overlay on top, print the merged chrome as JSON,

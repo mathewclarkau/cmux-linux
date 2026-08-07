@@ -545,7 +545,7 @@ pub fn serve(mux: Arc<Mux>, path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     // handler mutates and that cleanup/spawn read (issue #63). Set before
     // the accept thread spawns so it is visible to any client connection.
     mux.set_socket_path(path.clone());
-    platform::restrict_file(&path)?;;
+    platform::restrict_file(&path)?;
 
     std::fs::write(&pid_p, format!("{}\n", std::process::id()))?;
     platform::restrict_file(&pid_p)?;
@@ -1322,9 +1322,9 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             validate_session_name(&new_name)?;
 
             let old_name = mux.session_name();
-            let old_sock = mux
-                .socket_path()
-                .ok_or_else(|| anyhow::anyhow!("rename-session issued before the socket was bound"))?;
+            let old_sock = mux.socket_path().ok_or_else(|| {
+                anyhow::anyhow!("rename-session issued before the socket was bound")
+            })?;
             let parent = old_sock
                 .parent()
                 .ok_or_else(|| anyhow::anyhow!("socket path has no parent directory"))?;
@@ -1528,12 +1528,10 @@ mod tests {
     #[test]
     fn unix_socket_survives_rename() {
         use std::os::unix::net::{UnixListener, UnixStream};
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir()
-            .join(format!("cmux-t0-rename-{}-{stamp}", std::process::id()));
+        let stamp =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("cmux-t0-rename-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let old = dir.join("old.sock");
         let new = dir.join("new.sock");
@@ -1547,13 +1545,12 @@ mod tests {
             "old socket path should not be connectable after rename"
         );
         // The new dirent resolves to the same bound inode -> connectable.
-        let client = UnixStream::connect(&new)
-            .expect("new socket path should be connectable after rename");
+        let client =
+            UnixStream::connect(&new).expect("new socket path should be connectable after rename");
         // The listener (bound to the inode, not the dirent) still accepts
         // the connection that arrived at the new path.
-        let (_accepted, _addr) = listener
-            .accept()
-            .expect("listener must accept a connection after the rename");
+        let (_accepted, _addr) =
+            listener.accept().expect("listener must accept a connection after the rename");
 
         drop(client);
         drop(listener);
@@ -1567,25 +1564,11 @@ mod tests {
         // chars, `.`, `..`, leading/trailing whitespace and overlong names
         // must be rejected; ordinary names (incl. unicode) accepted.
         for good in ["main", "foo-bar", "a_b", "café", "session.number"] {
-            assert!(
-                validate_session_name(good).is_ok(),
-                "{good:?} should be a valid session name"
-            );
+            assert!(validate_session_name(good).is_ok(), "{good:?} should be a valid session name");
         }
         let overlong = "a".repeat(256);
-        for bad in [
-            "",
-            "a/b",
-            "a\\b",
-            "..",
-            ".",
-            " foo",
-            "foo ",
-            "\0",
-            "a\u{1}b",
-            "\t",
-            &overlong,
-        ] {
+        for bad in ["", "a/b", "a\\b", "..", ".", " foo", "foo ", "\0", "a\u{1}b", "\t", &overlong]
+        {
             assert!(
                 validate_session_name(bad).is_err(),
                 "{bad:?} should be rejected as a session name"

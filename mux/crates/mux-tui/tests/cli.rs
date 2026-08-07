@@ -179,15 +179,7 @@ fn send_shell_flag_validates_and_accepts() {
     // any other invalid flag value.
     let bad = cli(
         &server,
-        &[
-            "send",
-            "--surface",
-            &surface.to_string(),
-            "--text",
-            "echo ok",
-            "--shell",
-            "tcsh",
-        ],
+        &["send", "--surface", &surface.to_string(), "--text", "echo ok", "--shell", "tcsh"],
     );
     assert_eq!(bad.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&bad.stderr).contains("--shell"));
@@ -307,11 +299,7 @@ fn agent_session_round_trips_through_list_workspaces_json() {
     let server = HeadlessServer::start("agent-session-rpc");
     let workspace = cli(&server, &["new-workspace", "--name", "agent-rpc"]);
     assert_success(&workspace);
-    let surface = String::from_utf8(workspace.stdout)
-        .unwrap()
-        .trim()
-        .parse::<u64>()
-        .unwrap();
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
 
     let report = cli(
         &server,
@@ -1378,11 +1366,8 @@ fn attach_overlay_layers_over_server_config() {
     let server_cfg_root = dir.join("server-config");
     let server_cmux_dir = server_cfg_root.join("cmux");
     fs::create_dir_all(&server_cmux_dir).unwrap();
-    fs::write(
-        server_cmux_dir.join("mux.json"),
-        r##"{"theme": {"sidebar_rail": "#112233"}}"##,
-    )
-    .unwrap();
+    fs::write(server_cmux_dir.join("mux.json"), r##"{"theme": {"sidebar_rail": "#112233"}}"##)
+        .unwrap();
 
     let socket = dir.join("mux.sock");
     let mut server = Command::new(bin())
@@ -1404,10 +1389,7 @@ fn attach_overlay_layers_over_server_config() {
     if !socket.exists() {
         let _ = server.kill();
         let _ = server.wait();
-        panic!(
-            "headless server did not create socket at {}",
-            socket.display()
-        );
+        panic!("headless server did not create socket at {}", socket.display());
     }
     // Give the server a moment to register its resolved chrome (it is set
     // before `serve()` binds, so a live socket implies it is published).
@@ -1418,11 +1400,7 @@ fn attach_overlay_layers_over_server_config() {
     let local_cfg_root = dir.join("local-config");
     let local_cmux_dir = local_cfg_root.join("cmux");
     fs::create_dir_all(&local_cmux_dir).unwrap();
-    fs::write(
-        local_cmux_dir.join("mux.local.toml"),
-        "[keys]\nprefix = \"ctrl+s\"\n",
-    )
-    .unwrap();
+    fs::write(local_cmux_dir.join("mux.local.toml"), "[keys]\nprefix = \"ctrl+s\"\n").unwrap();
 
     let output = Command::new(bin())
         .args(["attach", "--socket"])
@@ -1443,15 +1421,11 @@ fn attach_overlay_layers_over_server_config() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        output.status.success(),
-        "attach --print-resolved-config failed: {combined}"
-    );
+    assert!(output.status.success(), "attach --print-resolved-config failed: {combined}");
 
-    let merged: serde_json::Value =
-        serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
-            panic!("expected merged chrome JSON on stdout, parse failed:{e}\n{combined}")
-        });
+    let merged: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+        panic!("expected merged chrome JSON on stdout, parse failed:{e}\n{combined}")
+    });
 
     // Server's theme colour survived: the overlay layered, not replaced.
     assert_eq!(
@@ -1482,11 +1456,8 @@ fn get_resolved_config_cli_verb_returns_server_chrome() {
     let server_cfg_root = dir.join("server-config");
     let server_cmux_dir = server_cfg_root.join("cmux");
     fs::create_dir_all(&server_cmux_dir).unwrap();
-    fs::write(
-        server_cmux_dir.join("mux.json"),
-        r##"{"theme": {"sidebar_rail": "#445566"}}"##,
-    )
-    .unwrap();
+    fs::write(server_cmux_dir.join("mux.json"), r##"{"theme": {"sidebar_rail": "#445566"}}"##)
+        .unwrap();
 
     let socket = dir.join("mux.sock");
     let mut server = Command::new(bin())
@@ -1508,10 +1479,7 @@ fn get_resolved_config_cli_verb_returns_server_chrome() {
     if !socket.exists() {
         let _ = server.kill();
         let _ = server.wait();
-        panic!(
-            "headless server did not create socket at {}",
-            socket.display()
-        );
+        panic!("headless server did not create socket at {}", socket.display());
     }
     // `set_resolved_chrome` runs before `serve()` binds, so a live socket
     // implies the chrome is published; still give it a beat to settle.
@@ -1534,10 +1502,7 @@ fn get_resolved_config_cli_verb_returns_server_chrome() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        output.status.success(),
-        "cmux get-resolved-config failed: {combined}"
-    );
+    assert!(output.status.success(), "cmux get-resolved-config failed: {combined}");
 
     let chrome: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|e| panic!("expected chrome JSON on stdout, parse failed:{e}\n{combined}"));
@@ -1594,14 +1559,8 @@ fn plugin_install_list_uninstall_round_trip() {
         list_out.contains("pifactory-fleet"),
         "list should name the installed plugin: {list_out}"
     );
-    assert!(
-        list_out.contains("enabled"),
-        "list should show the enabled state: {list_out}"
-    );
-    assert!(
-        list_out.contains("deploy,rollback"),
-        "list should show the claimed verbs: {list_out}"
-    );
+    assert!(list_out.contains("enabled"), "list should show the enabled state: {list_out}");
+    assert!(list_out.contains("deploy,rollback"), "list should show the claimed verbs: {list_out}");
 
     let uninstall = run(&["plugin", "uninstall", "pifactory-fleet"]);
     assert_success(&uninstall);
@@ -1634,10 +1593,7 @@ fn plugin_shipped_example_manifest_installs() {
         .join("../../spec/plugins/pifactory-fleet/cmux-plugin.toml")
         .canonicalize()
         .unwrap_or_else(|_| {
-            panic!(
-                "shipped example manifest not found relative to {}",
-                env!("CARGO_MANIFEST_DIR")
-            )
+            panic!("shipped example manifest not found relative to {}", env!("CARGO_MANIFEST_DIR"))
         });
     assert!(
         manifest_path.exists(),
@@ -1673,10 +1629,7 @@ fn plugin_shipped_example_manifest_installs() {
         list_out.contains("bin/fleet.wasm"),
         "installed entry path should be preserved: {list_out}"
     );
-    assert!(
-        list_out.contains("cmux_call"),
-        "verb allowlist should include cmux_call: {list_out}"
-    );
+    assert!(list_out.contains("cmux_call"), "verb allowlist should include cmux_call: {list_out}");
 }
 
 /// Issue #59: `cmux --version` / `-V` print `cmux <CARGO_PKG_VERSION>`
@@ -1687,11 +1640,7 @@ fn version_flag_prints_cargo_version_and_exits_zero() {
     let expected = format!("cmux {}", env!("CARGO_PKG_VERSION"));
 
     let run = |args: &[&str]| {
-        Command::new(bin())
-            .args(args)
-            .env_remove("CMUX_MUX_SOCKET")
-            .output()
-            .unwrap()
+        Command::new(bin()).args(args).env_remove("CMUX_MUX_SOCKET").output().unwrap()
     };
 
     for args in [&["--version"][..], &["-V"][..], &["--headless", "--version"][..]] {
@@ -1772,11 +1721,11 @@ fn wait_for_screen_at(socket: &std::path::Path, surface: u64, needle: &str) -> S
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut last = String::new();
     while Instant::now() < deadline {
-        let out = run_against(socket, std::path::Path::new("/tmp"), &[
-            "read-screen",
-            "--surface",
-            &surface.to_string(),
-        ]);
+        let out = run_against(
+            socket,
+            std::path::Path::new("/tmp"),
+            &["read-screen", "--surface", &surface.to_string()],
+        );
         last = String::from_utf8_lossy(&out.stdout).to_string();
         if last.contains(needle) {
             return last;
@@ -1797,11 +1746,7 @@ fn rename_session_moves_socket_and_pid_and_keeps_serving() {
     let old_pid = dir.join("old.pid");
     let daemon_pid = read_pid_file(&old_pid);
 
-    let rename = run_against(
-        &old_sock,
-        &dir,
-        &["rename-session", "--old", "old", "--new", "bar"],
-    );
+    let rename = run_against(&old_sock, &dir, &["rename-session", "--old", "old", "--new", "bar"]);
     assert_success(&rename);
 
     let new_sock = dir.join("bar.sock");
@@ -1837,11 +1782,7 @@ fn rename_makes_old_socket_unreachable_and_keeps_protocol() {
     let old_sock = dir.join("old.sock");
     let daemon_pid = read_pid_file(&dir.join("old.pid"));
 
-    let rename = run_against(
-        &old_sock,
-        &dir,
-        &["rename-session", "--old", "old", "--new", "bar"],
-    );
+    let rename = run_against(&old_sock, &dir, &["rename-session", "--old", "old", "--new", "bar"]);
     assert_success(&rename);
 
     // New path serves the same daemon; protocol must NOT bump (scout Q2).
@@ -1872,11 +1813,7 @@ fn old_session_name_gone_after_rename() {
     let mut child = spawn_named_headless(&dir, "old");
     let old_sock = dir.join("old.sock");
 
-    let rename = run_against(
-        &old_sock,
-        &dir,
-        &["rename-session", "--old", "old", "--new", "bar"],
-    );
+    let rename = run_against(&old_sock, &dir, &["rename-session", "--old", "old", "--new", "bar"]);
     assert_success(&rename);
 
     let list = run_against(&old_sock, &dir, &["--json", "list-sessions"]);
@@ -1885,8 +1822,10 @@ fn old_session_name_gone_after_rename() {
     // (list-sessions does not need a connectable --socket.)
     let v: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap_or_else(|_| {
         let s = String::from_utf8_lossy(&list.stdout);
-        panic!("list-sessions produced non-JSON output: {s}\nstderr: {}",
-            String::from_utf8_lossy(&list.stderr))
+        panic!(
+            "list-sessions produced non-JSON output: {s}\nstderr: {}",
+            String::from_utf8_lossy(&list.stderr)
+        )
     });
     let sessions = v["sessions"].as_array().expect("sessions array");
     assert!(
@@ -1917,8 +1856,7 @@ fn rename_preserves_inherited_cmux_socket_in_existing_panes() {
     // Existing pane (spawned before the rename).
     let ws = run_against(&old_sock, &dir, &["new-workspace", "--name", "pre"]);
     assert_success(&ws);
-    let surface_pre: u64 =
-        String::from_utf8(ws.stdout).unwrap().trim().parse().unwrap();
+    let surface_pre: u64 = String::from_utf8(ws.stdout).unwrap().trim().parse().unwrap();
     let old_sock_str = old_sock.display().to_string();
     // Fish is the default surface shell; the trailing real `\n` submits
     // the line (no --send-cr needed — matches the cli_verbs marker probe).
@@ -1938,11 +1876,7 @@ fn rename_preserves_inherited_cmux_socket_in_existing_panes() {
     );
 
     // Rename old -> bar.
-    let rename = run_against(
-        &old_sock,
-        &dir,
-        &["rename-session", "--old", "old", "--new", "bar"],
-    );
+    let rename = run_against(&old_sock, &dir, &["rename-session", "--old", "old", "--new", "bar"]);
     assert_success(&rename);
     let new_sock = dir.join("bar.sock");
     let new_sock_str = new_sock.display().to_string();
@@ -1967,8 +1901,7 @@ fn rename_preserves_inherited_cmux_socket_in_existing_panes() {
     // New pane spawned after the rename inherits the refreshed path.
     let ws2 = run_against(&new_sock, &dir, &["new-workspace", "--name", "post"]);
     assert_success(&ws2);
-    let surface_post: u64 =
-        String::from_utf8(ws2.stdout).unwrap().trim().parse().unwrap();
+    let surface_post: u64 = String::from_utf8(ws2.stdout).unwrap().trim().parse().unwrap();
     let send3 = run_against(
         &new_sock,
         &dir,
@@ -1997,11 +1930,7 @@ fn rename_to_existing_live_session_fails_exit_2() {
     let mut child_bar = spawn_named_headless(&dir, "bar");
     let old_sock = dir.join("old.sock");
 
-    let rename = run_against(
-        &old_sock,
-        &dir,
-        &["rename-session", "--old", "old", "--new", "bar"],
-    );
+    let rename = run_against(&old_sock, &dir, &["rename-session", "--old", "old", "--new", "bar"]);
     assert_eq!(
         rename.status.code(),
         Some(2),
@@ -2043,11 +1972,7 @@ fn rename_to_stale_target_clears_and_succeeds() {
     fs::write(&stale_sock, b"").unwrap();
     fs::write(&stale_pid, "999999\n").unwrap();
 
-    let rename = run_against(
-        &old_sock,
-        &dir,
-        &["rename-session", "--old", "old", "--new", "bar"],
-    );
+    let rename = run_against(&old_sock, &dir, &["rename-session", "--old", "old", "--new", "bar"]);
     assert_success(&rename);
 
     // bar.sock is now live under the daemon's pid; old.sock is gone.
@@ -2076,23 +2001,9 @@ fn rename_rejects_invalid_names() {
     let old_sock = dir.join("old.sock");
 
     let overlong = "a".repeat(256);
-    let bad_names: &[&str] = &[
-        "",
-        "a/b",
-        "a\\b",
-        "..",
-        ".",
-        " foo",
-        "foo ",
-        "\t",
-        &overlong,
-    ];
+    let bad_names: &[&str] = &["", "a/b", "a\\b", "..", ".", " foo", "foo ", "\t", &overlong];
     for bad in bad_names {
-        let out = run_against(
-            &old_sock,
-            &dir,
-            &["rename-session", "--old", "old", "--new", bad],
-        );
+        let out = run_against(&old_sock, &dir, &["rename-session", "--old", "old", "--new", bad]);
         assert_eq!(
             out.status.code(),
             Some(2),
@@ -2133,11 +2044,7 @@ fn identify_reports_new_name_after_rename() {
     let mut child = spawn_named_headless(&dir, "old");
     let old_sock = dir.join("old.sock");
 
-    let rename = run_against(
-        &old_sock,
-        &dir,
-        &["rename-session", "--old", "old", "--new", "bar"],
-    );
+    let rename = run_against(&old_sock, &dir, &["rename-session", "--old", "old", "--new", "bar"]);
     assert_success(&rename);
 
     let id = run_against(&dir.join("bar.sock"), &dir, &["--json", "identify"]);
@@ -2187,11 +2094,7 @@ fn rename_no_regressions_on_list_kill_killstale() {
     let mut child = spawn_named_headless(&dir, "old");
     let old_sock = dir.join("old.sock");
 
-    let rename = run_against(
-        &old_sock,
-        &dir,
-        &["rename-session", "--old", "old", "--new", "bar"],
-    );
+    let rename = run_against(&old_sock, &dir, &["rename-session", "--old", "old", "--new", "bar"]);
     assert_success(&rename);
 
     let new_sock = dir.join("bar.sock");
