@@ -463,7 +463,7 @@ impl LineWriter {
 
 /// Bind the socket and serve connections on background threads.
 pub fn serve(mux: Arc<Mux>, path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-    let path = path.unwrap_or_else(|| default_socket_path(&mux.session));
+    let path = path.unwrap_or_else(|| default_socket_path(&mux.session_name()));
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
         platform::restrict_directory(dir)?;
@@ -481,7 +481,11 @@ pub fn serve(mux: Arc<Mux>, path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
         let _ = std::fs::remove_file(&pid_p);
     }
     let listener = transport::listen(&path)?;
-    platform::restrict_file(&path)?;
+    // Record the bound socket path as the single source of truth the rename
+    // handler mutates and that cleanup/spawn read (issue #63). Set before
+    // the accept thread spawns so it is visible to any client connection.
+    mux.set_socket_path(path.clone());
+    platform::restrict_file(&path)?;;
 
     std::fs::write(&pid_p, format!("{}\n", std::process::id()))?;
     platform::restrict_file(&pid_p)?;
@@ -887,7 +891,7 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             "app": "cmux",
             "version": env!("CARGO_PKG_VERSION"),
             "protocol": PROTOCOL_VERSION,
-            "session": mux.session,
+            "session": mux.session_name(),
             "pid": std::process::id(),
         })),
         Command::ListWorkspaces => Ok(mux.with_state(workspaces_json)),
