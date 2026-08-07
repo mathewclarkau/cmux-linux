@@ -892,7 +892,7 @@ pub(crate) fn read_pid_file(path: &std::path::Path) -> Option<u32> {
 /// `socket_path` is the exact path to reconnect to; `mtime` is for the
 /// picker's newest-first sort (pid-file mtime preferred — the socket mtime
 /// can shift on each connect — falling back to socket mtime, then `None`).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct DiscoveredSession {
     pub(crate) session: String,
     pub(crate) socket_path: PathBuf,
@@ -1064,57 +1064,92 @@ enum RenameOutcome {
 /// events). Returns the parsed outcome. Used by both `run_rename_session`
 /// (CLI verb) and `rename_session_at` (picker helper) so they share one
 /// code path.
-fn rename_rpc(socket: &std::path::Path, new_name: &str) -> RenameOutcome {
+/// Outcome of a one-shot control-socket RPC (connect → write one request
+/// line → read the first matching response, skipping pushed events).
+/// Distinguishes a transport failure (`ConnectErr`) from a server-reported
+/// error (`ServerErr`, also used for malformed replies) so callers like the
+/// `rename-session` exit-code table can map them separately. Shared by
+/// `rename_rpc`, the session-manager overlay's `list-workspaces` fetch, and
+/// its `select-workspace` remote-focus one-shot (issue #63 L3).
+pub(crate) enum OneShotOutcome {
+    /// Server reported `ok:true`. Carries the full parsed response.
+    Ok(Value),
+    /// Server reported `ok:false`, sent a malformed reply, or the transport
+    /// closed before a reply.
+    ServerErr(String),
+    /// Could not establish the connection or a write/read failed.
+    ConnectErr(String),
+}
+
+/// Connect to `socket`, serialise `request` as one JSON line tagged with
+/// `REQUEST_ID`, write it, and read the first non-event response. Bounded by
+/// a 10s read timeout set on the fresh stream. No behaviour change versus
+/// the inlined body `rename_rpc` previously had; the rename flow keeps its
+/// own `RenameOutcome` so its exit-code table (server vs connect error) is
+/// preserved, and now just maps from this generic outcome.
+pub(crate) fn one_shot_rpc(socket: &std::path::Path, request: Value) -> OneShotOutcome {
     let mut stream = match transport::connect(socket) {
         Ok(stream) => stream,
         Err(err) => {
-            return RenameOutcome::ConnectErr(format!(
+            return OneShotOutcome::ConnectErr(format!(
                 "cannot connect to session socket {}: {err}",
                 socket.display()
             ))
         }
     };
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
-    let request = json!({ "cmd": "rename-session", "new_name": new_name, "id": REQUEST_ID });
     let mut line = match serde_json::to_vec(&request) {
         Ok(line) => line,
-        Err(err) => return RenameOutcome::ServerErr(format!("failed to encode request: {err}")),
+        Err(err) => return OneShotOutcome::ServerErr(format!("failed to encode request: {err}")),
     };
     line.push(b'\n');
     if let Err(err) = stream.write_all(&line) {
-        return RenameOutcome::ConnectErr(format!("transport error: {err}"));
+        return OneShotOutcome::ConnectErr(format!("transport error: {err}"));
     }
     let mut reader = BufReader::new(stream);
     let mut buf = String::new();
     loop {
         buf.clear();
         match reader.read_line(&mut buf) {
-            Ok(0) => return RenameOutcome::ServerErr("transport closed before response".into()),
+            Ok(0) => return OneShotOutcome::ServerErr("transport closed before response".into()),
             Ok(_) => {}
-            Err(err) => return RenameOutcome::ConnectErr(format!("transport error: {err}")),
+            Err(err) => return OneShotOutcome::ConnectErr(format!("transport error: {err}")),
         }
         let value: Value = match serde_json::from_str(&buf) {
             Ok(value) => value,
-            Err(err) => return RenameOutcome::ServerErr(format!("bad response: {err}")),
+            Err(err) => return OneShotOutcome::ServerErr(format!("bad response: {err}")),
         };
         if value.get("event").is_some() {
             continue;
         }
         if value.get("ok").and_then(Value::as_bool) == Some(true) {
+            return OneShotOutcome::Ok(value);
+        }
+        let err = value.get("error").and_then(Value::as_str).unwrap_or("request failed");
+        return OneShotOutcome::ServerErr(err.to_string());
+    }
+}
+
+/// Send `rename-session` to the daemon at `socket` and parse the reply into
+/// the rename-specific outcome. Delegates the connect/write/read-loop to
+/// `one_shot_rpc` so the rename CLI verb, the picker helper, and the
+/// session-manager overlay share one transport path.
+fn rename_rpc(socket: &std::path::Path, new_name: &str) -> RenameOutcome {
+    let request = json!({ "cmd": "rename-session", "new_name": new_name, "id": REQUEST_ID });
+    match one_shot_rpc(socket, request) {
+        OneShotOutcome::Ok(value) => {
             let data = value.get("data").unwrap_or(&Value::Null);
             let socket_path = data.get("socket_path").and_then(Value::as_str).map(PathBuf::from);
             let pid = data.get("pid").and_then(Value::as_u64);
             match (socket_path, pid) {
-                (Some(p), Some(pid)) => return RenameOutcome::Ok { socket_path: p, pid },
+                (Some(p), Some(pid)) => RenameOutcome::Ok { socket_path: p, pid },
                 _ => {
-                    return RenameOutcome::ServerErr(
-                        "rename response missing socket_path/pid".into(),
-                    )
+                    RenameOutcome::ServerErr("rename response missing socket_path/pid".into())
                 }
             }
         }
-        let err = value.get("error").and_then(Value::as_str).unwrap_or("rename failed");
-        return RenameOutcome::ServerErr(err.to_string());
+        OneShotOutcome::ServerErr(e) => RenameOutcome::ServerErr(e),
+        OneShotOutcome::ConnectErr(e) => RenameOutcome::ConnectErr(e),
     }
 }
 
@@ -1128,6 +1163,24 @@ pub(crate) fn rename_session_at(
     match rename_rpc(socket_path, new_name) {
         RenameOutcome::Ok { socket_path, .. } => Ok(socket_path),
         RenameOutcome::ServerErr(e) | RenameOutcome::ConnectErr(e) => Err(e),
+    }
+}
+
+/// Send `select-workspace` (by index) as a one-shot RPC to the daemon at
+/// `socket` so a *different* session lands on workspace `index`. Used by the
+/// in-TUI session manager overlay (issue #63 L3) to focus a workspace in
+/// another session before the running TUI switches to it. Reuses
+/// `one_shot_rpc`, the same path the rename flow rides. Best-effort: an
+/// unreachable socket yields `Err` (the caller renders an `[unreachable]`
+/// column rather than crashing).
+pub(crate) fn select_workspace_remote(
+    socket: &std::path::Path,
+    index: usize,
+) -> Result<(), String> {
+    let request = json!({ "cmd": "select-workspace", "index": index, "id": REQUEST_ID });
+    match one_shot_rpc(socket, request) {
+        OneShotOutcome::Ok(_) => Ok(()),
+        OneShotOutcome::ServerErr(e) | OneShotOutcome::ConnectErr(e) => Err(e),
     }
 }
 
@@ -1157,6 +1210,20 @@ fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
 }
 
 fn run_kill_stale(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
+    let cleaned = kill_stale(global);
+    if global.json {
+        println!("{}", json!({ "ok": true, "cleaned": cleaned }));
+    }
+    0
+}
+
+/// Kill every stale (socket-not-connectable) session in the runtime dir
+/// honoured by `global` and return how many were cleaned. Mirrors the
+/// historical `run_kill_stale` semantics (remove `.sock` + `.pid` for each
+/// `!live` row). Shared by the `kill-stale` CLI verb, the interactive
+/// pre-attach picker (L1), and the in-TUI session manager (L3) so all three
+/// exercise one code path.
+pub(crate) fn kill_stale(global: &GlobalArgs) -> usize {
     let mut sessions = discover_sessions(global);
     sessions.sort_by(|a, b| a.session.cmp(&b.session));
     let mut cleaned = 0;
@@ -1167,11 +1234,7 @@ fn run_kill_stale(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
             cleaned += 1;
         }
     }
-
-    if global.json {
-        println!("{}", json!({ "ok": true, "cleaned": cleaned }));
-    }
-    0
+    cleaned
 }
 
 /// `cmux rename-session --old <name> --new <name>` (issue #63). Resolves

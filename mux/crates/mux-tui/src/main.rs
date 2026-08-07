@@ -29,6 +29,7 @@ mod pi_hook;
 mod plugin;
 mod plugin_host;
 mod session;
+mod session_manager;
 mod session_picker;
 mod skill_content;
 mod socket_watchdog;
@@ -124,7 +125,7 @@ KEYS (prefix: Ctrl-b)
   1-9  select tab
   %  split right       \"  split down          x    close tab
   ,  rename pane       $    rename workspace
-  Tab  next screen     S    new screen
+  Tab  next screen     S    session manager
   h/j/k/l or arrows    move focus              d    quit (attach: detach)
   w  next workspace    W    new workspace       s    toggle sidebar
   <  browser back      >    browser forward     r/u  browser reload/edit URL
@@ -258,6 +259,7 @@ REMOTE (SSH) WORKSPACES
       to it automatically (see mux/docs/getting-started.md).
 ";
 
+#[derive(Clone)]
 struct Args {
     attach: bool,
     session: String,
@@ -501,23 +503,44 @@ fn main() {
     }
 }
 
-fn run_attach(args: Args) -> anyhow::Result<()> {
-    let overlay =
-        if args.apply_local_config { resolve_local_overlay(args.config.as_deref()) } else { None };
-    let socket_path =
-        args.socket.unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
-    let remote = RemoteSession::connect(&socket_path).with_context(|| {
-        format!("attaching to cmux session socket at {}", socket_path.display())
-    })?;
-    // `--print-resolved-config` is an inspection escape for thin-client
-    // attaches (issue #40 blocker 1): fetch the server's resolved chrome,
-    // layer the local overlay on top, print the merged chrome as JSON,
-    // and exit without starting the TUI. Used by the integration test
-    // that proves the overlay layers over the *server* config.
-    if args.print_resolved_config {
-        return print_resolved_config(remote, overlay);
+fn run_attach(mut args: Args) -> anyhow::Result<()> {
+    // `--print-resolved-config` only fires on the first attach; a session-
+    // manager reattach (RunOutcome::Reattach) re-enters this loop without it.
+    let mut first = true;
+    loop {
+        let overlay =
+            if args.apply_local_config { resolve_local_overlay(args.config.as_deref()) } else { None };
+        let socket_path =
+            args.socket.clone().unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
+        let remote = RemoteSession::connect(&socket_path).with_context(|| {
+            format!("attaching to cmux session socket at {}", socket_path.display())
+        })?;
+        // `--print-resolved-config` is an inspection escape for thin-client
+        // attaches (issue #40 blocker 1): fetch the server's resolved chrome,
+        // layer the local overlay on top, print the merged chrome as JSON,
+        // and exit without starting the TUI.
+        if first && args.print_resolved_config {
+            return print_resolved_config(remote, overlay);
+        }
+        first = false;
+        match run_tui(Session::Remote(remote), args.session.clone(), overlay)? {
+            app::RunOutcome::Done => return Ok(()),
+            app::RunOutcome::Reattach(socket) => {
+                // Switch the running TUI to another session: derive the
+                // session name from the new socket's stem and loop back into
+                // the attach path. Terminal restore/re-init already bracket
+                // each run_tui call, so the handoff is a clean re-init.
+                let session = socket
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| args.session.clone());
+                args.socket = Some(socket);
+                args.session = session;
+                continue;
+            }
+        }
     }
-    run_tui(Session::Remote(remote), args.session, overlay)
 }
 
 /// Print the merged resolved chrome (server base + local overlay) as a
@@ -586,6 +609,10 @@ fn show_local_config_resolution(args: Args) {
 }
 
 fn run_server(args: Args) -> anyhow::Result<()> {
+    // Snapshot before any field is moved: a session-manager reattach
+    // (RunOutcome::Reattach) re-dispatches into run_attach with the chosen
+    // socket, carrying the local config overlay over.
+    let original_args = args.clone();
     // Issue #28: inherit orphaned pane grandchildren so mux.shutdown()
     // can reap them instead of leaving them under PID 1.
     let _ = mux_core::process::set_child_subreaper();
@@ -605,7 +632,7 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     }
     // Compute the socket path up front so surface children inherit it.
     let socket_path =
-        args.socket.unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
+        args.socket.clone().unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
     surface_options.extra_env.push(("CMUX_MUX_SOCKET".into(), socket_path.display().to_string()));
 
     let mux = Mux::new(args.session.clone(), surface_options);
@@ -644,10 +671,24 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     socket_watchdog::spawn(std::process::id(), &socket_path);
 
     let result = if args.headless {
-        run_headless(&mux, &socket_path)
+        run_headless(&mux, &socket_path).map(|()| app::RunOutcome::Done)
     } else {
-        run_tui(Session::Local(mux.clone()), args.session, None)
+        run_tui(Session::Local(mux.clone()), args.session.clone(), None)
     };
+    if let Ok(app::RunOutcome::Reattach(socket)) = &result {
+        // The session-manager overlay asked to switch the TUI to another
+        // session. Keep THIS local server alive (headless) so the user can
+        // return to it later — skip shutdown/cleanup — and re-dispatch into
+        // the attach path against the chosen socket. (On a reattach from a
+        // local session the local server survives as a headless daemon.)
+        let mut attach_args = original_args.clone();
+        if let Some(session) = socket.file_stem().and_then(|s| s.to_str()) {
+            attach_args.session = session.to_string();
+        }
+        attach_args.socket = Some(socket.clone());
+        attach_args.attach = true;
+        return run_attach(attach_args);
+    }
     mux.shutdown();
     // Issue #28: after known surfaces are killed, sweep anything that
     // reparented to us via PR_SET_CHILD_SUBREAPER (grandchildren whose
@@ -657,14 +698,14 @@ fn run_server(args: Args) -> anyhow::Result<()> {
         mux_core::process::kill_remaining_children();
     }
     mux_core::server::cleanup(&mux.socket_path().unwrap_or_else(|| socket_path.clone()));
-    result
+    result.map(|_| ())
 }
 
 fn run_tui(
     session: Session,
     session_label: String,
     overlay: Option<config::Overlay>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<app::RunOutcome> {
     crossterm::terminal::enable_raw_mode()?;
     let colors = host_colors::probe_default_colors();
     let color_result = session.set_default_colors(colors);

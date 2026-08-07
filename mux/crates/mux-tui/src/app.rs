@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -43,6 +43,14 @@ use crate::ui::thumb_geometry;
 pub enum AppEvent {
     Mux(MuxEvent),
     Input(Event),
+    /// A session-manager workspace-preview worker finished (issue #63 L3).
+    /// Carries the socket it fetched and the resulting column; the handler
+    /// merges it into the overlay state and redraws. Sent from a worker
+    /// thread so the UI thread never blocks on a socket read.
+    SessionManagerUpdate {
+        socket: std::path::PathBuf,
+        column: crate::session_manager::WorkspaceColumn,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +58,17 @@ enum RenderAction {
     None,
     Graphics,
     Draw,
+}
+
+/// Outcome of `app::run` (issue #63 L3). `Done` is the normal exit; `Reattach`
+/// asks the caller to tear down the TUI and re-attach to a different session
+/// socket — the only clean way to switch the running TUI to another session,
+/// since the App owns its `Session` and cannot hot-swap it in place. The
+/// session-manager overlay sets this when the user picks another session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunOutcome {
+    Done,
+    Reattach(std::path::PathBuf),
 }
 
 impl RenderAction {
@@ -428,6 +447,12 @@ pub struct App {
     /// Fuzzy finder overlay (`leader G`). Open mutably borrows the tree
     /// to build its item list, so it holds no `Session` of its own.
     pub finder: Option<crate::finder::FinderState>,
+    /// Session manager overlay (`leader S`, issue #63 L3).
+    pub session_manager: Option<crate::session_manager::SessionManagerState>,
+    /// Clone of the event-loop channel sender, so overlay handlers can
+    /// spawn worker threads (e.g. the session-manager preview fetch) that
+    /// report back via `AppEvent`.
+    pub tx: Sender<AppEvent>,
     /// Key binding help overlay (`leader ?`), generated from the live keys.
     pub help: Option<crate::help::HelpState>,
     pub toast: Option<Toast>,
@@ -588,7 +613,11 @@ fn server_base_config(session: &Session) -> Option<crate::config::Config> {
     Some(crate::config::Config::from_server_chrome(&data))
 }
 
-pub fn run(session: Session, session_label: String, overlay: Option<crate::config::Overlay>) -> anyhow::Result<()> {
+pub fn run(
+    session: Session,
+    session_label: String,
+    overlay: Option<crate::config::Overlay>,
+) -> anyhow::Result<RunOutcome> {
     // For a thin-client attach (issue #40 blocker 1) the local `Overlay`
     // must layer on top of the *server's* resolved config, not the
     // laptop's own `config::load()`. So a remote attach fetches the
@@ -712,6 +741,8 @@ pub fn run(session: Session, session_label: String, overlay: Option<crate::confi
         prompt: None,
         omnibar: None,
         finder: None,
+        session_manager: None,
+        tx,
         help: None,
         toast: None,
         shake_frames: 0,
@@ -732,9 +763,19 @@ pub fn run(session: Session, session_label: String, overlay: Option<crate::confi
     if let Some(writer) = app.graphics_writer.as_mut() {
         writer.shutdown(Duration::from_millis(200));
     }
+    // If the session-manager overlay asked to switch sessions, drain its
+    // pending reattach target before the App (and overlay state) drop.
+    let reattach = app
+        .session_manager
+        .as_mut()
+        .and_then(|state| state.take_reattach_target());
     let _ = std::panic::take_hook();
     restore_terminal(Some(&stdout_lock))?;
-    result
+    result?;
+    Ok(match reattach {
+        Some(socket) => RunOutcome::Reattach(socket),
+        None => RunOutcome::Done,
+    })
 }
 
 fn restore_terminal(stdout_lock: Option<&Arc<Mutex<()>>>) -> anyhow::Result<()> {
@@ -769,6 +810,7 @@ impl App {
                 || self.selection_auto_scroll_active()
                 || self.toast.is_some()
                 || self.has_active_flash()
+                || self.session_manager.is_some()
             {
                 Duration::from_millis(30)
             } else {
@@ -1062,6 +1104,12 @@ impl App {
                 Ok(RenderAction::Draw)
             }
             AppEvent::Input(_) => Ok(RenderAction::None),
+            AppEvent::SessionManagerUpdate { socket, column } => {
+                if let Some(state) = self.session_manager.as_mut() {
+                    state.set_workspaces(socket, column);
+                }
+                Ok(RenderAction::Draw)
+            }
         }
     }
 
@@ -1199,6 +1247,9 @@ impl App {
         }
         if self.help.is_some() {
             return self.handle_help_key(key);
+        }
+        if self.session_manager.is_some() {
+            return self.handle_session_manager_key(key);
         }
         if self.finder.is_some() {
             return self.handle_finder_key(key);
@@ -1479,6 +1530,10 @@ impl App {
                 self.open_help();
                 return Ok(RenderAction::Draw);
             }
+            Action::OpenSessionManager => {
+                self.open_session_manager();
+                return Ok(RenderAction::Draw);
+            }
         }
         self.status_message = None;
         Ok(RenderAction::Draw)
@@ -1499,6 +1554,216 @@ impl App {
     fn open_help(&mut self) {
         let entries = crate::help::build_entries(&self.config.keys);
         self.help = Some(crate::help::HelpState::new(entries));
+    }
+
+    /// Open the session manager overlay (issue #63 L3, `leader S`).
+    /// Discovery is a fast `read_dir`+`stat` of the runtime dir (no socket
+    /// connects), safe on the UI thread; the current session's right column
+    /// is seeded for free from the live `App::tree`, and every other
+    /// session's preview is lazy-fetched on a worker thread once focused.
+    fn open_session_manager(&mut self) {
+        use crate::session_manager::WorkspaceColumn;
+        let own_socket = self.session.socket_path().unwrap_or_default();
+        // Scope discovery to the same runtime dir as the running session
+        // (honours a --socket override pointing outside the default dir).
+        let global = crate::cli::GlobalArgs {
+            session: None,
+            socket: Some(own_socket.clone()),
+            json: false,
+        };
+        let mut sessions = crate::cli::discover_sessions(&global);
+        // Newest-first, matching the pre-attach picker ordering.
+        sessions.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+        let mut state =
+            crate::session_manager::SessionManagerState::new(own_socket.clone(), sessions);
+        // Seed the current session's workspaces for free (no socket I/O).
+        if !self.tree.workspaces.is_empty() {
+            state.set_workspaces(own_socket, WorkspaceColumn::Ready(self.tree.clone()));
+        }
+        // Land on the running session's row so the right column shows the
+        // user's own workspaces immediately.
+        let sessions = state.sessions.clone();
+        if let Some(idx) = crate::session_manager::current_index(
+            &sessions,
+            &state.own_socket,
+        ) {
+            state.left_sel = idx;
+        }
+        self.session_manager = Some(state);
+        // Kick off the first fetch (focus + lookahead) immediately.
+        self.spawn_session_manager_fetches();
+    }
+
+    /// Drain pending `NotFetched` sockets from the overlay (focus + one
+    /// lookahead) and spawn a one-shot worker per socket. Each worker
+    /// reports back via `AppEvent::SessionManagerUpdate`; the overlay marks
+    /// them `Loading` first so a re-spawn never duplicates work.
+    fn spawn_session_manager_fetches(&mut self) {
+        let Some(state) = self.session_manager.as_mut() else { return };
+        let requests = state.fetch_requests();
+        for socket in requests {
+            let tx = self.tx.clone();
+            std::thread::Builder::new()
+                .name("smgr-fetch".into())
+                .spawn(move || {
+                    let column = crate::session_manager::fetch_workspaces(&socket);
+                    let _ = tx.send(AppEvent::SessionManagerUpdate { socket, column });
+                })
+                .ok();
+        }
+    }
+
+    /// Handle keys captured by the session manager overlay. Routes the pure
+    /// state machine's action to the App's side effects (in-process
+    /// workspace focus, worker spawns, status toasts). Cross-session attach
+    /// (case b) is wired to a quit+reattach in a later commit; for now it
+    /// shows a status hint.
+    fn handle_session_manager_key(&mut self, key: KeyEvent) -> anyhow::Result<RenderAction> {
+        use crate::session_manager::SessionManagerAction;
+        let action = match self.session_manager.as_mut() {
+            Some(state) => state.handle_key(key),
+            None => return Ok(RenderAction::None),
+        };
+        match action {
+            SessionManagerAction::None => {}
+            SessionManagerAction::Redraw => {}
+            SessionManagerAction::Close => {
+                self.session_manager = None;
+            }
+            SessionManagerAction::SetStatus(msg) => {
+                if let Some(state) = self.session_manager.as_mut() {
+                    state.status = msg;
+                }
+            }
+            SessionManagerAction::Refresh => {
+                // Re-discover and reset the right column (keep the current
+                // session's seeded tree).
+                self.refresh_session_manager();
+            }
+            SessionManagerAction::KillSession(index) => {
+                self.session_manager_kill(index);
+            }
+            SessionManagerAction::RenameSession { socket, new_name } => {
+                self.session_manager_rename(socket, new_name);
+            }
+            SessionManagerAction::FocusWorkspaceInPlace { index } => {
+                self.session.select_workspace(Some(index), None);
+                // The focus change shows up via the next mux event redraw;
+                // keep the overlay open so the user can pick again.
+            }
+            SessionManagerAction::AttachSession => {
+                // Case (b): the state already recorded the reattach target;
+                // quit so `app::run` returns RunOutcome::Reattach(socket)
+                // and the caller reconnects.
+                self.quit = true;
+            }
+            SessionManagerAction::AttachOtherSessionWorkspace { socket, index } => {
+                // Best-effort remote focus (one-shot select-workspace) so the
+                // target session lands on the chosen workspace before the TUI
+                // re-attaches; the state already recorded the reattach target.
+                let _ = crate::cli::select_workspace_remote(&socket, index);
+                self.quit = true;
+            }
+        }
+        // After any non-close action, kick off fetches for newly-focused rows.
+        if self.session_manager.is_some() {
+            self.spawn_session_manager_fetches();
+        }
+        Ok(RenderAction::Draw)
+    }
+
+    /// Re-run discovery and reset the overlay's right column (issue #63 L3,
+    /// `R`). Keeps the current session's seeded tree so the user's own
+    /// workspaces stay visible without a socket round trip.
+    fn refresh_session_manager(&mut self) {
+        use crate::session_manager::WorkspaceColumn;
+        let Some(state) = self.session_manager.as_mut() else { return };
+        let own = state.own_socket.clone();
+        let seeded = state.workspaces.get(&own).cloned();
+        let global = crate::cli::GlobalArgs {
+            session: None,
+            socket: Some(own.clone()),
+            json: false,
+        };
+        let mut sessions = crate::cli::discover_sessions(&global);
+        sessions.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+        state.sessions = sessions;
+        state.workspaces.clear();
+        if let Some(tree) = seeded {
+            state.workspaces.insert(own, tree);
+        } else if !self.tree.workspaces.is_empty() {
+            state.workspaces.insert(state.own_socket.clone(), WorkspaceColumn::Ready(self.tree.clone()));
+        }
+        // Re-clamp the cursor to the current session if still present.
+        let sessions = state.sessions.clone();
+        if let Some(idx) =
+            crate::session_manager::current_index(&sessions, &state.own_socket)
+        {
+            state.left_sel = idx;
+        } else {
+            state.left_sel = 0;
+        }
+        state.right_sel = 0;
+        state.status.clear();
+    }
+
+    /// Kill the session at `index` (issue #63 L3, `x`/`K` + y). Reuses
+    /// `cli::kill_session_at` (the L1 path), then rebuilds the left column
+    /// and clamps the cursor so a shrinking list doesn't drop focus.
+    fn session_manager_kill(&mut self, index: usize) {
+        let target = self
+            .session_manager
+            .as_ref()
+            .and_then(|s| s.sessions.get(index))
+            .cloned();
+        let Some(target) = target else { return };
+        crate::cli::kill_session_at(&target.socket_path, target.pid);
+        // Rebuild discovery in place (same scope as open/refresh).
+        self.refresh_session_manager();
+        if let Some(state) = self.session_manager.as_mut() {
+            state.status = format!("killed {}", target.session);
+            // Clamp the cursor to the same row index (or the new last row).
+            if state.sessions.is_empty() {
+                state.left_sel = 0;
+            } else {
+                state.left_sel = index.min(state.sessions.len() - 1);
+            }
+        }
+        // The killed session may have been the focused preview; re-fetch.
+        self.spawn_session_manager_fetches();
+    }
+
+    /// Rename the session at `socket` to `new_name` (issue #63 L3, `r`).
+    /// Reuses `cli::rename_session_at` (the L2 path); on success the socket
+    /// moves, so the right-column map is rekeyed and discovery is rebuilt.
+    fn session_manager_rename(&mut self, socket: std::path::PathBuf, new_name: String) {
+        match crate::cli::rename_session_at(&socket, &new_name) {
+            Ok(new_socket) => {
+                if let Some(state) = self.session_manager.as_mut() {
+                    // Rekey the right-column entry to the new socket.
+                    if let Some(column) = state.workspaces.remove(&socket) {
+                        state.workspaces.insert(new_socket.clone(), column);
+                    }
+                    state.status = format!("renamed → {new_name}");
+                }
+                self.refresh_session_manager();
+                // Land on the renamed row (now listed under its new name).
+                if let Some(state) = self.session_manager.as_mut() {
+                    if let Some(idx) = state
+                        .sessions
+                        .iter()
+                        .position(|s| s.session == new_name && s.live)
+                    {
+                        state.left_sel = idx;
+                    }
+                }
+            }
+            Err(err) => {
+                if let Some(state) = self.session_manager.as_mut() {
+                    state.status = format!("rename failed: {err}");
+                }
+            }
+        }
     }
 
     /// Handle keys captured by the help overlay. Typeable input is fed to the

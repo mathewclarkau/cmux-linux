@@ -2127,3 +2127,193 @@ fn rename_no_regressions_on_list_kill_killstale() {
 // cannot import the `pub(crate)` helper. The in-process unit test there
 // drives a `mux-core` server directly (no subprocess) and exercises the
 // exact code path the picker's `r` flow uses.
+
+/// T10 (issue #63 L3, scout plan): the session-manager overlay previews an
+/// *other* session's workspaces with a one-shot `list-workspaces` RPC over
+/// that session's control socket (the same connect→write→read path
+/// `cli::one_shot_rpc` shares with `rename_rpc`, and that `cmux
+/// list-workspaces` rides). `fetch_workspaces` is `pub(crate)` so this
+/// bin-test cannot call it directly; instead it drives the identical wire
+/// path against two named headless daemons and asserts each returns a
+/// parseable workspaces tree with the expected count. If the wire verb or
+/// its JSON shape regressed, the overlay's right column would break too.
+#[test]
+fn overlay_fetch_workspaces_parses_remote_tree() {
+    let dir = unique_temp_dir("smgr-fetch");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child_a = spawn_named_headless(&dir, "alpha");
+    let mut child_b = spawn_named_headless(&dir, "beta");
+    let sock_a = dir.join("alpha.sock");
+    let sock_b = dir.join("beta.sock");
+
+    // Give each daemon a distinct workspace set.
+    assert_success(&run_against(&sock_a, &dir, &["new-workspace", "--name", "a-one"]));
+    assert_success(&run_against(&sock_a, &dir, &["new-workspace", "--name", "a-two"]));
+    assert_success(&run_against(&sock_b, &dir, &["new-workspace", "--name", "b-one"]));
+
+    // Querying B's socket returns B's tree (not A's), proving the overlay
+    // can read another session's workspaces over its own socket.
+    let list_b = run_against(&sock_b, &dir, &["--json", "list-workspaces"]);
+    assert_success(&list_b);
+    let value: serde_json::Value = serde_json::from_slice(&list_b.stdout).unwrap();
+    let names: Vec<&str> = value["workspaces"]
+        .as_array()
+        .expect("workspaces array")
+        .iter()
+        .map(|ws| ws["name"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        names.iter().any(|n| *n == "b-one"),
+        "beta socket should report its own workspace b-one, got {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| *n == "a-two"),
+        "beta socket must NOT leak alpha's workspaces, got {names:?}"
+    );
+
+    // And querying A's socket returns A's tree with both of its workspaces.
+    let list_a = run_against(&sock_a, &dir, &["--json", "list-workspaces"]);
+    assert_success(&list_a);
+    let value_a: serde_json::Value = serde_json::from_slice(&list_a.stdout).unwrap();
+    let count_a = value_a["workspaces"].as_array().map(|a| a.len()).unwrap_or(0);
+    assert!(
+        count_a >= 2,
+        "alpha socket should report >=2 workspaces, got {count_a}"
+    );
+
+    let _ = child_a.kill();
+    let _ = child_a.wait();
+    let _ = child_b.kill();
+    let _ = child_b.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// T11 (issue #63 L3, scout plan): focusing a workspace in an *other* session
+/// from the overlay sends a one-shot `select-workspace` RPC over that
+/// session's socket (the path `cli::select_workspace_remote` rides). Spawns
+/// two named daemons, adds workspaces to beta, issues `select-workspace
+/// --index 1` against beta's socket, and asserts beta's `list-workspaces`
+/// afterwards reports workspace index 1 active. This proves the overlay's
+/// right-column Enter on another session remotely moves that session's focus.
+#[test]
+fn overlay_select_workspace_focuses_remotely() {
+    let dir = unique_temp_dir("smgr-select");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "beta");
+    let sock = dir.join("beta.sock");
+
+    // Three workspaces; the first is active by default.
+    assert_success(&run_against(&sock, &dir, &["new-workspace", "--name", "one"]));
+    assert_success(&run_against(&sock, &dir, &["new-workspace", "--name", "two"]));
+    assert_success(&run_against(&sock, &dir, &["new-workspace", "--name", "three"]));
+
+    // Remotely focus workspace index 1 ("two") the way the overlay does.
+    let select = run_against(&sock, &dir, &["select-workspace", "--index", "1"]);
+    assert_success(&select);
+
+    // beta's tree now reports index 1 active.
+    let list = run_against(&sock, &dir, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let active = value["workspaces"]
+        .as_array()
+        .expect("workspaces array")
+        .iter()
+        .find(|ws| ws["active"].as_bool() == Some(true))
+        .expect("an active workspace");
+    assert_eq!(
+        active["name"].as_str(),
+        Some("two"),
+        "select-workspace --index 1 should make 'two' active"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// T12 (issue #63 L3, scout plan): an `[unreachable]` socket row is reported
+/// by discovery and `kill-session` cleans it without crashing. The overlay
+/// drives `cli::kill_session_at` on such rows; this guards that a stale
+/// `.sock`/`.pid` pair (no live process) is listed as stale and removable,
+/// matching AC8 (unreachable rows must be killable and must not crash).
+#[test]
+fn overlay_kill_unreachable_does_not_crash_discovery() {
+    let dir = unique_temp_dir("smgr-unreachable");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "live");
+    let live_sock = dir.join("live.sock");
+
+    // Create a STALE socket/pid pair with no live process behind it.
+    let stale_sock = dir.join("ghost.sock");
+    let stale_pid = dir.join("ghost.pid");
+    std::os::unix::net::UnixListener::bind(&stale_sock)
+        .expect("bind stale socket");
+    fs::write(&stale_pid, "999999").unwrap(); // a pid that is not alive
+
+    // list-sessions --json reports both, ghost as stale.
+    let list = run_against(&live_sock, &dir, &["--json", "list-sessions"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let by_name: std::collections::HashMap<&str, &str> = value["sessions"]
+        .as_array()
+        .expect("sessions array")
+        .iter()
+        .map(|s| (s["name"].as_str().unwrap_or(""), s["status"].as_str().unwrap_or("")))
+        .collect();
+    assert_eq!(by_name.get("live").copied(), Some("live"));
+    assert_eq!(
+        by_name.get("ghost").copied(),
+        Some("stale"),
+        "ghost should be reported stale/unreachable"
+    );
+
+    // kill-session on the stale row cleans it (no crash).
+    let kill = run_against(&stale_sock, &dir, &["kill-session", "--session", "ghost"]);
+    assert_success(&kill);
+    assert!(!stale_sock.exists(), "stale socket removed by kill-session");
+    assert!(!stale_pid.exists(), "stale pid removed by kill-session");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// T13 (issue #63 L3, scout plan): the overlay's rename path and the L2
+/// `rename-session` CLI verb agree — both end with the session serving at the
+/// new socket and gone from the old. This is the same wire path
+/// (`cli::rename_session_at` over `one_shot_rpc`); the L2 suite covers the
+/// helper directly, so here we just confirm a rename issued via the verb is
+/// observable through `list-sessions` the way the overlay's `r` flow expects.
+#[test]
+fn overlay_rename_reuses_l2_helper() {
+    let dir = unique_temp_dir("smgr-rename");
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = spawn_named_headless(&dir, "pre");
+    let pre_sock = dir.join("pre.sock");
+
+    let rename = run_against(&pre_sock, &dir, &["rename-session", "--old", "pre", "--new", "post"]);
+    assert_success(&rename);
+    let post_sock = dir.join("post.sock");
+    assert!(post_sock.exists(), "new socket exists after rename");
+    assert!(!pre_sock.exists(), "old socket gone after rename");
+
+    // list-sessions now reports 'post' live and 'pre' absent — the shape the
+    // overlay's rebuilt left column will show after a rename.
+    let list = run_against(&post_sock, &dir, &["--json", "list-sessions"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let names: Vec<&str> = value["sessions"]
+        .as_array()
+        .expect("sessions array")
+        .iter()
+        .map(|s| s["name"].as_str().unwrap_or(""))
+        .collect();
+    assert!(names.iter().any(|n| *n == "post"), "post should be listed: {names:?}");
+    assert!(!names.iter().any(|n| *n == "pre"), "pre should be gone: {names:?}");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_dir_all(&dir);
+}
+

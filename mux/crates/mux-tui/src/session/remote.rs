@@ -171,6 +171,7 @@ impl RemoteSurface {
 }
 
 pub struct RemoteSession {
+    socket: std::path::PathBuf,
     writer: Mutex<Box<dyn transport::Stream>>,
     pending: Mutex<HashMap<u64, Sender<Value>>>,
     next_id: AtomicU64,
@@ -188,6 +189,7 @@ impl RemoteSession {
         })?;
         let read_half = stream.try_clone_box()?;
         let session = Arc::new(RemoteSession {
+            socket: path.to_path_buf(),
             writer: Mutex::new(stream),
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
@@ -231,6 +233,15 @@ impl RemoteSession {
     fn emit(&self, event: MuxEvent) {
         let mut subs = self.subscribers.lock().unwrap();
         subs.retain(|tx| tx.send(event.clone()).is_ok());
+    }
+
+    /// The control-socket path this remote is bound to (set at `connect`
+    /// time; never moves even if the server later renames, since a remote
+    /// attach holds one connection for its lifetime). Exposed so the
+    /// session-manager overlay can tag its own `[current]` row by
+    /// comparing sockets (issue #63 L3).
+    pub fn socket_path(&self) -> std::path::PathBuf {
+        self.socket.clone()
     }
 
     pub fn subscribe(&self) -> Receiver<MuxEvent> {
