@@ -7,6 +7,7 @@
 //! both into its own ghostty terminal. Rendering, key encoding, and mode
 //! queries then work identically in both cases.
 
+mod reattach;
 mod remote;
 mod tree;
 
