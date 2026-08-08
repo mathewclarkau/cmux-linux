@@ -64,6 +64,17 @@ impl HelpState {
         self.scroll = 0;
     }
 
+    /// The action bound to the currently highlighted (filtered) row, if any.
+    /// Used by the help overlay's Enter key for command-palette dispatch:
+    /// `?` then type + Enter runs the selected binding.
+    pub fn selected_action(&self) -> Option<Action> {
+        let ranked = self.ranked();
+        ranked
+            .get(self.cursor)
+            .and_then(|&(item_index, _)| self.items.get(item_index))
+            .map(|entry| entry.action)
+    }
+
     /// Move the selected result by a clamped number of rows.
     pub fn move_cursor(&mut self, delta: isize, rows_visible: usize) {
         let len = self.ranked().len();
@@ -341,6 +352,25 @@ mod tests {
 
         state.set_query("?");
         assert!(state.ranked().iter().any(|(index, _)| state.items[*index].chord == "?"));
+    }
+
+    #[test]
+    fn selected_action_returns_the_highlighted_rows_binding() {
+        let keys = Keys::default();
+        let mut state = HelpState::new(build_entries(&keys));
+        // Without a query, cursor 0 is the first entry in category order.
+        let action = state.selected_action();
+        assert!(action.is_some(), "a default binding list must have at least one row");
+        // Filtering to a specific action name makes the selection deterministic:
+        // "OpenSessionManager" appears exactly once (it is the only binding
+        // for the leader-S chord).
+        state.set_query("session manager");
+        let focused = state.selected_action();
+        assert_eq!(
+            focused,
+            Some(Action::OpenSessionManager),
+            "filtering to 'session manager' must select the OpenSessionManager action"
+        );
     }
 
     #[test]

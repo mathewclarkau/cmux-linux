@@ -1778,6 +1778,17 @@ impl App {
         let rows = crate::help::HelpState::rows_visible(self.screen).max(1);
         let Some(help) = self.help.as_mut() else { return Ok(RenderAction::None) };
         match key.code {
+            KeyCode::Enter if key.modifiers == KeyModifiers::NONE => {
+                // Command-palette behaviour: run the selected binding's
+                // action (issue #63 follow-up). Closing help first so the
+                // action sees a clean overlay state.
+                let action = help.selected_action();
+                self.help = None;
+                if let Some(action) = action {
+                    self.run_action(action)?;
+                }
+                return Ok(RenderAction::Draw);
+            }
             KeyCode::Char('/') if key.modifiers == KeyModifiers::NONE => {
                 help.set_query(String::new());
             }

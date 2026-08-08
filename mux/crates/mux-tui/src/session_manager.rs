@@ -527,6 +527,39 @@ pub fn draw(app: &mut crate::app::App, frame: &mut ratatui::Frame) {
 
     let Some(state) = app.session_manager.as_ref() else { return };
 
+    // Solid background so pane content underneath does not bleed through
+    // (mirrors help.rs::draw's fill). Same indexed palette as the help
+    // overlay: base bg 236, border 244, title 255.
+    {
+        let buf = frame.buffer_mut();
+        let base = Style::default().bg(Color::Indexed(236)).fg(Color::Indexed(252));
+        let border = base.fg(Color::Indexed(244));
+        for dy in 0..height {
+            for dx in 0..width {
+                let cell = &mut buf[(rect.x + dx, rect.y + dy)];
+                cell.reset();
+                cell.set_symbol(" ").set_style(base);
+            }
+        }
+        // Draw the outer border cells in the border colour (only if room).
+        if width >= 2 && height >= 2 {
+            let right = rect.x + width - 1;
+            let bottom = rect.y + height - 1;
+            for col in rect.x + 1..right {
+                buf[(col, rect.y)].set_style(border);
+                buf[(col, bottom)].set_style(border);
+            }
+            for row in rect.y + 1..bottom {
+                buf[(rect.x, row)].set_style(border);
+                buf[(right, row)].set_style(border);
+            }
+            buf[(rect.x, rect.y)].set_style(border);
+            buf[(right, rect.y)].set_style(border);
+            buf[(rect.x, bottom)].set_style(border);
+            buf[(right, bottom)].set_style(border);
+        }
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(4), Constraint::Length(3)])
