@@ -496,25 +496,77 @@ fn main() {
             }
         }
     }
-    let result = if args.attach { run_attach(args) } else { run_server(args) };
+    let result = if args.attach { run_attach(args, None) } else { run_server(args) };
     if let Err(e) = result {
         eprintln!("cmux: {e}");
         std::process::exit(1);
     }
 }
 
-fn run_attach(mut args: Args) -> anyhow::Result<()> {
+fn run_attach(mut args: Args, fallback: Option<PathBuf>) -> anyhow::Result<()> {
     // `--print-resolved-config` only fires on the first attach; a session-
     // manager reattach (RunOutcome::Reattach) re-enters this loop without it.
     let mut first = true;
+    // last_good: the most recent socket we successfully connected to, so a
+    // dead swap target can recover back to it in-process (issue #69) instead
+    // of exiting to the shell. Seeded by run_server with the still-listening
+    // origin socket; `main()` passes None (a genuine first attach has no
+    // origin to recover to, so a dead target still exits 1).
+    let mut last_good: Option<PathBuf> = fallback;
+    // pending_status: a status-message string carried to the NEXT run_tui
+    // call (the recovery iteration), so the user sees why a handoff failed.
+    let mut pending_status: Option<String> = None;
     loop {
         let overlay =
             if args.apply_local_config { resolve_local_overlay(args.config.as_deref()) } else { None };
         let socket_path =
             args.socket.clone().unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
-        let remote = RemoteSession::connect(&socket_path).with_context(|| {
-            format!("attaching to cmux session socket at {}", socket_path.display())
-        })?;
+        // Issue #69: retry once on a transiently-unconnectable socket, then
+        // recover in-process to last_good when this is a swap (last_good is
+        // Some) instead of propagating the error to exit 1. A genuine first
+        // attach (last_good is None) still propagates -- exit 1, unchanged.
+        let remote = match session::connect_with_retry(
+            &socket_path,
+            1,
+            std::time::Duration::from_millis(250),
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                let failed_name =
+                    socket_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                match session::plan_swap_recovery(
+                    last_good.as_deref(),
+                    &socket_path,
+                    failed_name,
+                ) {
+                    session::SwapRecovery::Propagate => {
+                        return Err(e).with_context(|| {
+                            format!(
+                                "attaching to cmux session socket at {}",
+                                socket_path.display()
+                            )
+                        });
+                    }
+                    session::SwapRecovery::Recover { socket, status } => {
+                        pending_status = Some(status);
+                        let session = socket
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| args.session.clone());
+                        args.socket = Some(socket);
+                        args.session = session;
+                        // Recovery is not a first attach: never fire
+                        // --print-resolved-config on the recovery iteration.
+                        first = false;
+                        continue;
+                    }
+                }
+            }
+        };
+        // Remember the socket we just successfully used so the next swap
+        // failure can recover back to it.
+        last_good = Some(socket_path.clone());
         // `--print-resolved-config` is an inspection escape for thin-client
         // attaches (issue #40 blocker 1): fetch the server's resolved chrome,
         // layer the local overlay on top, print the merged chrome as JSON,
@@ -523,7 +575,8 @@ fn run_attach(mut args: Args) -> anyhow::Result<()> {
             return print_resolved_config(remote, overlay);
         }
         first = false;
-        match run_tui(Session::Remote(remote), args.session.clone(), overlay)? {
+        let initial_status = pending_status.take();
+        match run_tui(Session::Remote(remote), args.session.clone(), overlay, initial_status)? {
             app::RunOutcome::Done => return Ok(()),
             app::RunOutcome::Reattach(socket) => {
                 // Switch the running TUI to another session: derive the
@@ -673,7 +726,7 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     let result = if args.headless {
         run_headless(&mux, &socket_path).map(|()| app::RunOutcome::Done)
     } else {
-        run_tui(Session::Local(mux.clone()), args.session.clone(), None)
+        run_tui(Session::Local(mux.clone()), args.session.clone(), None, None)
     };
     if let Ok(app::RunOutcome::Reattach(socket)) = &result {
         // The session-manager overlay asked to switch the TUI to another
@@ -687,7 +740,7 @@ fn run_server(args: Args) -> anyhow::Result<()> {
         }
         attach_args.socket = Some(socket.clone());
         attach_args.attach = true;
-        return run_attach(attach_args);
+        return run_attach(attach_args, Some(socket_path.clone()));
     }
     mux.shutdown();
     // Issue #28: after known surfaces are killed, sweep anything that
@@ -705,6 +758,7 @@ fn run_tui(
     session: Session,
     session_label: String,
     overlay: Option<config::Overlay>,
+    initial_status: Option<String>,
 ) -> anyhow::Result<app::RunOutcome> {
     crossterm::terminal::enable_raw_mode()?;
     let colors = host_colors::probe_default_colors();
@@ -714,7 +768,7 @@ fn run_tui(
         eprintln!("cmux: failed to set default colors: {err}");
     }
     raw_result?;
-    app::run(session, session_label, overlay)
+    app::run(session, session_label, overlay, initial_status)
 }
 
 fn run_headless(mux: &Arc<Mux>, socket_path: &std::path::Path) -> anyhow::Result<()> {

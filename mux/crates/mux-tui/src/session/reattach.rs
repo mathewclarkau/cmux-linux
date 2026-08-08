@@ -44,7 +44,6 @@ where
 /// `backoff` before each retry. Wraps `RemoteSession::connect` (which does
 /// the full identify/subscribe handshake) so a transiently-unconnectable
 /// socket gets a second chance before the caller gives up.
-#[allow(dead_code)] // wired into run_attach in the follow-up commit (issue #69)
 pub(crate) fn connect_with_retry(
     path: &Path,
     retries: u32,
@@ -55,7 +54,6 @@ pub(crate) fn connect_with_retry(
 
 /// What `run_attach` should do when a connect failed even after retry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // wired into run_attach in the follow-up commit (issue #69)
 pub(crate) enum SwapRecovery {
     /// No known-good socket to fall back to (a genuine first attach to a
     /// dead socket). The caller propagates the connect error -- exit 1,
@@ -71,7 +69,6 @@ pub(crate) enum SwapRecovery {
 /// failed, decide `Propagate` vs `Recover`. Returns `Propagate` when there
 /// is no fallback, OR when the fallback IS the failed socket (prevents an
 /// infinite recovery loop if the origin itself died).
-#[allow(dead_code)] // wired into run_attach in the follow-up commit (issue #69)
 pub(crate) fn plan_swap_recovery(
     last_good: Option<&Path>,
     failed: &Path,
