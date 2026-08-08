@@ -7,8 +7,11 @@
 //! both into its own ghostty terminal. Rendering, key encoding, and mode
 //! queries then work identically in both cases.
 
+mod reattach;
 mod remote;
 mod tree;
+
+pub(crate) use reattach::{connect_with_retry, plan_swap_recovery, SwapRecovery};
 
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;

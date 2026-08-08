@@ -617,6 +617,7 @@ pub fn run(
     session: Session,
     session_label: String,
     overlay: Option<crate::config::Overlay>,
+    initial_status: Option<String>,
 ) -> anyhow::Result<RunOutcome> {
     // For a thin-client attach (issue #40 blocker 1) the local `Overlay`
     // must layer on top of the *server's* resolved config, not the
@@ -748,7 +749,7 @@ pub fn run(
         shake_frames: 0,
         flashing: HashMap::new(),
         selection: None,
-        status_message: None,
+        status_message: initial_status,
         cell_pixels,
         pointer_shape: false,
         last_browser_hover: None,

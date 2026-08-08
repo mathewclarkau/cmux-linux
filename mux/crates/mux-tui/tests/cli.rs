@@ -2317,3 +2317,42 @@ fn overlay_rename_reuses_l2_helper() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// T10 (issue #69, scout plan §3c): REGRESSION -- a genuine first attach to a
+/// dead socket must STILL exit non-zero (exit 1), both before and after the
+/// swap-recovery fix. The recovery path only fires when there is a
+/// last-known-good socket to fall back to (a swap); a fresh `cmux attach`
+/// has no origin, so the connect error propagates to `main()` exactly as
+/// today. This test pins that behavior so the fix cannot accidentally make a
+/// real first-attach silently loop instead of failing.
+#[test]
+fn first_attach_to_dead_socket_still_exits_nonzero() {
+    let dir = unique_temp_dir("attach-dead-first");
+    fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("dead-first.sock");
+    // Stale file: not a listening socket, so RemoteSession::connect fails
+    // (same technique as serve_recovers_from_stale_socket / attach_session_list_json_marks_stale).
+    fs::write(&socket, b"").unwrap();
+
+    let out = Command::new(bin())
+        .args(["attach", "--socket"])
+        .arg(&socket)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .expect("failed to spawn cmux attach");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "first-attach to a dead socket must still exit 1, got {:?}\nstderr:\n{}",
+        out.status.code(),
+        stderr,
+    );
+    assert!(
+        stderr.contains("attaching to cmux session socket"),
+        "stderr should carry the connect-failure context, got: {stderr:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
