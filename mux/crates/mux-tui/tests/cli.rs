@@ -121,6 +121,9 @@ fn cli_verbs_cover_command_output_errors_and_streams() {
     let value: serde_json::Value = serde_json::from_slice(&identify_json.stdout).unwrap();
     assert_eq!(value.get("app").and_then(|v| v.as_str()), Some("cmux"));
     assert!(value.get("protocol").and_then(|v| v.as_u64()).unwrap_or(0) >= 5);
+    // Issue #71: `identify` carried the same stale CARGO_PKG_VERSION as
+    // `-V` did; both now report the build-time version.
+    assert_eq!(value.get("version").and_then(|v| v.as_str()), Some(mux_core::VERSION));
 
     let workspace = cli(&server, &["new-workspace", "--name", "cli-test"]);
     assert_success(&workspace);
@@ -1632,12 +1635,16 @@ fn plugin_shipped_example_manifest_installs() {
     assert!(list_out.contains("cmux_call"), "verb allowlist should include cmux_call: {list_out}");
 }
 
-/// Issue #59: `cmux --version` / `-V` print `cmux <CARGO_PKG_VERSION>`
-/// and exit 0. Output is pinned to the package version so a stale
-/// hard-coded string cannot drift from Cargo.toml.
+/// Issue #59: `cmux --version` / `-V` print `cmux <version>` and exit 0.
+///
+/// Issue #71: the version is the build-time constant, not
+/// `CARGO_PKG_VERSION`. Pinning this test to the manifest was why the
+/// bug survived — the assertion and the bug read the same stale
+/// `0.1.0`, so it passed while `-V` was wrong for seventeen releases.
+/// The independent checks below are the part that would have caught it.
 #[test]
-fn version_flag_prints_cargo_version_and_exits_zero() {
-    let expected = format!("cmux {}", env!("CARGO_PKG_VERSION"));
+fn version_flag_prints_build_version_and_exits_zero() {
+    let expected = format!("cmux {}", mux_core::VERSION);
 
     let run = |args: &[&str]| {
         Command::new(bin()).args(args).env_remove("CMUX_MUX_SOCKET").output().unwrap()
@@ -1655,6 +1662,31 @@ fn version_flag_prints_cargo_version_and_exits_zero() {
             out.stderr.is_empty(),
             "args {args:?} should write nothing to stderr; got: {}",
             String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+/// Issue #71: the reported version must be a real release version, not
+/// the `0.1.0` manifest placeholder the binary shipped with for
+/// seventeen tagged releases. Deliberately asserts against the literal
+/// rather than any constant: a check derived from the same source as
+/// the value under test cannot catch this class of bug.
+#[test]
+fn version_is_not_the_stale_placeholder() {
+    let version = mux_core::VERSION;
+    assert_ne!(version, "0.1.0", "0.1.0 is the pre-#71 placeholder, not a released version");
+    assert_ne!(version, "unknown", "build.rs could not resolve any version");
+
+    // Shape is `<major>.<minor>.<patch>` for a release build, with a
+    // `-<n>-g<sha>[-dirty]` suffix off a tag. Only the triple is pinned;
+    // the suffix is what makes a dev build recognisable as one.
+    let triple = version.split('-').next().unwrap_or_default();
+    let parts: Vec<&str> = triple.split('.').collect();
+    assert_eq!(parts.len(), 3, "version {version:?} should start with a semver triple");
+    for part in parts {
+        assert!(
+            !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()),
+            "version {version:?} has a non-numeric component {part:?}"
         );
     }
 }

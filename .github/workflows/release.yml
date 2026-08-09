@@ -23,6 +23,40 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # Tags are not fetched at the default depth, and
+          # mux-core/build.rs falls back to `git describe` whenever
+          # CMUX_VERSION is unset (i.e. workflow_dispatch runs). Tag refs
+          # are a few KB — far cheaper than fetch-depth: 0, which would
+          # also deepen the ghostty submodule.
+          fetch-tags: true
+
+      - name: Resolve version from the release tag
+        # The pushed tag is the single source of truth for a release; no
+        # human bumps anything in-tree. That is the whole fix for issue
+        # #71 — mux-tui/Cargo.toml sat at 0.1.0 for seventeen releases
+        # precisely because it relied on someone remembering.
+        # mux-core/build.rs bakes $CMUX_VERSION into the binary; the
+        # manifest rewrite on top keeps `cargo metadata` and build.rs's
+        # own no-git fallback honest for this build. workflow_dispatch
+        # runs have no tag, so this stays empty and build.rs falls
+        # through to `git describe`.
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "not a tag build; leaving the version to git describe"
+            echo "version=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # Anchored to the start of the line so it can only match
+          # [workspace.package]'s own key, never a
+          # `foo = { version = "1" }` dependency line.
+          sed -i -E "0,/^version = \".*\"\$/s//version = \"$version\"/" mux/Cargo.toml
+          grep -qx "version = \"$version\"" mux/Cargo.toml \
+            || { echo "::error::failed to sync mux/Cargo.toml to $version"; exit 1; }
+          echo "release version: $version"
 
       - name: Install build dependencies
         # ports.ubuntu.com (the arm64 mirror) has been fully unreachable
@@ -72,7 +106,28 @@ jobs:
         # See ghostty-vt-sys/build.rs:50-57 for the -Dcpu mechanism.
         env:
           CMUX_GHOSTTY_VT_ZIG_CPU: baseline
+          # Empty on workflow_dispatch; mux-core/build.rs treats an empty
+          # value as unset and falls back to `git describe`.
+          CMUX_VERSION: ${{ steps.version.outputs.version }}
         run: ./scripts/bootstrap.sh
+
+      - name: Verify the baked-in version
+        # Fail the release rather than publish a binary that lies about
+        # what it is. This is the gate that makes issue #71 unable to
+        # recur silently: every link in the chain (tag → CMUX_VERSION →
+        # build.rs → mux_core::VERSION → `-V`) is exercised here.
+        # Passed via env rather than interpolated into the script, so a
+        # tag name can never be spliced into the shell.
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          reported="$(mux/target/release/cmux --version)"
+          echo "cmux reports: $reported"
+          if [[ -n "$EXPECTED_VERSION" && "$reported" != "cmux $EXPECTED_VERSION" ]]; then
+            echo "::error::expected 'cmux $EXPECTED_VERSION', got '$reported'"
+            exit 1
+          fi
 
       - name: Package binary
         run: |

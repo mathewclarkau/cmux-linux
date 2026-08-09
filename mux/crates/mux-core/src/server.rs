@@ -949,7 +949,7 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
     match cmd {
         Command::Identify => Ok(json!({
             "app": "cmux",
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": crate::VERSION,
             "protocol": PROTOCOL_VERSION,
             "session": mux.session_name(),
             "pid": std::process::id(),

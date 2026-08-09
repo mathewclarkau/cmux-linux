@@ -150,7 +150,15 @@ fn build_cmuxd_remote(os: &str, arch: &str, out: &Path) -> anyhow::Result<()> {
         .env("GOOS", os)
         .env("GOARCH", arch)
         .env("CGO_ENABLED", "0")
-        .args(["build", "-o"])
+        .arg("build")
+        // Issue #71: stamp the daemon with the version of the cmux that
+        // built it. `main.go` declares `var version = "dev"` purely as
+        // the fallback for a bare `go build`; nothing else ever set it,
+        // so `cmuxd-remote version` reported "dev" on every host. The
+        // daemon is vendored in this repo and built from this checkout,
+        // so cmux's own version is its correct identity.
+        .arg(format!("-ldflags=-X main.version={}", crate::VERSION))
+        .arg("-o")
         .arg(out)
         .arg("./cmd/cmuxd-remote")
         .status()

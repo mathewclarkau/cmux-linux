@@ -9,6 +9,12 @@ members = [
 ]
 
 [workspace.package]
+# Fallback only. The authoritative version of a release is the pushed
+# `v*` tag, which release.yml feeds to mux-core/build.rs (issue #71);
+# this value is what a no-git source tarball falls back to. release.yml
+# rewrites it to match the tag before building, so it never has to be
+# bumped by hand.
+version = "0.17.2"
 edition = "2021"
 license = "GPL-3.0-or-later"
 publish = false

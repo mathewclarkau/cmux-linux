@@ -728,14 +728,14 @@ dependencies = [
 
 [[package]]
 name = "ghostty-vt"
-version = "0.1.0"
+version = "0.17.2"
 dependencies = [
  "ghostty-vt-sys",
 ]
 
 [[package]]
 name = "ghostty-vt-sys"
-version = "0.1.0"
+version = "0.17.2"
 dependencies = [
  "bindgen",
 ]
@@ -1165,7 +1165,7 @@ dependencies = [
 
 [[package]]
 name = "mux-cdp"
-version = "0.1.0"
+version = "0.17.2"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -1174,7 +1174,7 @@ dependencies = [
 
 [[package]]
 name = "mux-core"
-version = "0.1.0"
+version = "0.17.2"
 dependencies = [
  "anyhow",
  "base64",
@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "mux-tui"
-version = "0.1.0"
+version = "0.17.2"
 dependencies = [
  "anyhow",
  "base64",
