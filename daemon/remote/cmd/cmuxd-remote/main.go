@@ -28,6 +28,10 @@ import (
 	"time"
 )
 
+// version is reported by the `version` subcommand. cmux stamps it with
+// its own version via `-ldflags "-X main.version=..."` when it
+// cross-compiles this daemon for a remote host (see ssh_bootstrap.rs);
+// "dev" is the fallback for a bare `go build` (issue #71).
 var version = "dev"
 
 type rpcRequest struct {

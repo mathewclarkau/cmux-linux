@@ -277,9 +277,13 @@ struct Args {
     json: bool,
 }
 
-/// cmux version, taken from `crates/mux-tui/Cargo.toml` at compile time.
-/// Surfaced by `cmux --version` / `cmux -V` (issue #59).
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// cmux version, resolved at build time from the release tag and baked
+/// into the binary by `mux-core`'s build script. Surfaced by
+/// `cmux --version` / `cmux -V` (issue #59), by the control socket's
+/// `identify` reply, and stamped into the `cmuxd-remote` daemon we
+/// cross-compile for `cmux ssh`. Reading `CARGO_PKG_VERSION` here is
+/// what made `-V` report a stale `0.1.0` (issue #71).
+const VERSION: &str = mux_core::VERSION;
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
     let mut out = Args {

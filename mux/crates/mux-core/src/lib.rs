@@ -22,6 +22,17 @@ pub mod layout;
 pub mod platform;
 pub mod server;
 
+/// The cmux version, resolved at build time by `build.rs` and baked
+/// into the binary — it does not depend on git, a manifest, or anything
+/// else being present at run time. Prefer this over
+/// `env!("CARGO_PKG_VERSION")` anywhere a version is reported to a user
+/// or a peer: the manifest value is a fallback floor, not the version of
+/// the release this binary came from (issue #71).
+///
+/// Shape is `0.17.2` for a release build, `0.17.2-14-gabc1234` (with an
+/// optional `-dirty`) for a build off a tag.
+pub const VERSION: &str = env!("CMUX_VERSION");
+
 pub use browser::normalize_url;
 pub use layout::{
     directional_neighbor, layout_screen, split_for_pane_edge, split_sides, LayoutResult, Rect,
