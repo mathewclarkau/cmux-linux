@@ -49,14 +49,16 @@ cd mux && cargo build                       # build.rs falls back to `zig` (PATH
 `mux/crates/mux-core/build.rs` resolves the version at build time and bakes it in as `mux_core::VERSION` (a `rustc-env` constant, so it travels with the binary and needs no git or manifest at run time), in this order:
 
 1. **`$CMUX_VERSION`** — `release.yml` sets it from `GITHUB_REF_NAME` minus the leading `v`. Authoritative for a release.
-2. **`git describe --tags --always`** — `0.17.2` on an exact tag, `0.17.2-14-gabc1234` off one, `-dirty` appended for local modifications. This is what dev builds get.
-3. **`CARGO_PKG_VERSION`** — no-git fallback (source tarball). `version` in `[workspace.package]` is a floor for this case only; `release.yml` rewrites it to match the tag before building, so it never needs a manual edit.
+2. **`git describe --tags`** — `0.17.2` on an exact tag, `0.17.2-14-gabc1234` off one, `-dirty` appended for local modifications. This is what dev builds get.
+3. **`CARGO_PKG_VERSION` + `-g<sha>`** — a repo with no tag reachable from `HEAD`. This is the *normal* case in CI, not an edge case: `actions/checkout` grafts a depth-1 clone, so no tag is an ancestor of `HEAD` even when tag refs were fetched.
+4. **`CARGO_PKG_VERSION`** — no-git fallback (source tarball). `version` in `[workspace.package]` is a floor for tiers 3 and 4 only; `release.yml` rewrites it to match the tag before building, so it never needs a manual edit.
 
 Consequences worth knowing before you touch any of this:
 
 - **Read `mux_core::VERSION`, never `env!("CARGO_PKG_VERSION")`,** anywhere a version is shown to a user or sent to a peer (`-V`, the socket `identify` reply, the `-ldflags` stamp on the cross-compiled `cmuxd-remote`).
 - **Dirtiness ignores submodules.** `bootstrap.sh` patches `ghostty/` on every checkout, so a plain `git describe --dirty` would mark *every* build dirty, CI included. `build.rs` uses `git status --ignore-submodules=all` instead.
 - **`build.rs` lists its `rerun-if-changed` inputs explicitly** (`build.rs`, `.git/HEAD`, `.git/packed-refs`, `.git/refs/tags`) because emitting any one of them opts out of cargo's default whole-package watch. Drop the git refs and an incremental rebuild after tagging silently reuses the stale version. Only paths that exist are emitted — cargo treats an unstattable path as permanently dirty and would rerun the script on every build.
+- **Every tier keeps a leading semver triple**, which is the invariant `version_is_not_the_stale_placeholder` pins; only the suffix marking a build as *not* a release varies. Never resolve with `describe --always`: its bare-SHA fallback (`79e84a4`) drops the triple entirely, which is what broke PR CI on the first cut of this.
 - **release.yml fails the release** if the built binary's `--version` disagrees with the tag, so this cannot break silently again.
 
 ## LLM harness hooks (under `mux/crates/mux-tui/src/`)

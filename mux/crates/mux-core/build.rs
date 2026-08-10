@@ -8,11 +8,21 @@
 //!
 //! 1. `$CMUX_VERSION` — set by `.github/workflows/release.yml` from the
 //!    pushed tag. Authoritative for a release build.
-//! 2. `git describe --tags --always` — an exact tag gives `0.17.2`,
-//!    anything downstream gives `0.17.2-14-gabc1234`, so a dev build is
-//!    never mistakable for a release.
-//! 3. `CARGO_PKG_VERSION` — source tarball / vendored build with no git
+//! 2. `git describe --tags` — an exact tag gives `0.17.2`, anything
+//!    downstream gives `0.17.2-14-gabc1234`, so a dev build is never
+//!    mistakable for a release.
+//! 3. `CARGO_PKG_VERSION` + `-g<sha>` — a repo whose history holds no
+//!    reachable tag. That is the normal case in CI: `actions/checkout`
+//!    grafts a depth-1 clone, so no tag is an ancestor of HEAD even
+//!    when tag refs were fetched.
+//! 4. `CARGO_PKG_VERSION` — source tarball / vendored build with no git
 //!    and no override. A floor, not the source of truth.
+//!
+//! Every tier keeps the leading semver triple, which is the invariant
+//! `version_is_not_the_stale_placeholder` pins: what varies is the
+//! suffix that marks a build as *not* a release. Deliberately never
+//! `describe --always`, whose bare-SHA fallback (`79e84a4`) drops the
+//! triple entirely and reads as a version from nowhere.
 //!
 //! Every git call fails soft: a missing `git`, a shallow clone with no
 //! tag history, or a non-repo checkout falls through to the next tier
@@ -49,14 +59,21 @@ fn resolve_version() -> String {
     if let Some(explicit) = env("CMUX_VERSION") {
         return normalise(&explicit);
     }
-    if let Some(described) = git(&["describe", "--tags", "--always"]) {
-        let mut version = normalise(&described);
-        if is_dirty() {
-            version.push_str("-dirty");
-        }
-        return version;
+    let fallback = || env("CARGO_PKG_VERSION").unwrap_or_else(|| "unknown".to_string());
+    let mut version = match git(&["describe", "--tags"]) {
+        Some(described) => normalise(&described),
+        // No tag in reach. Keep the manifest triple as the floor and
+        // append the commit, so the string still says which build this
+        // is without pretending to be a release.
+        None => match git(&["rev-parse", "--short", "HEAD"]) {
+            Some(sha) => format!("{}-g{sha}", fallback()),
+            None => return fallback(),
+        },
+    };
+    if is_dirty() {
+        version.push_str("-dirty");
     }
-    env("CARGO_PKG_VERSION").unwrap_or_else(|| "unknown".to_string())
+    version
 }
 
 /// Tags are `v0.17.2`; the version we report is `0.17.2`.

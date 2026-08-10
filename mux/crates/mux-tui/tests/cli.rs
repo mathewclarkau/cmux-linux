@@ -1677,9 +1677,11 @@ fn version_is_not_the_stale_placeholder() {
     assert_ne!(version, "0.1.0", "0.1.0 is the pre-#71 placeholder, not a released version");
     assert_ne!(version, "unknown", "build.rs could not resolve any version");
 
-    // Shape is `<major>.<minor>.<patch>` for a release build, with a
-    // `-<n>-g<sha>[-dirty]` suffix off a tag. Only the triple is pinned;
-    // the suffix is what makes a dev build recognisable as one.
+    // Shape is `<major>.<minor>.<patch>` for a release build; a dev
+    // build appends `-<n>-g<sha>` off a tag, or just `-g<sha>` when no
+    // tag is reachable (a depth-1 CI checkout), plus `-dirty` for local
+    // modifications. Only the triple is pinned — every tier of build.rs
+    // keeps it, and the suffix is what makes a dev build recognisable.
     let triple = version.split('-').next().unwrap_or_default();
     let parts: Vec<&str> = triple.split('.').collect();
     assert_eq!(parts.len(), 3, "version {version:?} should start with a semver triple");
