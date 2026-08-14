@@ -58,6 +58,9 @@ impl HeadlessServer {
             .args(["--headless", "--socket"])
             .arg(&socket)
             .env("XDG_STATE_HOME", &dir)
+            // Dash, not bash: Falcon GenReverseShell targets a bare
+            // `/bin/bash` on a PTY. CLI tests only need printf/echo.
+            .env("SHELL", "/bin/sh")
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -78,6 +81,7 @@ impl HeadlessServer {
             .arg(&socket)
             .env("CMUX_MUX_CONFIG", &config)
             .env("XDG_STATE_HOME", &dir)
+            .env("SHELL", "/bin/sh")
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -541,6 +545,115 @@ fn install_skill_refuses_symlinks() {
 
     // guard goes out of scope here: Drop removes the symlink, the target
     // file, and the temp project dir — even if any assertion above panicked.
+}
+
+#[test]
+fn grok_install_hooks_writes_native_schema() {
+    let project = unique_temp_dir("grok-install-hooks-project");
+    fs::create_dir_all(&project).unwrap();
+
+    let install = Command::new(bin())
+        .args(["grok", "install-hooks"])
+        .current_dir(&project)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_success(&install);
+
+    let path = project.join(".grok").join("hooks").join("cmux-agent-state.json");
+    assert!(path.is_file(), "expected hooks at {}", path.display());
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let command = value["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("command string");
+    assert_eq!(value["hooks"]["PreToolUse"][0]["hooks"][0]["type"], "command");
+    assert!(command.contains("--source hook"), "{command}");
+    assert!(!command.contains("--source grok"), "{command}");
+    assert!(
+        !project.join(".grok").join("hooks.json").exists(),
+        "must not write the legacy ~/.grok/hooks.json path"
+    );
+
+    let listed = Command::new(bin())
+        .args(["agents", "list"])
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert_success(&listed);
+    let output = String::from_utf8(listed.stdout).unwrap();
+    let grok = output.lines().find(|row| row.starts_with("grok\t")).unwrap();
+    assert!(grok.contains("\tinstalled\t"), "unexpected row: {grok}");
+
+    fs::remove_dir_all(project).unwrap();
+}
+
+#[test]
+fn grok_install_hooks_cleans_legacy_file() {
+    let project = unique_temp_dir("grok-install-hooks-legacy");
+    fs::create_dir_all(project.join(".grok")).unwrap();
+    fs::write(
+        project.join(".grok").join("hooks.json"),
+        r#"{
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "command": "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state working --source grok"
+    }
+  ]
+}"#,
+    )
+    .unwrap();
+
+    let install = Command::new(bin())
+        .args(["grok", "install-hooks"])
+        .current_dir(&project)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert_success(&install);
+    assert!(
+        !project.join(".grok").join("hooks.json").exists(),
+        "legacy file that only held cmux hooks should be removed"
+    );
+
+    fs::remove_dir_all(project).unwrap();
+}
+
+#[test]
+fn grok_install_hooks_refuses_symlinks() {
+    let project = unique_temp_dir("grok-install-hooks-symlink");
+    let hook_path = project.join(".grok").join("hooks").join("cmux-agent-state.json");
+    fs::create_dir_all(hook_path.parent().unwrap()).unwrap();
+    let target = project.join("target.json");
+    fs::write(&target, "{\"keep\":true}\n").unwrap();
+    symlink(&target, &hook_path).unwrap();
+
+    let output = Command::new(bin())
+        .args(["grok", "install-hooks"])
+        .current_dir(&project)
+        .env_remove("CMUX_MUX_SOCKET")
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "grok install-hooks must refuse a symlink target, got status {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        combined.to_lowercase().contains("symlink"),
+        "error output must mention \"symlink\", got: {combined:?}"
+    );
+    assert_eq!(fs::read_to_string(&target).unwrap(), "{\"keep\":true}\n");
+
+    fs::remove_dir_all(project).unwrap();
 }
 
 // Regression test for the symlink_metadata guard added to

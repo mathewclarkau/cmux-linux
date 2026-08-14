@@ -179,11 +179,7 @@ fn pi_path(global: bool) -> Option<PathBuf> {
     }
 }
 fn grok_path(global: bool) -> Option<PathBuf> {
-    if global {
-        home_join(&[".grok", "hooks.json"])
-    } else {
-        Some(PathBuf::from(".grok").join("hooks.json"))
-    }
+    crate::grok_hook::config_path(global)
 }
 fn opencode_path(global: bool) -> Option<PathBuf> {
     if global {
