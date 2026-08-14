@@ -26,7 +26,11 @@ pub use crate::browser::{
 /// How to spawn surface children.
 #[derive(Debug, Clone)]
 pub struct SurfaceOptions {
-    /// Command argv; defaults to the platform shell.
+    /// Command argv. When unset, the platform shell is spawned as a
+    /// login shell (argv0 `-<basename>`, e.g. `-bash`) — the same
+    /// convention as gnome-terminal / wezterm / tmux. A bare `/bin/bash`
+    /// on a freshly opened PTY is CrowdStrike Falcon's GenReverseShell
+    /// signature.
     pub command: Option<Vec<String>>,
     pub cwd: Option<String>,
     /// TERM value for children. xterm-256color is the compatible default;
@@ -288,20 +292,39 @@ impl Surface {
                 .context("opening local pty (check /dev/ptmx and devpts mount)")?,
         };
 
-        let argv = opts
-            .command
-            .clone()
-            .filter(|argv| !argv.is_empty())
-            .unwrap_or_else(|| vec![platform::default_shell()]);
-        let mut cmd = CommandBuilder::new(&argv[0]);
-        cmd.args(&argv[1..]);
+        // Default surfaces are a login shell (argv0 "-bash"), matching
+        // gnome-terminal / wezterm / tmux. A bare `/bin/bash` attached to
+        // a PTY opened by an unsigned parent is CrowdStrike Falcon IOA
+        // GenReverseShell's textbook signature and gets the child SIGKILLed
+        // on protected hosts (the pane then looks "Killed" mid-test).
+        // Explicit `command` argv is left untouched so tests can still
+        // spawn `/bin/cat`, `/bin/sh -c …`, etc.
+        let (mut cmd, spawn_label) = match opts.command.as_ref().filter(|argv| !argv.is_empty()) {
+            Some(argv) => {
+                let mut cmd = CommandBuilder::new(&argv[0]);
+                cmd.args(&argv[1..]);
+                (cmd, argv.join(" "))
+            }
+            None => {
+                let mut cmd = CommandBuilder::new_default_prog();
+                cmd.env("SHELL", platform::default_shell());
+                (cmd, format!("login-shell({})", platform::default_shell()))
+            }
+        };
         cmd.env("TERM", &opts.term);
         // Lets a hook script (e.g. a Claude Code hook) invoked from inside
         // this pty call back into `cmux report-agent --surface
         // $CMUX_MUX_SURFACE ...` without needing to know its own surface id.
         cmd.env("CMUX_MUX_SURFACE", id.to_string());
+        // Grok Build's multiplexer detector (and macOS cmux) look for these
+        // names. Dual-write so an unpatched grok still classifies the pane
+        // as MultiplexerKind::Cmux.
+        cmd.env("CMUX_PANEL_ID", id.to_string());
         for (k, v) in &opts.extra_env {
             cmd.env(k, v);
+            if k == "CMUX_MUX_SOCKET" {
+                cmd.env("CMUX_SOCKET_PATH", v);
+            }
         }
         // The local-home-dir fallback only makes sense for a local child;
         // for a remote surface, an unset cwd should mean "let the remote
@@ -317,7 +340,7 @@ impl Surface {
         let mut child = pty
             .slave
             .spawn_command(cmd)
-            .with_context(|| format!("spawning pty child: {}", argv.join(" ")))?;
+            .with_context(|| format!("spawning pty child: {spawn_label}"))?;
         drop(pty.slave);
         let child_pid = child.process_id();
         let killer = child.clone_killer();
