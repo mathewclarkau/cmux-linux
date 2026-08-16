@@ -222,8 +222,9 @@ AIDER INTEGRATION
 
 GROK CLI INTEGRATION
   cmux grok install-hooks [--uninstall] [--global]
-      Installs hooks into .grok/hooks.json (or ~/.grok/hooks.json if --global)
-      to automatically report state changes to cmux.
+      Installs hooks into .grok/hooks/cmux-agent-state.json (or
+      ~/.grok/hooks/cmux-agent-state.json if --global) in the schema Grok
+      Build actually loads, so panes report working/idle/blocked/done.
   cmux grok install-skill [--uninstall] [--global]
       Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
       (or ~/.grok/skills/cmux-orchestration/SKILL.md if --global).

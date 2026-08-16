@@ -54,6 +54,49 @@ fn read_json_line(reader: &mut impl BufRead) -> Option<serde_json::Value> {
     }
 }
 
+/// Default surfaces must be a login shell (argv0 starts with `-`).
+/// CrowdStrike Falcon IOA GenReverseShell kills a bare `/bin/bash`
+/// attached to a PTY from an unsigned parent; login-shell argv0 is how
+/// real terminals spawn and is what we have to match.
+#[test]
+#[cfg(target_os = "linux")]
+fn default_shell_is_spawned_as_login_shell() {
+    // Dash, not the user's bash: this test only checks argv0, and a
+    // bare interactive bash is exactly what Falcon GenReverseShell kills.
+    let _guard = PERSIST_ENV_LOCK.lock().unwrap();
+    let previous_shell = std::env::var("SHELL").ok();
+    std::env::set_var("SHELL", "/bin/sh");
+    let mux = Mux::new(unique_session("test-login-shell"), SurfaceOptions::default());
+    let surface = mux.new_workspace(None, None).unwrap();
+    let pid = surface.child_pid().expect("pty child pid");
+    // portable-pty fork+exec: /proc/pid/cmdline still shows the test
+    // binary until execve lands. Wait for the login-shell argv0.
+    let argv0 = wait_for(
+        || {
+            let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+            let argv0 = bytes.split(|&b| b == 0).next().unwrap_or_default();
+            let argv0 = String::from_utf8_lossy(argv0);
+            argv0.starts_with('-').then(|| argv0.into_owned())
+        },
+        Duration::from_secs(3),
+    );
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe"))
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|e| format!("<exe unreadable: {e}>"));
+    let alive = mux_core::process::is_alive(pid);
+    assert!(
+        argv0.is_some(),
+        "default shell must be a login shell (argv0 starts with '-'), \
+         pid={pid} alive={alive} comm={comm:?} exe={exe}"
+    );
+    mux.close_surface(surface.id);
+    match previous_shell {
+        Some(shell) => std::env::set_var("SHELL", shell),
+        None => std::env::remove_var("SHELL"),
+    }
+}
+
 #[test]
 fn surface_runs_command_and_screen_updates() {
     let mux = Mux::new("test-pty", shell_opts("printf 'marker-42\\n'; sleep 30"));

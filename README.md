@@ -188,8 +188,8 @@ cmux aider install-hooks --uninstall
 
 #### 6. Grok CLI
 ```bash
-cmux grok install-hooks            # installs workspace-level hooks in .grok/hooks.json
-cmux grok install-hooks --global   # installs global hooks in ~/.grok/hooks.json
+cmux grok install-hooks            # workspace hooks in .grok/hooks/cmux-agent-state.json
+cmux grok install-hooks --global   # global hooks in ~/.grok/hooks/cmux-agent-state.json
 cmux grok install-hooks --uninstall
 ```
 
