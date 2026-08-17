@@ -396,11 +396,15 @@ impl RemoteSession {
                     value.get("previous").and_then(|v| v.as_str()).and_then(AgentState::parse);
                 let session = value.get("session").and_then(|v| v.as_str()).map(str::to_string);
                 let updated_at_ms = value.get("updated_at_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+                // Issue #75 additive fields: the agent name and last
+                // message ride the same event. Absent on older servers.
+                let agent = value.get("agent").and_then(|v| v.as_str()).map(str::to_string);
+                let message = value.get("message").and_then(|v| v.as_str()).map(str::to_string);
                 self.tree_stale.store(true, Ordering::Release);
                 self.emit(MuxEvent::AgentStateChanged {
                     surface: id,
                     previous,
-                    report: AgentReport { state, source, session, updated_at_ms },
+                    report: AgentReport { state, source, session, agent, message, updated_at_ms },
                 });
             }
             Some("osc-notification") => {

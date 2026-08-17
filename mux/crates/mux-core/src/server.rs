@@ -493,12 +493,21 @@ enum Command {
     },
     /// Reports agent state for a surface. Hook-sourced reports have
     /// authority over socket-sourced ones (see `spec/commands.md`).
+    /// `source` defaults to `"socket"` when absent (issue #75: in-pane
+    /// self-reports omit it; hooks pass `"hook"` explicitly and keep
+    /// their override authority). `agent` names the pane for the
+    /// name-addressed verbs; `message` is free-text context (issue #75).
     ReportAgent {
         surface: SurfaceId,
         state: String,
-        source: String,
+        #[serde(default)]
+        source: Option<String>,
         #[serde(default)]
         session: Option<String>,
+        #[serde(default)]
+        agent: Option<String>,
+        #[serde(default)]
+        message: Option<String>,
     },
     /// Known agent-status records, optionally filtered.
     ListAgents {
@@ -964,6 +973,8 @@ fn agent_report_json(surface: SurfaceId, report: &crate::AgentReport) -> Value {
         "state": report.state.as_str(),
         "source": report.source.as_str(),
         "session": report.session,
+        "agent": report.agent,
+        "message": report.message,
         "updated_at_ms": report.updated_at_ms,
     })
 }
@@ -1490,14 +1501,14 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             surface.try_with_terminal(|t| t.scroll_delta(delta))?;
             Ok(json!({}))
         }
-        Command::ReportAgent { surface, state, source, session } => {
+        Command::ReportAgent { surface, state, source, session, agent, message } => {
             get_surface(mux, surface)?;
             let state = crate::AgentState::parse(&state)
                 .ok_or_else(|| anyhow::anyhow!("bad state {state:?}"))?;
-            let source = crate::AgentStateSource::parse(&source)
+            let source = crate::AgentStateSource::parse(source.as_deref().unwrap_or("socket"))
                 .ok_or_else(|| anyhow::anyhow!("bad source {source:?}"))?;
             let report = mux
-                .report_agent(surface, state, source, session)
+                .report_agent(surface, state, source, session, agent, message)
                 .ok_or_else(|| anyhow::anyhow!("surface {surface} does not support agent state"))?;
             Ok(agent_report_json(surface, &report))
         }
@@ -1720,6 +1731,8 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                             "state": report.state.as_str(),
                             "source": report.source.as_str(),
                             "session": report.session,
+                            "agent": report.agent,
+                            "message": report.message,
                             "updated_at_ms": report.updated_at_ms,
                         }),
                         MuxEvent::OscNotification { surface, title, body } => json!({

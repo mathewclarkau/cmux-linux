@@ -157,14 +157,14 @@ fn osc9_notification_from_real_pty_output_sets_detected_agent_state() {
     // A detected report must not override an existing hook report - the
     // opposite direction of the authority rule covered in mux.rs's unit
     // tests, verified here against the real detection path.
-    mux.report_agent(surface.id, AgentState::Working, AgentStateSource::Hook, None);
+    mux.report_agent(surface.id, AgentState::Working, AgentStateSource::Hook, None, None, None);
     let mux2 = Mux::new(
         unique_session("test-osc9-hook-priority"),
         shell_opts("printf '\\033]9;again\\007'; sleep 30"),
     );
     let events2 = mux2.subscribe();
     let surface2 = mux2.new_workspace(None, None).unwrap();
-    mux2.report_agent(surface2.id, AgentState::Working, AgentStateSource::Hook, None);
+    mux2.report_agent(surface2.id, AgentState::Working, AgentStateSource::Hook, None, None, None);
     assert!(
         wait_for(
             || events2.try_iter().find(|e| matches!(e, MuxEvent::OscNotification { .. })),

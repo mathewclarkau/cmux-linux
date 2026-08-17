@@ -184,6 +184,16 @@ pub struct AgentReport {
     pub state: AgentState,
     pub source: AgentStateSource,
     pub session: Option<String>,
+    /// Agent name (issue #75): the `--agent` label on a report, used by
+    /// the name-addressed verbs (`agent-read`, `agent-send`,
+    /// `wait-agent-status`). Preserved across later reports that omit
+    /// it, so interim hook/socket reports don't break name addressing;
+    /// replaced when a report carries a new name.
+    pub agent: Option<String>,
+    /// Last message (issue #75): free-text context from the reporting
+    /// agent ("compiling", "waiting on user", …). Reflects the latest
+    /// applied report; absent means cleared.
+    pub message: Option<String>,
     pub updated_at_ms: u64,
 }
 
@@ -481,6 +491,8 @@ impl Surface {
                                     crate::AgentState::Blocked,
                                     crate::AgentStateSource::Detected,
                                     None,
+                                    None,
+                                    None,
                                 );
                                 mux.emit(MuxEvent::OscNotification { surface: surface.id, title, body });
                             }
@@ -681,17 +693,26 @@ impl Surface {
     /// report now in effect and whether this call is the one that applied
     /// it (`false` when rejected by the authority rule, in which case the
     /// report is the unchanged prior one), or `None` for a non-PTY surface.
+    ///
+    /// Name semantics (issue #75): an incoming report that omits `agent`
+    /// keeps the pane's established name (names live as long as the pane
+    /// has a report); `message` — like `state` — always reflects the
+    /// latest applied report.
     pub fn set_agent_report(
         &self,
         state: AgentState,
         source: AgentStateSource,
         session: Option<String>,
+        agent: Option<String>,
+        message: Option<String>,
     ) -> Option<(AgentReport, bool)> {
         let pty = self.as_pty()?;
         let mut current = pty.agent.lock().unwrap();
         let accept = current.as_ref().map_or(true, |existing| source >= existing.source);
         if accept {
-            let report = AgentReport { state, source, session, updated_at_ms: now_ms() };
+            let agent = agent.or_else(|| current.as_ref().and_then(|r| r.agent.clone()));
+            let report =
+                AgentReport { state, source, session, agent, message, updated_at_ms: now_ms() };
             *current = Some(report.clone());
             Some((report, true))
         } else {

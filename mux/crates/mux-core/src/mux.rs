@@ -1646,10 +1646,13 @@ reattaching to remote session {session_id} on {host} \
         state: AgentState,
         source: AgentStateSource,
         session: Option<String>,
+        agent: Option<String>,
+        message: Option<String>,
     ) -> Option<AgentReport> {
         let surface = self.state.lock().unwrap().surfaces.get(&target).cloned()?;
         let previous = surface.agent_report().map(|r| r.state);
-        let (report, applied) = surface.set_agent_report(state, source, session)?;
+        let (report, applied) =
+            surface.set_agent_report(state, source, session, agent, message)?;
         if applied {
             self.emit(MuxEvent::AgentStateChanged {
                 surface: target,
@@ -2662,7 +2665,7 @@ mod tests {
         assert!(mux.list_agents(None, None).is_empty());
 
         let report =
-            mux.report_agent(surface, AgentState::Working, AgentStateSource::Socket, None).unwrap();
+            mux.report_agent(surface, AgentState::Working, AgentStateSource::Socket, None, None, None).unwrap();
         assert_eq!(report.state, AgentState::Working);
         assert_eq!(report.source, AgentStateSource::Socket);
 
@@ -2673,6 +2676,8 @@ mod tests {
                 AgentState::Blocked,
                 AgentStateSource::Hook,
                 Some("sess-1".into()),
+                None,
+                None,
             )
             .unwrap();
         assert_eq!(report.state, AgentState::Blocked);
@@ -2680,7 +2685,7 @@ mod tests {
 
         // A socket report cannot override an existing hook report.
         let report =
-            mux.report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None).unwrap();
+            mux.report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None, None, None).unwrap();
         assert_eq!(
             report.state,
             AgentState::Blocked,
@@ -2690,7 +2695,14 @@ mod tests {
 
         // A newer hook report still applies.
         let report = mux
-            .report_agent(surface, AgentState::Idle, AgentStateSource::Hook, Some("sess-1".into()))
+            .report_agent(
+                surface,
+                AgentState::Idle,
+                AgentStateSource::Hook,
+                Some("sess-1".into()),
+                None,
+                None,
+            )
             .unwrap();
         assert_eq!(report.state, AgentState::Idle);
 
@@ -2712,18 +2724,18 @@ mod tests {
             s.panes[&pane].tabs[0]
         });
 
-        mux.report_agent(surface, AgentState::Working, AgentStateSource::Hook, None).unwrap();
+        mux.report_agent(surface, AgentState::Working, AgentStateSource::Hook, None, None, None).unwrap();
         let events = mux.subscribe();
 
         // Rejected: socket cannot override the existing hook report, so no
         // event should fire.
-        mux.report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None).unwrap();
+        mux.report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None, None, None).unwrap();
         assert!(
             events.try_iter().count() == 0,
             "a rejected report must not emit agent-state-changed"
         );
 
-        mux.report_agent(surface, AgentState::Done, AgentStateSource::Hook, None).unwrap();
+        mux.report_agent(surface, AgentState::Done, AgentStateSource::Hook, None, None, None).unwrap();
         let fired = events.try_iter().any(|e| {
             matches!(e, MuxEvent::AgentStateChanged { report, .. } if report.state == AgentState::Done)
         });
@@ -2985,6 +2997,67 @@ mod tests {
         mux.agent_pattern_remove("myagent").unwrap();
         assert!(mux.agent_pattern_remove("myagent").is_err(), "no longer present");
         assert!(!mux.agent_pattern_list().unwrap().iter().any(|p| p.name == "myagent"));
+    }
+
+    #[test]
+    fn report_agent_stores_message_and_agent_name() {
+        // Issue #75: a report carries an optional agent name (for the
+        // name-addressed verbs) and an optional free-text message (the
+        // "last message" `list-agents` shows). The name outlives interim
+        // reports that omit it; the message reflects the latest report.
+        let mux = test_mux();
+        mux.new_workspace(None, None).unwrap();
+        let surface = mux.with_state(|s| {
+            let pane = s.workspaces[0].screens[0].active_pane;
+            s.panes[&pane].tabs[0]
+        });
+
+        let report = mux
+            .report_agent(
+                surface,
+                AgentState::Working,
+                AgentStateSource::Socket,
+                Some("sess-9".into()),
+                Some("worker-1".into()),
+                Some("compiling".into()),
+            )
+            .unwrap();
+        assert_eq!(report.agent.as_deref(), Some("worker-1"));
+        assert_eq!(report.message.as_deref(), Some("compiling"));
+
+        let agents = mux.list_agents(None, None);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].1.agent.as_deref(), Some("worker-1"));
+        assert_eq!(agents[0].1.message.as_deref(), Some("compiling"));
+
+        // A later report that omits both keeps the pane's name (so
+        // name addressing survives interim reports) but clears the
+        // message (last report wins).
+        let report = mux
+            .report_agent(
+                surface,
+                AgentState::Idle,
+                AgentStateSource::Socket,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(report.message, None);
+        assert_eq!(report.agent.as_deref(), Some("worker-1"));
+
+        // A report carrying a new name replaces the old one.
+        let report = mux
+            .report_agent(
+                surface,
+                AgentState::Done,
+                AgentStateSource::Hook,
+                None,
+                Some("renamed".into()),
+                None,
+            )
+            .unwrap();
+        assert_eq!(report.agent.as_deref(), Some("renamed"));
     }
 
     #[test]
