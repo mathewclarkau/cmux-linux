@@ -407,6 +407,25 @@ impl Terminal {
         Ok(String::from_utf8_lossy(&self.format(opts)?).into_owned())
     }
 
+    /// Plain-text dump of the active screen with soft line-wraps undone
+    /// (the formatter's `unwrap: true` variant of [`Terminal::plain_text`]):
+    /// a row wrapped by the terminal is re-joined into one line. Same
+    /// active-screen-only scope as `plain_text`.
+    pub fn plain_text_unwrapped(&mut self) -> Result<String> {
+        let opts = sys::GhosttyFormatterTerminalOptions {
+            size: std::mem::size_of::<sys::GhosttyFormatterTerminalOptions>(),
+            emit: sys::GHOSTTY_FORMATTER_FORMAT_PLAIN,
+            unwrap: true,
+            trim: true,
+            extra: sys::GhosttyFormatterTerminalExtra {
+                size: std::mem::size_of::<sys::GhosttyFormatterTerminalExtra>(),
+                ..Default::default()
+            },
+            selection: ptr::null(),
+        };
+        Ok(String::from_utf8_lossy(&self.format(opts)?).into_owned())
+    }
+
     /// VT-sequence replay of the terminal's current state: feeding the
     /// returned bytes into a fresh terminal of the same size reproduces
     /// the screen contents, styles, cursor, modes, palette, keyboard

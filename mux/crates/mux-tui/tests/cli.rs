@@ -624,6 +624,112 @@ fn pane_list_json_carries_agent_status_default_unknown() {
 }
 
 #[test]
+fn agent_read_resolves_by_name_and_tails_lines() {
+    // Issue #75 AC3: agent-read addresses a pane by its reported agent
+    // name (or numeric surface id), reads the visible screen, and tails
+    // the last --lines lines (default 40).
+    let server = HeadlessServer::start("agent-read");
+    let workspace = cli(&server, &["new-workspace", "--name", "reader"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let send = cli(
+        &server,
+        &[
+            "send",
+            "--surface",
+            &surface.to_string(),
+            "--text",
+            "printf 'ar-a1\\nar-b2\\nar-c3\\n'\n",
+        ],
+    );
+    assert_success(&send);
+
+    // Wait until the printf OUTPUT rendered (a standalone "ar-c3" line,
+    // not just the echoed command text).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let screen = wait_for_screen(&server, surface, "ar-c3");
+        if screen.lines().any(|l| l.trim() == "ar-c3") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "printf output never rendered; screen: {screen:?}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "idle",
+            "--agent",
+            "reader-1",
+        ],
+    );
+    assert_success(&report);
+
+    // Tail: last 2 lines = the final output line + the prompt; the
+    // echoed command line (with printf/ar-a1/ar-b2) must be cut off.
+    let tail = cli(&server, &["--json", "agent-read", "--target", "reader-1", "--lines", "2"]);
+    assert_success(&tail);
+    let value: serde_json::Value = serde_json::from_slice(&tail.stdout).unwrap();
+    assert_eq!(value["surface"].as_u64(), Some(surface));
+    let text = value["text"].as_str().unwrap();
+    assert!(text.contains("ar-c3"), "tail must include the last output line; got {text:?}");
+    assert!(!text.contains("printf"), "tail must cut the command line; got {text:?}");
+    assert!(!text.contains("ar-a1"), "tail must cut ar-a1; got {text:?}");
+    assert!(!text.contains("ar-b2"), "tail must cut ar-b2; got {text:?}");
+
+    // Default (no --lines) keeps the whole visible screen.
+    let full = cli(&server, &["--json", "agent-read", "--target", "reader-1"]);
+    assert_success(&full);
+    let value: serde_json::Value = serde_json::from_slice(&full.stdout).unwrap();
+    assert!(value["text"].as_str().unwrap().contains("printf"));
+
+    // Numeric surface id targeting works too (no name lookup needed).
+    let by_id = cli(&server, &["--json", "agent-read", "--target", &surface.to_string()]);
+    assert_success(&by_id);
+
+    // Unknown name: exit 1, "unknown agent".
+    let unknown = cli(&server, &["agent-read", "--target", "nosuch-agent"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown agent"));
+
+    // Plain (non-JSON) output prints the text itself.
+    let plain = cli(&server, &["agent-read", "--target", "reader-1", "--lines", "2"]);
+    assert_success(&plain);
+    assert!(String::from_utf8(plain.stdout).unwrap().contains("ar-c3"));
+}
+
+#[test]
+fn agent_read_rejects_unknown_source() {
+    let server = HeadlessServer::start("agent-read-source");
+    let workspace = cli(&server, &["new-workspace", "--name", "reader-src"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "idle", "--agent", "src-1"],
+    );
+    assert_success(&report);
+
+    // Unknown --source is a usage error (exit 2), like `send --shell`.
+    let bad = cli(&server, &["agent-read", "--target", "src-1", "--source", "scrollback"]);
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("source"));
+
+    // All three accepted sources work (recent/recent-unwrapped are
+    // currently the same visible-screen content; see spec commands.md).
+    for source in ["visible", "recent", "recent-unwrapped"] {
+        let ok = cli(&server, &["agent-read", "--target", "src-1", "--source", source]);
+        assert_success(&ok);
+    }
+}
+
+#[test]
 fn list_agents_plain_output_includes_name_and_message() {
     // Issue #75 AC2: the plain `list-agents` line carries the agent name
     // and last message (`-` when absent), alongside state/source/session.

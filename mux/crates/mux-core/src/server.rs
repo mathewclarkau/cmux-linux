@@ -567,6 +567,30 @@ enum Command {
         pane: PaneId,
         branch: String,
     },
+    /// Issue #75 AC3: read a pane's screen by agent name or surface id.
+    /// `source` is one of "visible" (default), "recent", or
+    /// "recent-unwrapped"; `recent`/`recent-unwrapped` are currently the
+    /// same active-screen content as "visible" (scrollback is not yet
+    /// surfaced by the VT formatter — see spec/commands.md), with
+    /// "recent-unwrapped" undoing soft line-wraps. `lines` tails the
+    /// last N lines (default 40).
+    AgentRead {
+        target: String,
+        #[serde(default)]
+        source: Option<String>,
+        #[serde(default)]
+        lines: Option<usize>,
+    },
+    /// Issue #75 AC4: type literal text into a pane addressed by agent
+    /// name or surface id, WITHOUT a trailing CR — the caller submits
+    /// separately (e.g. `send --text "" --send-cr`). Shell sanitisation
+    /// mirrors `send` (`raw` default).
+    AgentSend {
+        target: String,
+        text: String,
+        #[serde(default)]
+        shell: Option<String>,
+    },
     /// Rename THIS daemon's session (issue #63): atomically move its
     /// `.sock`/`.pid` to the new name, update the logical session name,
     /// and best-effort reparent the persisted snapshot file. The listener
@@ -974,6 +998,22 @@ fn spawn_overrides(
 
 fn get_surface(mux: &Mux, id: SurfaceId) -> anyhow::Result<Arc<crate::Surface>> {
     mux.surface(id).ok_or_else(|| anyhow::anyhow!("unknown surface {id}"))
+}
+
+/// Last `n` lines of `text`, ignoring trailing blank rows the VT plain
+/// formatter can leave below the cursor (issue #75's `agent-read --lines`).
+fn tail_lines(text: &str, n: usize) -> String {
+    if n == 0 {
+        return String::new();
+    }
+    let mut lines: Vec<&str> = text.lines().collect();
+    while matches!(lines.last(), Some(last) if last.trim().is_empty()) {
+        lines.pop();
+    }
+    if lines.len() > n {
+        lines.drain(..lines.len() - n);
+    }
+    lines.join("\n")
 }
 
 fn agent_report_json(surface: SurfaceId, report: &crate::AgentReport) -> Value {
@@ -1596,6 +1636,32 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             mux.pane_worktree_remove(pane, &branch)?;
             Ok(json!({}))
         }
+        Command::AgentRead { target, source, lines } => {
+            let surface_id = mux.resolve_agent_target(&target)?;
+            let surface = get_surface(mux, surface_id)?;
+            require_pty(&surface)?;
+            let unwrapped = match source.as_deref().unwrap_or("visible") {
+                "visible" | "recent" => false,
+                "recent-unwrapped" => true,
+                other => anyhow::bail!(
+                    "bad source {other:?} (want \"visible\", \"recent\", or \"recent-unwrapped\")"
+                ),
+            };
+            let text = surface
+                .try_with_terminal(|t| if unwrapped { t.plain_text_unwrapped() } else { t.plain_text() })??;
+            Ok(json!({ "surface": surface_id, "text": tail_lines(&text, lines.unwrap_or(40)) }))
+        }
+        Command::AgentSend { target, text, shell } => {
+            let surface_id = mux.resolve_agent_target(&target)?;
+            let surface = get_surface(mux, surface_id)?;
+            require_pty(&surface)?;
+            // Same write path as `send`, minus the CR: agent-send types
+            // the text and leaves submitting to the caller (AC4).
+            let mode = resolve_shell_mode(shell.as_deref(), surface.child_pid())?;
+            let bytes = sanitise_text(mode, &text).into_bytes();
+            surface.write_bytes(&bytes)?;
+            Ok(json!({ "surface": surface_id }))
+        }
         Command::RenameSession { new_name } => {
             // Issue #63. Scout-plan Q4 ordering: the socket rename is the
             // commit point (only it changes reachability), so the pid moves
@@ -1903,6 +1969,19 @@ mod tests {
         assert_eq!(parse_workspace_color("#1234ab").unwrap(), Rgb { r: 0x12, g: 0x34, b: 0xab });
         assert_eq!(parse_workspace_color("blue").unwrap(), Rgb { r: 0, g: 0, b: 255 });
         assert!(parse_workspace_color("ultraviolet").is_err());
+    }
+
+    #[test]
+    fn tail_lines_drops_trailing_blank_rows_and_tails() {
+        // Issue #75 agent-read --lines: trailing blank rows (the VT plain
+        // formatter can leave empty rows below the cursor) don't consume
+        // the tail budget, and 0 yields empty.
+        let screen = "cmd\nrow-a\nrow-b\nrow-c\n\n \n";
+        assert_eq!(tail_lines(screen, 0), "");
+        assert_eq!(tail_lines(screen, 1), "row-c");
+        assert_eq!(tail_lines(screen, 2), "row-b\nrow-c");
+        assert_eq!(tail_lines(screen, 10), "cmd\nrow-a\nrow-b\nrow-c");
+        assert_eq!(tail_lines("", 5), "");
     }
 
     #[test]

@@ -387,6 +387,14 @@ const VERBS: &[VerbSpec] = &[
         stream: false,
     },
     VerbSpec {
+        // Issue #75 AC3: read an agent's pane by name (or surface id).
+        name: "agent-read",
+        allowed: &["target", "source", "lines"],
+        build: build_agent_read,
+        print: print_read_screen,
+        stream: false,
+    },
+    VerbSpec {
         name: "browser-reload",
         allowed: &["surface"],
         build: build_surface,
@@ -1169,6 +1177,22 @@ fn build_agent_pattern_add(flags: &FlagMap) -> Result<Value, UsageError> {
     flags.insert_optional_string(&mut value, "confidence");
     if let Some(ci) = flags.optional_bool("case-insensitive") {
         value["case_insensitive"] = json!(ci);
+    }
+    Ok(value)
+}
+
+fn build_agent_read(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({ "target": flags.required("target")? });
+    if let Some(source) = flags.optional("source") {
+        if !matches!(source.as_str(), "visible" | "recent" | "recent-unwrapped") {
+            return Err(UsageError(format!(
+                "--source must be one of visible, recent, recent-unwrapped (got {source:?})"
+            )));
+        }
+        value["source"] = json!(source);
+    }
+    if let Some(lines) = flags.optional("lines") {
+        value["lines"] = json!(parse_usize("lines", &lines)?);
     }
     Ok(value)
 }
