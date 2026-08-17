@@ -623,6 +623,106 @@ fn pane_list_json_carries_agent_status_default_unknown() {
 }
 
 #[test]
+fn report_agent_carries_message_and_agent_name() {
+    // Issue #75 AC1: --agent names the pane for the name-addressed verbs
+    // and --message carries free-text context; both round-trip through
+    // `list-agents` JSON and `list-workspaces` per-tab JSON.
+    let server = HeadlessServer::start("agent-name-msg");
+    let workspace = cli(&server, &["new-workspace", "--name", "named"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "working",
+            "--source",
+            "hook",
+            "--agent",
+            "worker-1",
+            "--message",
+            "compiling the kernel",
+        ],
+    );
+    assert_success(&report);
+
+    let list = cli(&server, &["--json", "list-agents"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let agents = value["agents"].as_array().unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["agent"].as_str(), Some("worker-1"));
+    assert_eq!(agents[0]["message"].as_str(), Some("compiling the kernel"));
+    assert!(agents[0]["updated_at_ms"].as_u64().is_some());
+
+    // The per-tab JSON (pane list) carries the message too.
+    let panes = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&panes);
+    let value: serde_json::Value = serde_json::from_slice(&panes.stdout).unwrap();
+    let tab = value["workspaces"]
+        .as_array()
+        .expect("workspaces array")
+        .iter()
+        .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+        .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+        .flat_map(|pane| pane["tabs"].as_array().into_iter().flatten())
+        .find(|tab| tab["surface"].as_u64() == Some(surface))
+        .expect("surface present")
+        .clone();
+    assert_eq!(tab["agent_status"].as_str(), Some("working"));
+    assert_eq!(tab["agent_message"].as_str(), Some("compiling the kernel"));
+}
+
+#[test]
+fn report_agent_defaults_surface_from_env_and_source_to_socket() {
+    // Issue #75 AC1: inside a cmux pane, `cmux report-agent --state X
+    // --message Y` self-reports without knowing its own surface id (from
+    // $CMUX_MUX_SURFACE, which every pane child inherits) and without
+    // --source (defaults to "socket", preserving the hook-authority
+    // model).
+    let server = HeadlessServer::start("agent-env-defaults");
+    let workspace = cli(&server, &["new-workspace", "--name", "env-defaults"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let report = Command::new(bin())
+        .args(["--socket"])
+        .arg(&server.socket)
+        .args(["report-agent", "--state", "idle", "--message", "waiting for work"])
+        .env_remove("CMUX_MUX_SOCKET")
+        .env("CMUX_MUX_SURFACE", surface.to_string())
+        .output()
+        .unwrap();
+    assert_success(&report);
+
+    let list = cli(&server, &["--json", "list-agents"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let agents = value["agents"].as_array().unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["surface"].as_u64(), Some(surface));
+    assert_eq!(agents[0]["source"].as_str(), Some("socket"));
+    assert_eq!(agents[0]["state"].as_str(), Some("idle"));
+    assert_eq!(agents[0]["message"].as_str(), Some("waiting for work"));
+
+    // Without --surface and without $CMUX_MUX_SURFACE the verb errors
+    // (usage exit 2, before any socket traffic).
+    let missing = Command::new(bin())
+        .args(["--socket"])
+        .arg(&server.socket)
+        .args(["report-agent", "--state", "idle"])
+        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SURFACE")
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(2));
+}
+
+#[test]
 fn set_workspace_color_sets_and_clears() {
     let server = HeadlessServer::start("workspace-color");
 

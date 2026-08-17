@@ -304,7 +304,11 @@ const VERBS: &[VerbSpec] = &[
         // "session" collides with the global --session (mux session name)
         // flag, so the agent's own session id is --agent-session on the
         // CLI even though the wire protocol field is plain "session".
-        allowed: &["surface", "state", "source", "agent-session"],
+        // Issue #75: --agent names the pane for the name-addressed verbs,
+        // --message carries free-text context, --surface may be omitted
+        // inside a pane ($CMUX_MUX_SURFACE) and --source defaults to
+        // socket (hooks stay the authority).
+        allowed: &["surface", "state", "source", "agent-session", "agent", "message"],
         build: build_report_agent,
         print: print_empty,
         stream: false,
@@ -1114,13 +1118,35 @@ fn build_scroll_surface(flags: &FlagMap) -> Result<Value, UsageError> {
 }
 
 fn build_report_agent(flags: &FlagMap) -> Result<Value, UsageError> {
+    // Issue #75 AC1: --surface defaults to $CMUX_MUX_SURFACE so a pane's
+    // own child (hook or agent) can self-report without knowing its id.
+    let surface = match flags.optional("surface") {
+        Some(raw) => parse_u64("surface", &raw)?,
+        None => match std::env::var("CMUX_MUX_SURFACE") {
+            Ok(value) => parse_u64("CMUX_MUX_SURFACE", &value)?,
+            Err(_) => {
+                return Err(UsageError(
+                    "--surface is required (or run inside a cmux pane via $CMUX_MUX_SURFACE)"
+                        .into(),
+                ))
+            }
+        },
+    };
+    // --source defaults to "socket": an in-pane self-report keeps the
+    // existing authority model where hook reports still override it.
     let mut value = json!({
-        "surface": flags.required_u64("surface")?,
+        "surface": surface,
         "state": flags.required("state")?,
-        "source": flags.required("source")?,
+        "source": flags.optional("source").unwrap_or_else(|| "socket".into()),
     });
     if let Some(session) = flags.optional("agent-session") {
         value["session"] = json!(session);
+    }
+    if let Some(agent) = flags.optional("agent") {
+        value["agent"] = json!(agent);
+    }
+    if let Some(message) = flags.optional("message") {
+        value["message"] = json!(message);
     }
     Ok(value)
 }
