@@ -18,6 +18,7 @@ pub mod process;
 pub mod remote_pty;
 mod short_id;
 mod surface;
+pub mod worktree;
 
 pub mod agent_detect;
 pub mod layout;
