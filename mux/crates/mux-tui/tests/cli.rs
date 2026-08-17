@@ -561,6 +561,68 @@ fn detect_agent_respects_agent_detection_config_disabled() {
 }
 
 #[test]
+fn pane_list_json_carries_agent_status_default_unknown() {
+    // Issue #75 AC6: every tab in `list-workspaces` JSON carries an
+    // `agent_status` string (default "unknown" for bare shell panes,
+    // never null), plus `agent_message` and `agent_updated_at_ms` once a
+    // report exists. `agent_state`/`agent_session` stay unchanged for
+    // back-compat (nullable, null when no report).
+    let server = HeadlessServer::start("agent-status-json");
+    let workspace = cli(&server, &["new-workspace", "--name", "status-json"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let find_tab = |value: &serde_json::Value| {
+        value["workspaces"]
+            .as_array()
+            .expect("workspaces array")
+            .iter()
+            .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+            .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+            .flat_map(|pane| pane["tabs"].as_array().into_iter().flatten())
+            .find(|tab| tab["surface"].as_u64() == Some(surface))
+            .expect("surface present in list-workspaces")
+            .clone()
+    };
+
+    // Bare pane: status defaults to "unknown", state stays null.
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let tab = find_tab(&value);
+    assert_eq!(tab["agent_status"].as_str(), Some("unknown"));
+    assert_eq!(tab["agent_state"].is_null(), true);
+    assert_eq!(tab["agent_message"].is_null(), true);
+    assert_eq!(tab["agent_updated_at_ms"].is_null(), true);
+
+    // After a report the new fields reflect it (state/session unchanged).
+    // (A report carrying --message lands with issue #75's CLI flags in
+    // `report_agent_carries_message_and_agent_name`; here a message-less
+    // report must leave `agent_message` null, not "".)
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "blocked",
+            "--source",
+            "hook",
+        ],
+    );
+    assert_success(&report);
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let tab = find_tab(&value);
+    assert_eq!(tab["agent_status"].as_str(), Some("blocked"));
+    assert_eq!(tab["agent_state"].as_str(), Some("blocked"));
+    assert_eq!(tab["agent_message"].is_null(), true);
+    assert!(tab["agent_updated_at_ms"].as_u64().is_some(), "updated_at_ms must be a number");
+}
+
+#[test]
 fn set_workspace_color_sets_and_clears() {
     let server = HeadlessServer::start("workspace-color");
 

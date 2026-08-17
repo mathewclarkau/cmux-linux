@@ -80,6 +80,10 @@ pub struct TabView {
     /// cached by `detect-agent`. `None` when never detected or detected
     /// as `unknown` (no badge).
     pub agent_name: Option<String>,
+    /// Last agent message (issue #75): the `--message` free-text from
+    /// the surface's latest applied agent report. The status string
+    /// itself is derivable (`agent_state` or "unknown").
+    pub agent_message: Option<String>,
     pub kind: SurfaceKind,
     pub browser_source: Option<BrowserSource>,
     pub browser_frames_stalled: bool,
@@ -256,6 +260,11 @@ pub fn tree_from_state(state: &State) -> TreeView {
                         .and_then(|s| s.detected_agent())
                         .filter(|d| !d.is_unknown())
                         .map(|d| d.agent),
+                    agent_message: state
+                        .surfaces
+                        .get(sid)
+                        .and_then(|s| s.agent_report())
+                        .and_then(|r| r.message.clone()),
                     kind: state.surfaces.get(sid).map(|s| s.kind()).unwrap_or(SurfaceKind::Pty),
                     browser_source: state.surfaces.get(sid).and_then(|s| s.browser_source()),
                     browser_frames_stalled: state
@@ -379,6 +388,10 @@ fn parse_pane(value: &Value) -> Option<PaneView> {
                                 .map(|s| s.to_string()),
                             agent_name: tab
                                 .get("agent_name")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            agent_message: tab
+                                .get("agent_message")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string()),
                             kind: match tab.get("kind").and_then(|v| v.as_str()) {
@@ -616,5 +629,51 @@ mod tests {
         assert_eq!(pane.active_agent_name(), Some("claude"));
         // A tab that was never detected reads back as None (no badge).
         assert_eq!(pane.tabs[1].agent_name, None);
+    }
+
+    #[test]
+    fn parse_tree_reads_agent_status_fields() {
+        // Issue #75 AC6: `pane_json` additionally emits `agent_status`
+        // (always a string, default "unknown"), `agent_message`, and
+        // `agent_updated_at_ms` per tab. The client keeps deriving the
+        // state from `agent_state` but parses `agent_message` back so a
+        // remote-attach client can surface the last agent message.
+        let data = json!({
+            "workspaces": [{
+                "id": 1, "name": "agents", "active": true,
+                "screens": [{
+                    "id": 2, "short_id": "2", "name": null, "active": true,
+                    "layout": {"type": "leaf", "pane": 3},
+                    "active_pane": 3,
+                    "panes": [{
+                        "id": 3, "short_id": "3", "name": null, "active_tab": 0,
+                        "tabs": [{
+                            "surface": 4, "short_id": "4", "name": null,
+                            "title": "builder", "cwd": "/tmp",
+                            "agent_state": "blocked",
+                            "agent_status": "blocked",
+                            "agent_message": "needs input",
+                            "agent_updated_at_ms": 1710000000000u64,
+                            "kind": "pty", "dead": false
+                        }, {
+                            "surface": 5, "short_id": "5", "name": null,
+                            "title": "shell", "cwd": "/tmp",
+                            "agent_state": null,
+                            "agent_status": "unknown",
+                            "agent_message": null,
+                            "agent_updated_at_ms": null,
+                            "kind": "pty", "dead": false
+                        }]
+                    }]
+                }]
+            }]
+        });
+        let tree = parse_tree(&data);
+        let tabs = &tree.workspaces[0].screens[0].panes[0].tabs;
+        assert_eq!(tabs[0].agent_state, Some(AgentState::Blocked));
+        assert_eq!(tabs[0].agent_message.as_deref(), Some("needs input"));
+        // Bare tab: no state, no message.
+        assert_eq!(tabs[1].agent_state, None);
+        assert_eq!(tabs[1].agent_message, None);
     }
 }

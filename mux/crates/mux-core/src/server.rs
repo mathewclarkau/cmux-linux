@@ -751,6 +751,15 @@ fn pane_json(state: &State, id: PaneId, short_ids: &HashMap<u64, String>) -> Val
                     .filter(|d| !d.is_unknown())
                     .and_then(|d| d.confidence)
                     .map(|c| c.as_str()),
+                // Issue #75 AC6: `agent_status` is always a string
+                // (default "unknown" for bare panes), unlike the
+                // nullable back-compat `agent_state` above.
+                "agent_status": surface
+                    .and_then(|s| s.agent_report())
+                    .map(|r| r.state.as_str())
+                    .unwrap_or("unknown"),
+                "agent_message": surface.and_then(|s| s.agent_report()).and_then(|r| r.message.clone()),
+                "agent_updated_at_ms": surface.and_then(|s| s.agent_report()).map(|r| r.updated_at_ms),
                 "size": surface.map(|s| {
                     let (c, r) = s.size();
                     json!({"cols": c, "rows": r})
