@@ -9,6 +9,7 @@
 //! themselves, which is what makes the backend attachable.
 
 mod browser;
+mod layout_doc;
 mod model;
 mod mux;
 mod notify;
