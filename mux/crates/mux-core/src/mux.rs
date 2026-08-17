@@ -1663,6 +1663,34 @@ reattaching to remote session {session_id} on {host} \
         Some(report)
     }
 
+    /// Resolve an agent-verb target (issue #75): an exact match on a
+    /// surface's reported agent name, else a numeric surface id, else an
+    /// error. Duplicate names are ambiguous and rejected (disambiguate
+    /// with surface ids). Names live as long as the pane has a report.
+    pub fn resolve_agent_target(&self, target: &str) -> anyhow::Result<SurfaceId> {
+        let state = self.state.lock().unwrap();
+        let named: Vec<SurfaceId> = state
+            .surfaces
+            .iter()
+            .filter_map(|(id, s)| {
+                let name = s.agent_report().and_then(|r| r.agent)?;
+                (name == target).then_some(*id)
+            })
+            .collect();
+        match named.as_slice() {
+            [id] => Ok(*id),
+            _ if named.len() > 1 => anyhow::bail!(
+                "ambiguous agent name {target:?} (surfaces {}); address one by surface id",
+                named.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
+            ),
+            _ => match target.parse::<SurfaceId>() {
+                Ok(id) if state.surfaces.contains_key(&id) => Ok(id),
+                Ok(id) => anyhow::bail!("unknown agent {target:?} (surface {id} does not exist)"),
+                Err(_) => anyhow::bail!("unknown agent {target:?}"),
+            },
+        }
+    }
+
     /// Known agent-status records, optionally filtered by surface or state.
     pub fn list_agents(
         &self,
@@ -3058,6 +3086,36 @@ mod tests {
             )
             .unwrap();
         assert_eq!(report.agent.as_deref(), Some("renamed"));
+    }
+
+    #[test]
+    fn resolve_agent_target_exact_ambiguous_and_id_fallback() {
+        let mux = test_mux();
+        mux.new_workspace(Some("a".into()), None).unwrap();
+        mux.new_workspace(Some("b".into()), None).unwrap();
+        let (s1, s2) = mux.with_state(|s| {
+            let t1 = s.panes[&s.workspaces[0].screens[0].active_pane].tabs[0];
+            let t2 = s.panes[&s.workspaces[1].screens[0].active_pane].tabs[0];
+            (t1, t2)
+        });
+
+        // No reports yet: a name lookup fails, but numeric ids work.
+        assert!(mux.resolve_agent_target("worker").is_err());
+        assert_eq!(mux.resolve_agent_target(&s1.to_string()).unwrap(), s1);
+        assert!(mux.resolve_agent_target("999999").is_err());
+
+        // One surface named "worker": exact match wins, id still works.
+        mux.report_agent(s1, AgentState::Working, AgentStateSource::Socket, None, Some("worker".into()), None)
+            .unwrap();
+        assert_eq!(mux.resolve_agent_target("worker").unwrap(), s1);
+        assert_eq!(mux.resolve_agent_target(&s1.to_string()).unwrap(), s1);
+
+        // Two surfaces named "worker": ambiguous, listing both ids.
+        mux.report_agent(s2, AgentState::Working, AgentStateSource::Socket, None, Some("worker".into()), None)
+            .unwrap();
+        let err = mux.resolve_agent_target("worker").unwrap_err().to_string();
+        assert!(err.contains("ambiguous"), "got: {err}");
+        assert!(err.contains(&s1.to_string()) && err.contains(&s2.to_string()), "got: {err}");
     }
 
     #[test]
