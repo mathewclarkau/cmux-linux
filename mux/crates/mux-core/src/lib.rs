@@ -39,14 +39,18 @@ pub use layout::{
     directional_neighbor, layout_screen, split_for_pane_edge, split_sides, LayoutResult, Rect,
     SplitEdge, SplitResize,
 };
+pub use layout_doc::{
+    capture_workspace, sanitize_filename, ApplySummary, LayoutDir, LayoutDocument, LayoutNode,
+    LayoutPane, LayoutScreen, LayoutTab, LayoutWorkspace, LAYOUT_SCHEMA_VERSION,
+};
 pub use model::{IconName, Node, Pane, Screen, State, Workspace};
 pub use mux::{Mux, MuxEvent};
 pub use remote_pty::RemoteSpec;
 pub use short_id::assign_short_ids;
 pub use surface::{
     AgentReport, AgentState, AgentStateSource, AttachFrame, AttachStream, BrowserAttachState,
-    BrowserFrame, BrowserFrameStream, BrowserSource, BrowserStatus, DefaultColors, Surface,
-    SurfaceKind, SurfaceOptions,
+    BrowserFrame, BrowserFrameStream, BrowserSource, BrowserStatus, DefaultColors, SpawnOverrides,
+    Surface, SurfaceKind, SurfaceOptions,
 };
 
 pub use ghostty_vt::Rgb;

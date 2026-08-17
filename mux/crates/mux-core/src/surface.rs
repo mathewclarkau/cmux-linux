@@ -95,6 +95,22 @@ pub struct DefaultColors {
     pub bg: Option<Rgb>,
 }
 
+/// Per-spawn overrides layered onto a [`Mux`](crate::Mux)'s default
+/// [`SurfaceOptions`] (issue #76): the recorded argv/env/cwd a layout
+/// `apply` or a `new-tab --exec` replays. `None`/empty fields keep the
+/// mux default.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpawnOverrides {
+    /// Explicit child argv (e.g. an agent command). `None` = the default
+    /// login shell.
+    pub command: Option<Vec<String>>,
+    /// Extra env entries layered on top of the template (a repeated key
+    /// replaces the template's entry).
+    pub extra_env: Vec<(String, String)>,
+    /// Explicit working directory for the child.
+    pub cwd: Option<String>,
+}
+
 /// Coding-agent lifecycle state for a surface, as reported by `report-agent`
 /// (see `spec/commands.md`). Not detected automatically; a frontend or a
 /// hook script is the source of truth.
@@ -261,6 +277,17 @@ pub struct PtySurface {
     /// `persist.rs` capture enough to reattach the same remote session on
     /// restore, instead of recreating this tab as a local shell.
     remote: Option<crate::remote_pty::RemoteSpec>,
+    /// The argv this surface was spawned with (`None` = the default
+    /// login shell), recorded at spawn time so `layout export` (issue
+    /// #76) can replay the agent command. Reading it back from
+    /// `/proc/<child>` at export time is insufficient: agents typed into
+    /// a shell via `cmux send` are grandchildren of the pty child.
+    spawn_command: Option<Vec<String>>,
+    /// The `extra_env` entries in force at spawn time (post
+    /// socket-env refresh), for the same reason. cmux's auto-injected
+    /// `CMUX_MUX_SOCKET`/`CMUX_SOCKET_PATH` are filtered out again at
+    /// capture time (`layout_doc::capture_tab`).
+    spawn_env: Vec<(String, String)>,
     agent: Mutex<Option<AgentReport>>,
     size: Mutex<(u16, u16)>,
     /// Live output subscribers (attach streams). Guarded by the terminal
@@ -394,6 +421,8 @@ impl Surface {
             pwd: Mutex::new(None),
             initial_cwd,
             remote: opts.remote.clone(),
+            spawn_command: opts.command.clone().filter(|argv| !argv.is_empty()),
+            spawn_env: opts.extra_env.clone(),
             agent: Mutex::new(None),
             size: Mutex::new((opts.cols, opts.rows)),
             taps: Mutex::new(Vec::new()),
@@ -605,6 +634,20 @@ impl Surface {
     /// `cmuxd-remote` session rather than a local shell.
     pub fn remote_spec(&self) -> Option<crate::remote_pty::RemoteSpec> {
         self.as_pty().and_then(|pty| pty.remote.clone())
+    }
+
+    /// The argv this surface was spawned with (`None` for the default
+    /// login shell or a browser surface) — recorded at spawn time for
+    /// layout export (issue #76).
+    pub fn spawn_command(&self) -> Option<Vec<String>> {
+        self.as_pty().and_then(|pty| pty.spawn_command.clone())
+    }
+
+    /// The extra env entries injected at spawn time (`[]` for browser
+    /// surfaces). Includes cmux's auto-injected socket keys; layout
+    /// capture filters those back out.
+    pub fn spawn_env(&self) -> Vec<(String, String)> {
+        self.as_pty().map(|pty| pty.spawn_env.clone()).unwrap_or_default()
     }
 
     pub fn agent_report(&self) -> Option<AgentReport> {

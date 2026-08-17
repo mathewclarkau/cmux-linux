@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex};
 use crate::browser::{self, BrowserBootstrap, BrowserRuntime};
 use crate::model::{IconName, Node, Pane, Screen, State, Workspace};
 use crate::surface::{
-    AgentReport, AgentState, AgentStateSource, DefaultColors, Surface, SurfaceOptions,
+    AgentReport, AgentState, AgentStateSource, DefaultColors, SpawnOverrides, Surface,
+    SurfaceOptions,
 };
 use crate::{PaneId, Rgb, ScreenId, SplitDir, SurfaceId, WorkspaceId};
 
@@ -182,6 +183,7 @@ impl Mux {
         self: &Arc<Self>,
         cwd: Option<String>,
         size: Option<(u16, u16)>,
+        overrides: Option<&SpawnOverrides>,
     ) -> anyhow::Result<Arc<Surface>> {
         let id = self.next_id();
         let mut opts = self.surface_options.clone();
@@ -189,7 +191,22 @@ impl Mux {
         // AC4): existing panes keep what they got at spawn; panes spawned
         // after a rename get the new path.
         self.refresh_socket_env(&mut opts);
-        if cwd.is_some() {
+        // Issue #76: layer explicit spawn overrides (recorded agent argv /
+        // env / cwd from a layout apply or `new-tab --exec`) on top of the
+        // refreshed template. Precedence: override > cwd param > template.
+        if let Some(overrides) = overrides {
+            if let Some(command) = &overrides.command {
+                opts.command = Some(command.clone());
+            }
+            for (key, value) in &overrides.extra_env {
+                opts.extra_env.retain(|(k, _)| k != key);
+                opts.extra_env.push((key.clone(), value.clone()));
+            }
+            if overrides.cwd.is_some() {
+                opts.cwd = overrides.cwd.clone();
+            }
+        }
+        if cwd.is_some() && opts.cwd.is_none() {
             opts.cwd = cwd;
         }
         // Spawn at the final size when the frontend knows it: starting at
@@ -608,7 +625,19 @@ impl Mux {
         name: Option<String>,
         size: Option<(u16, u16)>,
     ) -> anyhow::Result<Arc<Surface>> {
-        let surface = self.spawn_surface(None, size)?;
+        self.new_workspace_with_overrides(name, size, None)
+    }
+
+    /// Issue #76: [`Self::new_workspace`] with explicit spawn overrides
+    /// (the recorded first-tab argv/env/cwd of a layout apply, or a
+    /// socket `new-workspace` carrying `command`/`env`).
+    pub fn new_workspace_with_overrides(
+        self: &Arc<Self>,
+        name: Option<String>,
+        size: Option<(u16, u16)>,
+        overrides: Option<&SpawnOverrides>,
+    ) -> anyhow::Result<Arc<Surface>> {
+        let surface = self.spawn_surface(None, size, overrides)?;
         Ok(self.attach_new_workspace(surface, name))
     }
 
@@ -671,6 +700,17 @@ impl Mux {
         workspace: Option<WorkspaceId>,
         size: Option<(u16, u16)>,
     ) -> anyhow::Result<Arc<Surface>> {
+        self.new_screen_with_overrides(workspace, size, None)
+    }
+
+    /// Issue #76: [`Self::new_screen`] with explicit spawn overrides for
+    /// the new screen's first tab.
+    pub fn new_screen_with_overrides(
+        self: &Arc<Self>,
+        workspace: Option<WorkspaceId>,
+        size: Option<(u16, u16)>,
+        overrides: Option<&SpawnOverrides>,
+    ) -> anyhow::Result<Arc<Surface>> {
         // Validate the target before spawning a child.
         {
             let state = self.state.lock().unwrap();
@@ -680,12 +720,12 @@ impl Mux {
                 }
                 None if state.workspaces.is_empty() => {
                     drop(state);
-                    return self.new_workspace(None, size);
+                    return self.new_workspace_with_overrides(None, size, overrides);
                 }
                 _ => {}
             }
         }
-        let surface = self.spawn_surface(None, size)?;
+        let surface = self.spawn_surface(None, size, overrides)?;
         let (pane_id, pane) = self.make_pane(surface.id);
         let screen_id = self.next_id();
         let attached = {
@@ -731,6 +771,19 @@ impl Mux {
         cwd: Option<String>,
         size: Option<(u16, u16)>,
     ) -> anyhow::Result<Arc<Surface>> {
+        self.new_tab_with_overrides(pane, cwd, size, None)
+    }
+
+    /// Issue #76: [`Self::new_tab`] with explicit spawn overrides — the
+    /// agent-start primitive (`cmux new-tab --exec -- <argv>` on the CLI,
+    /// `command`/`env` fields on the socket command).
+    pub fn new_tab_with_overrides(
+        self: &Arc<Self>,
+        pane: Option<PaneId>,
+        cwd: Option<String>,
+        size: Option<(u16, u16)>,
+        overrides: Option<&SpawnOverrides>,
+    ) -> anyhow::Result<Arc<Surface>> {
         // Resolve and validate the target before spawning a child.
         let target = {
             let state = self.state.lock().unwrap();
@@ -745,13 +798,13 @@ impl Mux {
             }
         };
         let Some(target) = target else {
-            return self.new_workspace(None, size);
+            return self.new_workspace_with_overrides(None, size, overrides);
         };
 
         let cwd = cwd.or_else(|| self.pane_cwd(target));
         // A sibling tab renders at the size the pane already has.
         let size = size.or_else(|| self.pane_size(target));
-        let surface = self.spawn_surface(cwd, size)?;
+        let surface = self.spawn_surface(cwd, size, overrides)?;
         let active_at = self.next_active_at();
         let attached = {
             let mut state = self.state.lock().unwrap();
@@ -927,6 +980,18 @@ impl Mux {
         dir: SplitDir,
         size: Option<(u16, u16)>,
     ) -> anyhow::Result<Arc<Surface>> {
+        self.split_with_overrides(target, dir, size, None)
+    }
+
+    /// Issue #76: [`Self::split`] with explicit spawn overrides for the
+    /// new pane's first tab.
+    pub fn split_with_overrides(
+        self: &Arc<Self>,
+        target: PaneId,
+        dir: SplitDir,
+        size: Option<(u16, u16)>,
+        overrides: Option<&SpawnOverrides>,
+    ) -> anyhow::Result<Arc<Surface>> {
         let cwd = self.pane_cwd(target);
         // Halve the split axis as a fallback estimate; the frontend sends
         // the exact size on its next layout pass.
@@ -936,7 +1001,7 @@ impl Mux {
                 SplitDir::Down => (cols, (rows.saturating_sub(1) / 2).max(1)),
             })
         });
-        let surface = self.spawn_surface(cwd, size)?;
+        let surface = self.spawn_surface(cwd, size, overrides)?;
         let pane_id = self.next_id();
         let active_at = self.next_active_at();
         let mut done = false;
