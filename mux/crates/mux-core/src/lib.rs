@@ -19,6 +19,7 @@ pub mod remote_pty;
 mod short_id;
 mod surface;
 
+pub mod agent_detect;
 pub mod layout;
 pub mod platform;
 pub mod server;
