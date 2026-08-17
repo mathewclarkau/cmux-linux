@@ -1989,14 +1989,19 @@ fn print_agents(data: &Value, out: &mut dyn Write) -> io::Result<()> {
     let Some(agents) = data.get("agents").and_then(Value::as_array) else {
         return Ok(());
     };
+    // Issue #75 AC2: the line ends with the agent name and last message
+    // (`-` when absent), so the message (which may contain spaces) is
+    // always the final, unambiguous column.
     for agent in agents {
         writeln!(
             out,
-            "{} {} {} {}",
+            "{} {} {} {} {} {}",
             agent.get("surface").and_then(Value::as_u64).unwrap_or(0),
             agent.get("state").and_then(Value::as_str).unwrap_or("unknown"),
             agent.get("source").and_then(Value::as_str).unwrap_or("?"),
             agent.get("session").and_then(Value::as_str).unwrap_or("-"),
+            agent.get("agent").and_then(Value::as_str).unwrap_or("-"),
+            agent.get("message").and_then(Value::as_str).unwrap_or("-"),
         )?;
     }
     Ok(())

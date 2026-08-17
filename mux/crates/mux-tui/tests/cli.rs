@@ -276,11 +276,12 @@ fn report_agent_and_list_agents_round_trip() {
         "hook report should still be in effect"
     );
 
-    // Plain (non-JSON) output is one line per agent.
+    // Plain (non-JSON) output is one line per agent:
+    // <surface> <state> <source> <session-or--> <agent-or--> <message-or-->.
     let plain = cli(&server, &["list-agents"]);
     assert_success(&plain);
     let text = String::from_utf8(plain.stdout).unwrap();
-    assert_eq!(text.trim(), format!("{surface} working hook sess-abc"));
+    assert_eq!(text.trim(), format!("{surface} working hook sess-abc - -"));
 
     // Bad state/source are rejected.
     let bad = cli(
@@ -620,6 +621,39 @@ fn pane_list_json_carries_agent_status_default_unknown() {
     assert_eq!(tab["agent_state"].as_str(), Some("blocked"));
     assert_eq!(tab["agent_message"].is_null(), true);
     assert!(tab["agent_updated_at_ms"].as_u64().is_some(), "updated_at_ms must be a number");
+}
+
+#[test]
+fn list_agents_plain_output_includes_name_and_message() {
+    // Issue #75 AC2: the plain `list-agents` line carries the agent name
+    // and last message (`-` when absent), alongside state/source/session.
+    let server = HeadlessServer::start("agents-plain");
+    let workspace = cli(&server, &["new-workspace", "--name", "plain-agents"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "blocked",
+            "--source",
+            "socket",
+            "--agent",
+            "worker-9",
+            "--message",
+            "needs a decision",
+        ],
+    );
+    assert_success(&report);
+
+    let plain = cli(&server, &["list-agents"]);
+    assert_success(&plain);
+    let text = String::from_utf8(plain.stdout).unwrap();
+    assert_eq!(text.trim(), format!("{surface} blocked socket - worker-9 needs a decision"));
 }
 
 #[test]
