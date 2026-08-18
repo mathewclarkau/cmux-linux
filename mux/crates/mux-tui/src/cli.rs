@@ -11,6 +11,7 @@ const REQUEST_ID: u64 = 1;
 type BuildFn = fn(&FlagMap) -> Result<Value, UsageError>;
 type PrintFn = fn(&Value, &mut dyn Write) -> io::Result<()>;
 
+#[derive(Debug)]
 pub struct UsageError(String);
 
 struct CliArgs {
@@ -97,7 +98,7 @@ const VERBS: &[VerbSpec] = &[
         // `cmux new-tab --exec -- <argv...>` is the agent-start primitive
         // that `layout export` records and `layout apply` replays.
         name: "new-tab",
-        allowed: &["pane", "cwd", "cols", "rows", "exec", "env"],
+        allowed: &["pane", "cwd", "cols", "rows", "branch", "label", "prompt-file", "exec", "env"],
         build: build_new_tab,
         print: print_surface,
         stream: false,
@@ -125,7 +126,7 @@ const VERBS: &[VerbSpec] = &[
     },
     VerbSpec {
         name: "split",
-        allowed: &["pane", "dir", "cols", "rows", "exec", "env"],
+        allowed: &["pane", "dir", "cols", "rows", "branch", "label", "exec", "env"],
         build: build_split,
         print: print_surface,
         stream: false,
@@ -825,6 +826,31 @@ fn build_new_tab(flags: &FlagMap) -> Result<Value, UsageError> {
     flags.insert_optional_u64(&mut value, "pane")?;
     flags.insert_optional_string(&mut value, "cwd");
     flags.insert_optional_size(&mut value)?;
+    // Issue #77 AC4: `--branch` creates a worktree and spawns the tab
+    // inside it; `--prompt-file` reads the same keys from a leading
+    // frontmatter block. The two are mutually exclusive so there is
+    // never a precedence question.
+    if let Some(path) = flags.optional("prompt-file") {
+        if flags.optional("branch").is_some() || flags.optional("label").is_some() {
+            return Err(UsageError(
+                "--prompt-file frontmatter cannot be combined with --branch/--label".into(),
+            ));
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|err| UsageError(format!("failed to read --prompt-file {path:?}: {err}")))?;
+        let (branch, label) = parse_prompt_frontmatter(&text)?;
+        if let Some(branch) = branch {
+            value["branch"] = json!(branch);
+        }
+        if let Some(label) = label {
+            value["label"] = json!(label);
+        }
+    } else {
+        flags.insert_optional_string(&mut value, "branch");
+        flags.insert_optional_string(&mut value, "label");
+    }
+    // Issue #76: `--exec -- <argv...>` / `--env K=V,K2=V2` layer on top
+    // of any worktree/frontmatter choices.
     insert_exec_env(flags, &mut value)?;
     Ok(value)
 }
@@ -852,6 +878,55 @@ fn insert_exec_env(flags: &FlagMap, value: &mut Value) -> Result<(), UsageError>
     Ok(())
 }
 
+/// Parse a leading `---` frontmatter block from an agent prompt file
+/// (issue #77 AC4). A file that does not start with `---` has no
+/// frontmatter and yields `(None, None)`. Strict, per the repo rule
+/// that parse errors propagate instead of silently defaulting: the
+/// block must close with a `---` line, only `branch`/`label` keys are
+/// allowed, keys may not repeat, and values must be non-empty.
+fn parse_prompt_frontmatter(
+    text: &str,
+) -> Result<(Option<String>, Option<String>), UsageError> {
+    let mut lines = text.lines();
+    if lines.next().map(|first| first.trim_end_matches('\r')) != Some("---") {
+        return Ok((None, None));
+    }
+    let mut branch: Option<String> = None;
+    let mut label: Option<String> = None;
+    for line in lines {
+        let line = line.trim_end_matches('\r');
+        if line == "---" {
+            return Ok((branch, label));
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            return Err(UsageError(format!(
+                "malformed frontmatter line {line:?}: expected `key: value`"
+            )));
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(UsageError(format!("frontmatter key {key:?} needs a non-empty value")));
+        }
+        let slot = match key.trim() {
+            "branch" => &mut branch,
+            "label" => &mut label,
+            other => {
+                return Err(UsageError(format!(
+                    "unknown frontmatter key {other:?} (want branch or label)"
+                )));
+            }
+        };
+        if slot.is_some() {
+            return Err(UsageError(format!("duplicate frontmatter key {key:?}")));
+        }
+        *slot = Some(value.to_string());
+    }
+    Err(UsageError("unterminated frontmatter block: missing closing `---`".into()))
+}
+
 fn build_new_browser_tab(flags: &FlagMap) -> Result<Value, UsageError> {
     let mut value = json!({ "url": flags.required("url")? });
     flags.insert_optional_u64(&mut value, "pane")?;
@@ -876,6 +951,10 @@ fn build_new_screen(flags: &FlagMap) -> Result<Value, UsageError> {
 fn build_split(flags: &FlagMap) -> Result<Value, UsageError> {
     let mut value = json!({ "pane": flags.required_u64("pane")?, "dir": flags.required_dir()? });
     flags.insert_optional_size(&mut value)?;
+    // Issue #77 AC4: branch/label record a worktree on the new pane.
+    flags.insert_optional_string(&mut value, "branch");
+    flags.insert_optional_string(&mut value, "label");
+    // Issue #76: --exec / --env layer on top.
     insert_exec_env(flags, &mut value)?;
     Ok(value)
 }
@@ -2116,6 +2195,43 @@ mod tests {
     // `CARGO_BIN_EXE_cmux` (unavailable to in-source unit tests of a bin
     // crate) is needed. The accept thread outlives the assertion but dies
     // with the test process; the temp socket is unique per run.
+    // --- prompt-file frontmatter (issue #77 AC4) ---
+
+    #[test]
+    fn prompt_frontmatter_parses_branch_and_label() {
+        let text = "---\nbranch: feat-auth\nlabel: auth pane\n---\nFix the login flow.\n";
+        let (branch, label) = parse_prompt_frontmatter(text).unwrap();
+        assert_eq!(branch.as_deref(), Some("feat-auth"));
+        assert_eq!(label.as_deref(), Some("auth pane"));
+
+        // Only one key, blank lines tolerated, CRLF line endings.
+        let text = "---\r\nbranch: x\r\n\r\n---\r\nbody";
+        let (branch, label) = parse_prompt_frontmatter(text).unwrap();
+        assert_eq!(branch.as_deref(), Some("x"));
+        assert_eq!(label, None);
+    }
+
+    #[test]
+    fn prompt_frontmatter_absent_when_file_has_no_block() {
+        let (branch, label) = parse_prompt_frontmatter("just a prompt body\n").unwrap();
+        assert_eq!(branch, None);
+        assert_eq!(label, None);
+    }
+
+    #[test]
+    fn prompt_frontmatter_rejects_malformed_blocks() {
+        // Unterminated block.
+        assert!(parse_prompt_frontmatter("---\nbranch: x\nbody").is_err());
+        // Unknown key.
+        assert!(parse_prompt_frontmatter("---\ncommit: abc\n---\nb").is_err());
+        // Duplicate key.
+        assert!(parse_prompt_frontmatter("---\nbranch: a\nbranch: b\n---\nb").is_err());
+        // Empty value.
+        assert!(parse_prompt_frontmatter("---\nbranch:\n---\nb").is_err());
+        // Not a key: value line.
+        assert!(parse_prompt_frontmatter("---\nfeat-auth\n---\nb").is_err());
+    }
+
     #[test]
     fn rename_session_at_renames_via_socket() {
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();

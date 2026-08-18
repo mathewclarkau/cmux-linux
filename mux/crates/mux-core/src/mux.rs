@@ -703,7 +703,7 @@ reattaching to remote session {session_id} on {host} \
                         let overrides = layout_tab_overrides(tab)
                             .expect("a pty layout tab always maps to spawn overrides");
                         let surface = self
-                            .new_tab_with_overrides(Some(pane_id), None, None, Some(&overrides))
+                            .new_tab_with_overrides(Some(pane_id), None, None, Some(&overrides), None)
                             .map_err(|e| anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}"))?;
                         if let Some(name) = name {
                             self.rename_surface(surface.id, name.clone());
@@ -761,7 +761,7 @@ reattaching to remote session {session_id} on {host} \
                 let tab0 = &screen.panes[new_index].tabs[0];
                 let overrides = layout_tab_overrides(tab0);
                 let new_surface = self
-                    .split_with_overrides(root, (*dir).into(), None, overrides.as_ref())
+                    .split_with_overrides(root, (*dir).into(), None, overrides.as_ref(), None)
                     .map_err(|e| anyhow::anyhow!("pane {new_index}: {e} (pane not created)"))?;
                 let new_pane = self.with_state(|s| s.pane_of(new_surface.id).unwrap());
                 self.set_ratio(root, (*dir).into(), *ratio);
@@ -1022,18 +1022,23 @@ reattaching to remote session {session_id} on {host} \
         cwd: Option<String>,
         size: Option<(u16, u16)>,
     ) -> anyhow::Result<Arc<Surface>> {
-        self.new_tab_with_overrides(pane, cwd, size, None)
+        // Issue #76 override path, no worktree.
+        self.new_tab_with_overrides(pane, cwd, size, None, None)
     }
 
     /// Issue #76: [`Self::new_tab`] with explicit spawn overrides — the
     /// agent-start primitive (`cmux new-tab --exec -- <argv>` on the CLI,
-    /// `command`/`env` fields on the socket command).
+    /// `command`/`env` fields on the socket command). The optional
+    /// `worktree` is appended to the pane's `Pane.worktrees` registry on
+    /// attach (issue #77 AC4); passing both `overrides` and a `worktree`
+    /// is the `new-tab --exec --branch` composition.
     pub fn new_tab_with_overrides(
         self: &Arc<Self>,
         pane: Option<PaneId>,
         cwd: Option<String>,
         size: Option<(u16, u16)>,
         overrides: Option<&SpawnOverrides>,
+        worktree: Option<&crate::worktree::WorktreeRecord>,
     ) -> anyhow::Result<Arc<Surface>> {
         // Resolve and validate the target before spawning a child.
         let target = {
@@ -1049,6 +1054,22 @@ reattaching to remote session {session_id} on {host} \
             }
         };
         let Some(target) = target else {
+            // Empty session: still spawn inside the worktree if one was
+            // requested, then attach the record to the new pane.
+            if let Some(record) = worktree {
+                let surface = self.spawn_surface(Some(record.path.clone()), size, overrides)?;
+                let attached = self.attach_new_workspace(surface, None);
+                let pane = self.with_state(|s| s.pane_of(attached.id).unwrap());
+                {
+                    let mut state = self.state.lock().unwrap();
+                    if let Some(p) = state.panes.get_mut(&pane) {
+                        p.worktrees.push(record.clone());
+                    }
+                }
+                self.emit(MuxEvent::TreeChanged);
+                self.reap_if_dead(&attached);
+                return Ok(attached);
+            }
             return self.new_workspace_with_overrides(None, size, overrides);
         };
 
@@ -1064,6 +1085,9 @@ reattaching to remote session {session_id} on {host} \
                     pane.tabs.push(surface.id);
                     pane.active_tab = pane.tabs.len() - 1;
                     pane.active_at = active_at;
+                    if let Some(record) = worktree {
+                        pane.worktrees.push(record.clone());
+                    }
                     true
                 }
                 None => {
@@ -1080,6 +1104,52 @@ reattaching to remote session {session_id} on {host} \
         self.emit(MuxEvent::TreeChanged);
         self.reap_if_dead(&surface);
         Ok(surface)
+    }
+
+    /// `new-tab --branch <name>` (issue #77 AC4): create the worktree
+    /// BEFORE the surface spawns and pass its path as the spawn cwd, so
+    /// the pane starts inside the worktree — the agent launched into the
+    /// pane by the existing send flow lands on the branch by
+    /// construction. The record attaches to the pane owning the new tab.
+    pub fn new_tab_with_worktree(
+        self: &Arc<Self>,
+        pane: Option<PaneId>,
+        cwd: Option<String>,
+        size: Option<(u16, u16)>,
+        branch: &str,
+        label: Option<String>,
+    ) -> anyhow::Result<(Arc<Surface>, crate::worktree::WorktreeRecord)> {
+        // Repository to branch from: an explicit cwd wins, else the
+        // target pane's working directory (the active pane, matching
+        // new_tab's None semantics). With neither there is nothing to
+        // resolve a repository from.
+        let target = {
+            let state = self.state.lock().unwrap();
+            match pane {
+                Some(id) => {
+                    if !state.panes.contains_key(&id) {
+                        anyhow::bail!("unknown pane {id}");
+                    }
+                    Some(id)
+                }
+                None => state.active_pane(),
+            }
+        };
+        let start =
+            cwd.clone().or_else(|| target.and_then(|t| self.pane_surface_cwd(t)));
+        let Some(start) = start else {
+            anyhow::bail!("cannot resolve a repository: no --cwd and no pane working directory");
+        };
+        let record = self.create_worktree(&start, branch, label)?;
+        // Force the spawn cwd to the worktree path. Future callers can
+        // build their own overrides for new-tab --exec --branch
+        // composition; this wrapper keeps the simple --branch case to
+        // the canonical AC4 layout.
+        let mut overrides = SpawnOverrides::default();
+        overrides.cwd = Some(record.path.clone());
+        let surface =
+            self.new_tab_with_overrides(pane, cwd, size, Some(&overrides), Some(&record))?;
+        Ok((surface, record))
     }
 
     /// Create a browser tab in a pane (default: the active pane). When
@@ -1215,6 +1285,21 @@ reattaching to remote session {session_id} on {host} \
         surface.and_then(|s| s.pwd())
     }
 
+    /// Best-known working directory of a pane's active tab: the shell's
+    /// live OSC 7 report when available, otherwise the directory the
+    /// surface was spawned in. Unlike [`Self::pane_cwd`] (OSC 7 only),
+    /// this is what worktree resolution needs — a shell that never
+    /// reports OSC 7 (a bare `cat`, a fresh non-reporting shell) still
+    /// resolves its spawn repository (issue #77).
+    fn pane_surface_cwd(&self, pane: PaneId) -> Option<String> {
+        let surface = {
+            let state = self.state.lock().unwrap();
+            let active = state.panes.get(&pane)?.active_surface()?;
+            state.surfaces.get(&active).cloned()
+        };
+        surface.and_then(|s| s.cwd())
+    }
+
     /// Current cell size of a pane's active surface.
     fn pane_size(&self, pane: PaneId) -> Option<(u16, u16)> {
         let state = self.state.lock().unwrap();
@@ -1231,17 +1316,21 @@ reattaching to remote session {session_id} on {host} \
         dir: SplitDir,
         size: Option<(u16, u16)>,
     ) -> anyhow::Result<Arc<Surface>> {
-        self.split_with_overrides(target, dir, size, None)
+        // Issue #76 override path, no worktree.
+        self.split_with_overrides(target, dir, size, None, None)
     }
 
     /// Issue #76: [`Self::split`] with explicit spawn overrides for the
-    /// new pane's first tab.
+    /// new pane's first tab. The optional `worktree` is recorded on the
+    /// new pane so a subsequent `pane worktree list` sees it
+    /// (issue #77 AC4, the `split --exec --branch` composition).
     pub fn split_with_overrides(
         self: &Arc<Self>,
         target: PaneId,
         dir: SplitDir,
         size: Option<(u16, u16)>,
         overrides: Option<&SpawnOverrides>,
+        worktree: Option<&crate::worktree::WorktreeRecord>,
     ) -> anyhow::Result<Arc<Surface>> {
         let cwd = self.pane_cwd(target);
         // Halve the split axis as a fallback estimate; the frontend sends
@@ -1268,17 +1357,18 @@ reattaching to remote session {session_id} on {host} \
                 }
             }
             if done {
-                state.panes.insert(
-                    pane_id,
-                    Pane {
-                        id: pane_id,
-                        name: None,
-                        tabs: vec![surface.id],
-                        active_tab: 0,
-                        active_at,
-                        worktrees: Vec::new(),
-                    },
-                );
+                let mut pane = Pane {
+                    id: pane_id,
+                    name: None,
+                    tabs: vec![surface.id],
+                    active_tab: 0,
+                    active_at,
+                    worktrees: Vec::new(),
+                };
+                if let Some(record) = worktree {
+                    pane.worktrees.push(record.clone());
+                }
+                state.panes.insert(pane_id, pane);
             } else {
                 state.surfaces.remove(&surface.id);
             }
@@ -1290,6 +1380,87 @@ reattaching to remote session {session_id} on {host} \
         self.emit(MuxEvent::TreeChanged);
         self.reap_if_dead(&surface);
         Ok(surface)
+    }
+
+    /// `split --branch <name>` (issue #77 AC4): create the worktree
+    /// before spawning, so the NEW pane starts inside it and owns the
+    /// record.
+    pub fn split_with_worktree(
+        self: &Arc<Self>,
+        target: PaneId,
+        dir: SplitDir,
+        size: Option<(u16, u16)>,
+        branch: &str,
+        label: Option<String>,
+    ) -> anyhow::Result<(Arc<Surface>, crate::worktree::WorktreeRecord)> {
+        let start = self.pane_surface_cwd(target).ok_or_else(|| {
+            anyhow::anyhow!("pane {target} has no working directory to resolve a repository from")
+        })?;
+        let record = self.create_worktree(&start, branch, label)?;
+        let mut overrides = SpawnOverrides::default();
+        overrides.cwd = Some(record.path.clone());
+        let surface =
+            self.split_with_overrides(target, dir, size, Some(&overrides), Some(&record))?;
+        Ok((surface, record))
+    }
+
+    fn split_impl(
+        self: &Arc<Self>,
+        target: PaneId,
+        dir: SplitDir,
+        size: Option<(u16, u16)>,
+        spawn_cwd: Option<String>,
+        overrides: Option<&SpawnOverrides>,
+        worktree: Option<&crate::worktree::WorktreeRecord>,
+    ) -> anyhow::Result<(Arc<Surface>, Option<crate::worktree::WorktreeRecord>)> {
+        let cwd = spawn_cwd.or_else(|| self.pane_cwd(target));
+        // Halve the split axis as a fallback estimate; the frontend sends
+        // the exact size on its next layout pass.
+        let size = size.or_else(|| {
+            self.pane_size(target).map(|(cols, rows)| match dir {
+                SplitDir::Right => ((cols.saturating_sub(1) / 2).max(1), rows),
+                SplitDir::Down => (cols, (rows.saturating_sub(1) / 2).max(1)),
+            })
+        });
+        let surface = self.spawn_surface(cwd, size, overrides)?;
+        let pane_id = self.next_id();
+        let active_at = self.next_active_at();
+        let mut done = false;
+        {
+            let mut state = self.state.lock().unwrap();
+            'outer: for ws in state.workspaces.iter_mut() {
+                for screen in ws.screens.iter_mut() {
+                    if screen.root.split_leaf(target, dir, pane_id) {
+                        screen.active_pane = pane_id;
+                        done = true;
+                        break 'outer;
+                    }
+                }
+            }
+            if done {
+                let mut pane = Pane {
+                    id: pane_id,
+                    name: None,
+                    tabs: vec![surface.id],
+                    active_tab: 0,
+                    active_at,
+                    worktrees: Vec::new(),
+                };
+                if let Some(record) = worktree {
+                    pane.worktrees.push(record.clone());
+                }
+                state.panes.insert(pane_id, pane);
+            } else {
+                state.surfaces.remove(&surface.id);
+            }
+        }
+        if !done {
+            surface.kill();
+            anyhow::bail!("pane {target} not found");
+        }
+        self.emit(MuxEvent::TreeChanged);
+        self.reap_if_dead(&surface);
+        Ok((surface, worktree.cloned()))
     }
 
     /// Close one tab. When it was the pane's last tab, the pane collapses
@@ -2944,6 +3115,79 @@ mod tests {
         // Removing again finds no record.
         assert!(mux.pane_worktree_remove(pane, "feat-auth").is_err());
         let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn new_tab_with_branch_spawns_inside_worktree() {
+        let mux = test_mux();
+        let repo = temp_git_repo("new-tab-branch");
+        let s1 = mux.new_workspace(None, None).unwrap();
+        let pane = mux.with_state(|s| s.pane_of(s1.id).unwrap());
+
+        // AC4: the worktree is created BEFORE the surface spawns, so the
+        // pane starts inside it by construction.
+        let (surface, record) = mux
+            .new_tab_with_worktree(
+                Some(pane),
+                Some(repo.to_string_lossy().into_owned()),
+                None,
+                "feat-nt",
+                Some("auth".into()),
+            )
+            .unwrap();
+        assert_eq!(surface.cwd().as_deref(), Some(record.path.as_str()));
+        assert!(std::path::PathBuf::from(&record.path).is_dir());
+        let list = mux.pane_worktree_list(pane).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].branch, "feat-nt");
+        assert_eq!(list[0].label.as_deref(), Some("auth"));
+
+        // Split with a branch: the NEW pane starts inside its worktree
+        // and owns the record.
+        let (s2, rec2) =
+            mux.split_with_worktree(pane, SplitDir::Right, None, "feat-split", None).unwrap();
+        assert_eq!(s2.cwd().as_deref(), Some(rec2.path.as_str()));
+        let p2 = mux.with_state(|s| s.pane_of(s2.id).unwrap());
+        assert_eq!(mux.pane_worktree_list(p2).unwrap().len(), 1);
+        assert_eq!(
+            mux.pane_worktree_list(pane).unwrap().len(),
+            1,
+            "the split's worktree record belongs to the new pane"
+        );
+
+        // Empty session: a branch-aware new tab creates the workspace
+        // with its pane already inside the worktree.
+        let mux2 = test_mux();
+        let (s3, rec3) = mux2
+            .new_tab_with_worktree(
+                None,
+                Some(repo.to_string_lossy().into_owned()),
+                None,
+                "feat-empty",
+                None,
+            )
+            .unwrap();
+        assert_eq!(s3.cwd().as_deref(), Some(rec3.path.as_str()));
+        let p3 = mux2.with_state(|s| s.pane_of(s3.id).unwrap());
+        assert_eq!(mux2.pane_worktree_list(p3).unwrap().len(), 1);
+
+        // A worktree failure propagates and spawns nothing.
+        let before = mux2.with_state(|s| s.surfaces.len());
+        assert!(mux2
+            .new_tab_with_worktree(
+                None,
+                Some(repo.to_string_lossy().into_owned()),
+                None,
+                "bad..name",
+                None
+            )
+            .is_err());
+        assert_eq!(mux2.with_state(|s| s.surfaces.len()), before);
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&record.path);
+        let _ = std::fs::remove_dir_all(&rec2.path);
+        let _ = std::fs::remove_dir_all(&rec3.path);
     }
 
     #[test]

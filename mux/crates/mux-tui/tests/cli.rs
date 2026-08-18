@@ -1390,6 +1390,172 @@ fn worktree_pattern_config_overrides_default() {
 }
 
 #[test]
+fn new_tab_with_prompt_file_frontmatter_creates_worktree() {
+    // AC4: a `branch:` frontmatter in the agent prompt makes the pane
+    // auto-create its worktree BEFORE the tab spawns (the pane starts
+    // inside it; the agent is then launched by the existing send flow).
+    let server = HeadlessServer::start("wt-frontmatter");
+    let repo = git_repo_fixture("wt-frontmatter-repo");
+    let workspace = cli(&server, &["new-workspace", "--name", "wt-fm"]);
+    assert_success(&workspace);
+    let surface: u64 =
+        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let pane = pane_of_surface(&server, surface);
+
+    let prompt = server.dir.join("prompt.md");
+    fs::write(&prompt, "---\nbranch: feat-auth\nlabel: auth\n---\nFix the login flow.\n")
+        .unwrap();
+    let tab = cli(
+        &server,
+        &[
+            "--json",
+            "new-tab",
+            "--cwd",
+            repo.to_str().unwrap(),
+            "--prompt-file",
+            prompt.to_str().unwrap(),
+        ],
+    );
+    assert_success(&tab);
+    let value: serde_json::Value = serde_json::from_slice(&tab.stdout).unwrap();
+    let new_surface = value["surface"].as_u64().unwrap();
+
+    // The pane owns the record and its active tab started INSIDE the
+    // worktree (cwd == record path; OSC 7 never fires under /bin/sh).
+    let listed = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
+    );
+    assert_success(&listed);
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let worktrees = value["worktrees"].as_array().unwrap();
+    assert_eq!(worktrees.len(), 1);
+    assert_eq!(worktrees[0]["branch"].as_str(), Some("feat-auth"));
+    assert_eq!(worktrees[0]["label"].as_str(), Some("auth"));
+    let wt_path = worktrees[0]["path"].as_str().unwrap().to_string();
+    assert!(PathBuf::from(&wt_path).is_dir());
+
+    let tree = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&tree);
+    let value: serde_json::Value = serde_json::from_slice(&tree.stdout).unwrap();
+    let tab_json = value["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+        .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+        .flat_map(|pane| pane["tabs"].as_array().into_iter().flatten())
+        .find(|tab| tab["surface"].as_u64() == Some(new_surface))
+        .expect("new tab in list-workspaces");
+    assert_eq!(
+        tab_json["cwd"].as_str().map(|s| s.to_string()),
+        Some(wt_path),
+        "the pane must start inside the worktree (AC4)"
+    );
+
+    // A bare --branch works too, and --prompt-file without frontmatter
+    // is just a normal new-tab (no worktree).
+    let plain = cli(
+        &server,
+        &["--json", "new-tab", "--cwd", repo.to_str().unwrap(), "--branch", "feat-docs"],
+    );
+    assert_success(&plain);
+    let no_fm_prompt = server.dir.join("plain.md");
+    fs::write(&no_fm_prompt, "no frontmatter here\n").unwrap();
+    let no_fm = cli(
+        &server,
+        &[
+            "--json",
+            "new-tab",
+            "--cwd",
+            repo.to_str().unwrap(),
+            "--prompt-file",
+            no_fm_prompt.to_str().unwrap(),
+        ],
+    );
+    assert_success(&no_fm);
+    let listed = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
+    );
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let branches: Vec<&str> = value["worktrees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|w| w["branch"].as_str())
+        .collect();
+    assert_eq!(branches, vec!["feat-auth", "feat-docs"], "no-frontmatter adds no worktree");
+
+    // Malformed frontmatter is a client-side usage error (exit 2), and
+    // combining --prompt-file with --branch is refused.
+    let bad_prompt = server.dir.join("bad.md");
+    fs::write(&bad_prompt, "---\ncommit: abc\n---\nbody\n").unwrap();
+    let bad = cli(
+        &server,
+        &["new-tab", "--prompt-file", bad_prompt.to_str().unwrap()],
+    );
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("frontmatter"));
+
+    let conflict = cli(
+        &server,
+        &[
+            "new-tab",
+            "--prompt-file",
+            prompt.to_str().unwrap(),
+            "--branch",
+            "feat-x",
+        ],
+    );
+    assert_eq!(conflict.status.code(), Some(2));
+
+    // split --branch gives the NEW pane its own worktree.
+    let split = cli(
+        &server,
+        &[
+            "--json",
+            "split",
+            "--pane",
+            &pane.to_string(),
+            "--dir",
+            "right",
+            "--branch",
+            "feat-split",
+        ],
+    );
+    assert_success(&split);
+    let value: serde_json::Value = serde_json::from_slice(&split.stdout).unwrap();
+    let split_surface = value["surface"].as_u64().unwrap();
+    let split_pane = pane_of_surface(&server, split_surface);
+    let listed = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &split_pane.to_string()],
+    );
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(
+        value["worktrees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|w| w["branch"].as_str())
+            .collect::<Vec<_>>(),
+        vec!["feat-split"]
+    );
+
+    // Best-effort cleanup: drop the three worktrees (siblings of repo).
+    let listed = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
+    );
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    for w in value["worktrees"].as_array().unwrap() {
+        let _ = fs::remove_dir_all(w["path"].as_str().unwrap());
+    }
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
 fn pane_worktree_three_word_alias_matches_flat_verb() {
     let server = HeadlessServer::start("pane-worktree-alias");
     let repo = git_repo_fixture("pane-worktree-alias-repo");

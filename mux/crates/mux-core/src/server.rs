@@ -232,6 +232,15 @@ enum Command {
         /// string → string.
         #[serde(default)]
         env: Option<BTreeMap<String, String>>,
+        /// Create a git worktree for this branch and spawn the tab
+        /// inside it (issue #77 AC4). Takes precedence over `cwd` for
+        /// the spawn directory; `cwd` (or the pane's working dir) still
+        /// selects the repository to branch from.
+        #[serde(default)]
+        branch: Option<String>,
+        /// Display label for the worktree record (issue #77 AC1).
+        #[serde(default)]
+        label: Option<String>,
     },
     NewBrowserTab {
         url: String,
@@ -354,6 +363,12 @@ enum Command {
         command: Option<Vec<String>>,
         #[serde(default)]
         env: Option<BTreeMap<String, String>>,
+        /// Create a git worktree for this branch and spawn the new pane
+        /// inside it (issue #77 AC4).
+        #[serde(default)]
+        branch: Option<String>,
+        #[serde(default)]
+        label: Option<String>,
     },
     SetRatio {
         pane: PaneId,
@@ -1171,9 +1186,16 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                 "data": base64::engine::general_purpose::STANDARD.encode(replay),
             }))
         }
-        Command::NewTab { pane, cwd, cols, rows, command, env } => {
-            let overrides = spawn_overrides(command, env);
-            let surface = mux.new_tab_with_overrides(pane, cwd, cols.zip(rows), overrides.as_ref())?;
+        Command::NewTab { pane, cwd, cols, rows, command, env, branch, label } => {
+            // Issue #77 AC4: when `branch` is set, create the worktree
+            // BEFORE spawning so the pane starts inside the branch by
+            // construction. Issue #76 overrides layer on top.
+            let surface = if let Some(branch) = branch {
+                mux.new_tab_with_worktree(pane, cwd, cols.zip(rows), &branch, label)?.0
+            } else {
+                let overrides = spawn_overrides(command, env);
+                mux.new_tab_with_overrides(pane, cwd, cols.zip(rows), overrides.as_ref(), None)?
+            };
             Ok(json!({ "surface": surface.id }))
         }
         Command::NewBrowserTab { url, pane, cols, rows } => {
@@ -1290,14 +1312,18 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             let surface = mux.new_screen(workspace, cols.zip(rows))?;
             Ok(json!({ "surface": surface.id }))
         }
-        Command::Split { pane, dir, cols, rows, command, env } => {
+        Command::Split { pane, dir, cols, rows, command, env, branch, label } => {
             let dir = match dir.as_str() {
                 "right" => SplitDir::Right,
                 "down" => SplitDir::Down,
                 other => anyhow::bail!("bad dir {other:?} (want \"right\" or \"down\")"),
             };
-            let overrides = spawn_overrides(command, env);
-            let surface = mux.split_with_overrides(pane, dir, cols.zip(rows), overrides.as_ref())?;
+            let surface = if let Some(branch) = branch {
+                mux.split_with_worktree(pane, dir, cols.zip(rows), &branch, label)?.0
+            } else {
+                let overrides = spawn_overrides(command, env);
+                mux.split_with_overrides(pane, dir, cols.zip(rows), overrides.as_ref(), None)?
+            };
             Ok(json!({ "surface": surface.id }))
         }
         Command::SetRatio { pane, dir, ratio } => {
