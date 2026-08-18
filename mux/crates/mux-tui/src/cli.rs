@@ -316,6 +316,47 @@ const VERBS: &[VerbSpec] = &[
         stream: false,
     },
     VerbSpec {
+        // Issue #78 AC1: ambient detection on one surface (the repo's
+        // flat-verb spelling of the issue's `pane detect-agent --pane`;
+        // a pane's content lives on its active tab surface, which is
+        // what every sibling verb — read-screen, report-agent — targets).
+        name: "detect-agent",
+        allowed: &["surface"],
+        build: build_surface,
+        print: print_detect_agent,
+        stream: false,
+    },
+    VerbSpec {
+        // Issue #78 AC2: the issue's `agent detect-batch`, spelled to
+        // mirror the plural `list-agents` convention.
+        name: "detect-agents",
+        allowed: &[],
+        build: build_no_args,
+        print: print_detect_agents,
+        stream: false,
+    },
+    VerbSpec {
+        name: "agent-pattern-add",
+        allowed: &["name", "pattern", "kind", "confidence", "case-insensitive"],
+        build: build_agent_pattern_add,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
+        name: "agent-pattern-list",
+        allowed: &[],
+        build: build_no_args,
+        print: print_agent_patterns,
+        stream: false,
+    },
+    VerbSpec {
+        name: "agent-pattern-remove",
+        allowed: &["name"],
+        build: build_agent_pattern_remove,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
         name: "browser-reload",
         allowed: &["surface"],
         build: build_surface,
@@ -936,6 +977,25 @@ fn build_list_agents(flags: &FlagMap) -> Result<Value, UsageError> {
     flags.insert_optional_u64(&mut value, "surface")?;
     flags.insert_optional_string(&mut value, "state");
     Ok(value)
+}
+
+/// Issue #78 AC4: `agent-pattern-add`. Patterns are substring/glob (`*`
+/// wildcard), not regex — validated server-side against the same values.
+fn build_agent_pattern_add(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({
+        "name": flags.required("name")?,
+        "pattern": flags.required("pattern")?,
+    });
+    flags.insert_optional_string(&mut value, "kind");
+    flags.insert_optional_string(&mut value, "confidence");
+    if let Some(ci) = flags.optional_bool("case-insensitive") {
+        value["case_insensitive"] = json!(ci);
+    }
+    Ok(value)
+}
+
+fn build_agent_pattern_remove(flags: &FlagMap) -> Result<Value, UsageError> {
+    Ok(json!({ "name": flags.required("name")? }))
 }
 
 fn build_kill_session(flags: &FlagMap) -> Result<Value, UsageError> {
@@ -1758,6 +1818,52 @@ fn print_agents(data: &Value, out: &mut dyn Write) -> io::Result<()> {
             agent.get("state").and_then(Value::as_str).unwrap_or("unknown"),
             agent.get("source").and_then(Value::as_str).unwrap_or("?"),
             agent.get("session").and_then(Value::as_str).unwrap_or("-"),
+        )?;
+    }
+    Ok(())
+}
+
+/// Issue #78 AC1 human output: `<surface> <agent> <confidence> <evidence>`.
+fn print_detect_agent(data: &Value, out: &mut dyn Write) -> io::Result<()> {
+    writeln!(
+        out,
+        "{} {} {} {}",
+        data.get("surface").and_then(Value::as_u64).unwrap_or(0),
+        data.get("agent").and_then(Value::as_str).unwrap_or("unknown"),
+        data.get("confidence").and_then(Value::as_str).unwrap_or("none"),
+        data.get("evidence").and_then(Value::as_str).unwrap_or(""),
+    )
+}
+
+/// Issue #78 AC2 human output: `<surface> <agent>` rows, id-ordered.
+fn print_detect_agents(data: &Value, out: &mut dyn Write) -> io::Result<()> {
+    let Some(agents) = data.get("agents").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let mut rows: Vec<(u64, &str)> = agents
+        .iter()
+        .filter_map(|(id, agent)| Some((id.parse::<u64>().ok()?, agent.as_str()?)))
+        .collect();
+    rows.sort_unstable();
+    for (id, agent) in rows {
+        writeln!(out, "{id} {agent}")?;
+    }
+    Ok(())
+}
+
+/// Issue #78 AC4 human output: `<name> <kind> <confidence> <pattern>`.
+fn print_agent_patterns(data: &Value, out: &mut dyn Write) -> io::Result<()> {
+    let Some(patterns) = data.get("patterns").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for pattern in patterns {
+        writeln!(
+            out,
+            "{} {} {} {}",
+            pattern.get("name").and_then(Value::as_str).unwrap_or("?"),
+            pattern.get("kind").and_then(Value::as_str).unwrap_or("?"),
+            pattern.get("confidence").and_then(Value::as_str).unwrap_or("?"),
+            pattern.get("pattern").and_then(Value::as_str).unwrap_or(""),
         )?;
     }
     Ok(())
