@@ -53,17 +53,35 @@ pub fn is_alive(pid: u32) -> bool {
 pub fn direct_children(pid: u32) -> Vec<u32> {
     #[cfg(target_os = "linux")]
     {
-        let path = format!("/proc/{pid}/task/{pid}/children");
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            let kids: Vec<u32> = contents
-                .split_whitespace()
-                .filter_map(|s| s.parse::<u32>().ok())
-                .collect();
-            // Some kernels expose the file but leave it empty for the
-            // calling process in certain contexts; fall through to a scan.
-            if !kids.is_empty() {
-                return kids;
+        // The per-task `children` file lists children of THAT task
+        // (thread), not of the thread group: children forked by worker
+        // threads (every socket-driven pane spawn in the daemon) and
+        // orphans reparented to a subreaper appear on other tasks'
+        // lists, never the leader's. Reading only the leader's file
+        // returned a stale partial list whenever any such child existed,
+        // silently skipping the rest (and making the
+        // `direct_children_finds_spawned_child` test order-dependent).
+        // Union every task's list instead; fall back to a full /proc
+        // scan when no list is readable at all.
+        let task_dir = format!("/proc/{pid}/task");
+        let mut kids: Vec<u32> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&task_dir) {
+            for entry in entries.flatten() {
+                let children_path = entry.path().join("children");
+                let Ok(contents) = std::fs::read_to_string(&children_path) else {
+                    continue;
+                };
+                for token in contents.split_whitespace() {
+                    if let Ok(child) = token.parse::<u32>() {
+                        if !kids.contains(&child) {
+                            kids.push(child);
+                        }
+                    }
+                }
             }
+        }
+        if !kids.is_empty() {
+            return kids;
         }
         scan_proc_for_children(pid)
     }
