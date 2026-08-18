@@ -276,11 +276,12 @@ fn report_agent_and_list_agents_round_trip() {
         "hook report should still be in effect"
     );
 
-    // Plain (non-JSON) output is one line per agent.
+    // Plain (non-JSON) output is one line per agent:
+    // <surface> <state> <source> <session-or--> <agent-or--> <message-or-->.
     let plain = cli(&server, &["list-agents"]);
     assert_success(&plain);
     let text = String::from_utf8(plain.stdout).unwrap();
-    assert_eq!(text.trim(), format!("{surface} working hook sess-abc"));
+    assert_eq!(text.trim(), format!("{surface} working hook sess-abc - -"));
 
     // Bad state/source are rejected.
     let bad = cli(
@@ -558,6 +559,693 @@ fn detect_agent_respects_agent_detection_config_disabled() {
     let batch = cli(&server, &["detect-agents"]);
     assert_eq!(batch.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&batch.stderr).contains("agent detection disabled"));
+}
+
+#[test]
+fn pane_list_json_carries_agent_status_default_unknown() {
+    // Issue #75 AC6: every tab in `list-workspaces` JSON carries an
+    // `agent_status` string (default "unknown" for bare shell panes,
+    // never null), plus `agent_message` and `agent_updated_at_ms` once a
+    // report exists. `agent_state`/`agent_session` stay unchanged for
+    // back-compat (nullable, null when no report).
+    let server = HeadlessServer::start("agent-status-json");
+    let workspace = cli(&server, &["new-workspace", "--name", "status-json"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let find_tab = |value: &serde_json::Value| {
+        value["workspaces"]
+            .as_array()
+            .expect("workspaces array")
+            .iter()
+            .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+            .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+            .flat_map(|pane| pane["tabs"].as_array().into_iter().flatten())
+            .find(|tab| tab["surface"].as_u64() == Some(surface))
+            .expect("surface present in list-workspaces")
+            .clone()
+    };
+
+    // Bare pane: status defaults to "unknown", state stays null.
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let tab = find_tab(&value);
+    assert_eq!(tab["agent_status"].as_str(), Some("unknown"));
+    assert_eq!(tab["agent_state"].is_null(), true);
+    assert_eq!(tab["agent_message"].is_null(), true);
+    assert_eq!(tab["agent_updated_at_ms"].is_null(), true);
+
+    // After a report the new fields reflect it (state/session unchanged).
+    // (A report carrying --message lands with issue #75's CLI flags in
+    // `report_agent_carries_message_and_agent_name`; here a message-less
+    // report must leave `agent_message` null, not "".)
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "blocked",
+            "--source",
+            "hook",
+        ],
+    );
+    assert_success(&report);
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let tab = find_tab(&value);
+    assert_eq!(tab["agent_status"].as_str(), Some("blocked"));
+    assert_eq!(tab["agent_state"].as_str(), Some("blocked"));
+    assert_eq!(tab["agent_message"].is_null(), true);
+    assert!(tab["agent_updated_at_ms"].as_u64().is_some(), "updated_at_ms must be a number");
+}
+
+#[test]
+fn agent_read_resolves_by_name_and_tails_lines() {
+    // Issue #75 AC3: agent-read addresses a pane by its reported agent
+    // name (or numeric surface id), reads the visible screen, and tails
+    // the last --lines lines (default 40).
+    let server = HeadlessServer::start("agent-read");
+    let workspace = cli(&server, &["new-workspace", "--name", "reader"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let send = cli(
+        &server,
+        &[
+            "send",
+            "--surface",
+            &surface.to_string(),
+            "--text",
+            "printf 'ar-a1\\nar-b2\\nar-c3\\n'\n",
+        ],
+    );
+    assert_success(&send);
+
+    // Wait until the printf OUTPUT rendered (a standalone "ar-c3" line,
+    // not just the echoed command text).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let screen = wait_for_screen(&server, surface, "ar-c3");
+        if screen.lines().any(|l| l.trim() == "ar-c3") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "printf output never rendered; screen: {screen:?}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "idle",
+            "--agent",
+            "reader-1",
+        ],
+    );
+    assert_success(&report);
+
+    // Tail: last 2 lines = the final output line + the prompt; the
+    // echoed command line (with printf/ar-a1/ar-b2) must be cut off.
+    let tail = cli(&server, &["--json", "agent-read", "--target", "reader-1", "--lines", "2"]);
+    assert_success(&tail);
+    let value: serde_json::Value = serde_json::from_slice(&tail.stdout).unwrap();
+    assert_eq!(value["surface"].as_u64(), Some(surface));
+    let text = value["text"].as_str().unwrap();
+    assert!(text.contains("ar-c3"), "tail must include the last output line; got {text:?}");
+    assert!(!text.contains("printf"), "tail must cut the command line; got {text:?}");
+    assert!(!text.contains("ar-a1"), "tail must cut ar-a1; got {text:?}");
+    assert!(!text.contains("ar-b2"), "tail must cut ar-b2; got {text:?}");
+
+    // Default (no --lines) keeps the whole visible screen.
+    let full = cli(&server, &["--json", "agent-read", "--target", "reader-1"]);
+    assert_success(&full);
+    let value: serde_json::Value = serde_json::from_slice(&full.stdout).unwrap();
+    assert!(value["text"].as_str().unwrap().contains("printf"));
+
+    // Numeric surface id targeting works too (no name lookup needed).
+    let by_id = cli(&server, &["--json", "agent-read", "--target", &surface.to_string()]);
+    assert_success(&by_id);
+
+    // Unknown name: exit 1, "unknown agent".
+    let unknown = cli(&server, &["agent-read", "--target", "nosuch-agent"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown agent"));
+
+    // Plain (non-JSON) output prints the text itself.
+    let plain = cli(&server, &["agent-read", "--target", "reader-1", "--lines", "2"]);
+    assert_success(&plain);
+    assert!(String::from_utf8(plain.stdout).unwrap().contains("ar-c3"));
+}
+
+#[test]
+fn agent_read_rejects_unknown_source() {
+    let server = HeadlessServer::start("agent-read-source");
+    let workspace = cli(&server, &["new-workspace", "--name", "reader-src"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "idle", "--agent", "src-1"],
+    );
+    assert_success(&report);
+
+    // Unknown --source is a usage error (exit 2), like `send --shell`.
+    let bad = cli(&server, &["agent-read", "--target", "src-1", "--source", "scrollback"]);
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("source"));
+
+    // All three accepted sources work (recent/recent-unwrapped are
+    // currently the same visible-screen content; see spec commands.md).
+    for source in ["visible", "recent", "recent-unwrapped"] {
+        let ok = cli(&server, &["agent-read", "--target", "src-1", "--source", source]);
+        assert_success(&ok);
+    }
+}
+
+#[test]
+fn wait_agent_status_returns_immediately_when_state_matches() {
+    // Issue #75 AC5 (Herdr semantics): if the agent already reports the
+    // target state, the wait returns immediately with the matched state.
+    let server = HeadlessServer::start("wait-immediate");
+    let workspace = cli(&server, &["new-workspace", "--name", "waiter-1"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "done",
+            "--agent",
+            "finisher",
+            "--message",
+            "all green",
+        ],
+    );
+    assert_success(&report);
+
+    let wait = cli(
+        &server,
+        &["--json", "wait-agent-status", "--target", "finisher", "--status", "done", "--timeout", "5000"],
+    );
+    assert_success(&wait);
+    let value: serde_json::Value = serde_json::from_slice(&wait.stdout).unwrap();
+    assert_eq!(value["matched"].as_bool(), Some(true));
+    assert_eq!(value["state"].as_str(), Some("done"));
+    assert_eq!(value["agent"].as_str(), Some("finisher"));
+    assert_eq!(value["message"].as_str(), Some("all green"));
+    assert!(value["elapsed_ms"].as_u64().unwrap() < 2000, "should be immediate");
+    assert!(value["text"].as_str().is_some(), "payload includes the read payload");
+}
+
+#[test]
+fn wait_agent_status_blocks_until_report() {
+    // Issue #75 AC5: the wait blocks on the server until a later report
+    // flips the agent into the target state (this is the orchestrator's
+    // "block on finished instead of polling screens" primitive).
+    let server = HeadlessServer::start("wait-blocks");
+    let workspace = cli(&server, &["new-workspace", "--name", "waiter-2"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "working", "--agent", "worker-w"],
+    );
+    assert_success(&report);
+
+    let socket = server.socket.clone();
+    let surface_str = surface.to_string();
+    let reporter = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        let _ = Command::new(bin())
+            .args(["--socket"])
+            .arg(&socket)
+            .args(["report-agent", "--surface", &surface_str, "--state", "idle", "--source", "hook"])
+            .env_remove("CMUX_MUX_SOCKET")
+            .output()
+            .unwrap();
+    });
+
+    let started = Instant::now();
+    let wait = cli(
+        &server,
+        &["--json", "wait-agent-status", "--target", "worker-w", "--status", "idle", "--timeout", "15000"],
+    );
+    let wall = started.elapsed();
+    assert_success(&wait);
+    let value: serde_json::Value = serde_json::from_slice(&wait.stdout).unwrap();
+    assert_eq!(value["state"].as_str(), Some("idle"));
+    assert!(
+        value["elapsed_ms"].as_u64().unwrap() >= 250,
+        "must have actually waited; elapsed_ms={}",
+        value["elapsed_ms"]
+    );
+    assert!(wall >= Duration::from_millis(350), "wall {wall:?}");
+    reporter.join().unwrap();
+}
+
+#[test]
+fn wait_agent_status_times_out_exit_1() {
+    let server = HeadlessServer::start("wait-timeout");
+    let workspace = cli(&server, &["new-workspace", "--name", "waiter-3"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "working", "--agent", "stuck-w"],
+    );
+    assert_success(&report);
+
+    let started = Instant::now();
+    let wait = cli(
+        &server,
+        &["wait-agent-status", "--target", "stuck-w", "--status", "done", "--timeout", "200"],
+    );
+    assert_eq!(wait.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&wait.stderr);
+    assert!(stderr.contains("timeout"), "stderr: {stderr}");
+    assert!(started.elapsed() < Duration::from_secs(5), "must fail at its own timeout, not a transport one");
+}
+
+#[test]
+fn wait_agent_status_zero_timeout_is_single_check() {
+    // timeout 0 = one immediate check, no blocking (mirrors wait-for).
+    let server = HeadlessServer::start("wait-zero");
+    let workspace = cli(&server, &["new-workspace", "--name", "waiter-4"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "idle", "--agent", "zero-w"],
+    );
+    assert_success(&report);
+
+    // Matching state: immediate success even with a zero budget.
+    let hit = cli(
+        &server,
+        &["--json", "wait-agent-status", "--target", "zero-w", "--status", "idle", "--timeout", "0"],
+    );
+    assert_success(&hit);
+
+    // Non-matching state: immediate timeout, exit 1, well under a second.
+    let started = Instant::now();
+    let miss = cli(
+        &server,
+        &["wait-agent-status", "--target", "zero-w", "--status", "done", "--timeout", "0"],
+    );
+    assert_eq!(miss.status.code(), Some(1));
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[test]
+fn agent_target_resolution_rejects_unknown_and_ambiguous_names() {
+    // Issue #75: every name-addressed verb resolves its --target the
+    // same way: exact name, else numeric surface id, else error — and a
+    // name reported by two panes is ambiguous across all of them.
+    let server = HeadlessServer::start("agent-targets");
+    let ws1 = cli(&server, &["new-workspace", "--name", "dup-a"]);
+    assert_success(&ws1);
+    let s1 = String::from_utf8(ws1.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let ws2 = cli(&server, &["new-workspace", "--name", "dup-b"]);
+    assert_success(&ws2);
+    let s2 = String::from_utf8(ws2.stdout).unwrap().trim().parse::<u64>().unwrap();
+    for surface in [s1, s2] {
+        let report = cli(
+            &server,
+            &["report-agent", "--surface", &surface.to_string(), "--state", "idle", "--agent", "dupe"],
+        );
+        assert_success(&report);
+    }
+
+    let read = cli(&server, &["agent-read", "--target", "dupe"]);
+    assert_eq!(read.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&read.stderr).contains("ambiguous"));
+
+    let send = cli(&server, &["agent-send", "--target", "dupe", "--text", "hi"]);
+    assert_eq!(send.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&send.stderr).contains("ambiguous"));
+
+    let wait = cli(
+        &server,
+        &["wait-agent-status", "--target", "dupe", "--status", "idle", "--timeout", "0"],
+    );
+    assert_eq!(wait.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&wait.stderr).contains("ambiguous"));
+
+    let unknown = cli(&server, &["agent-read", "--target", "nobody-here"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown agent"));
+
+    // Numeric ids disambiguate.
+    let by_id = cli(&server, &["agent-read", "--target", &s1.to_string()]);
+    assert_success(&by_id);
+}
+
+#[test]
+fn agent_read_recent_source_includes_scrollback() {
+    // Review F1 / issue #75 AC3: --source recent must include SCROLLBACK
+    // content, not just the viewport (the same visibility-source
+    // semantics as pane read). Push a unique early marker out of the
+    // 24-row viewport with 60 filler lines; `visible` can't see it but
+    // `recent` (and its unwrapped variant) must.
+    let server = HeadlessServer::start("agent-read-recent");
+    let workspace = cli(&server, &["new-workspace", "--name", "recent-reader"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let send = cli(
+        &server,
+        &[
+            "send",
+            "--surface",
+            &surface.to_string(),
+            "--text",
+            "printf 'TOPMARK-7Q\\n'; i=0; while [ $i -lt 60 ]; do echo xFILLERx; i=$((i+1)); done; printf 'BOTMARK-7Q\\n'\n",
+        ],
+    );
+    assert_success(&send);
+
+    // Wait until the BOTMARK OUTPUT line rendered (a standalone line, not
+    // the echoed command text). VT processing is sequential, so by then
+    // TOPMARK + all filler rows are already in the terminal state.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let screen = wait_for_screen(&server, surface, "BOTMARK-7Q");
+        if screen.lines().any(|l| l.trim() == "BOTMARK-7Q") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "loop output never rendered; screen: {screen:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    // Sanity: the early marker (and the echoed command) really did scroll
+    // out of the 24-row viewport.
+    let visible = cli(
+        &server,
+        &["--json", "agent-read", "--target", &surface.to_string(), "--source", "visible", "--lines", "200"],
+    );
+    assert_success(&visible);
+    let visible_text =
+        serde_json::from_slice::<serde_json::Value>(&visible.stdout).unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    assert!(
+        !visible_text.contains("TOPMARK-7Q"),
+        "sanity failed: marker still visible in the viewport; got {visible_text:?}"
+    );
+    assert!(visible_text.contains("xFILLERx"), "viewport tail should still show filler");
+
+    // recent: scrollback + viewport, unwrapped variant included.
+    for source in ["recent", "recent-unwrapped"] {
+        let read = cli(
+            &server,
+            &["--json", "agent-read", "--target", &surface.to_string(), "--source", source, "--lines", "300"],
+        );
+        assert_success(&read);
+        let value = serde_json::from_slice::<serde_json::Value>(&read.stdout).unwrap();
+        let text = value["text"].as_str().unwrap();
+        assert!(
+            text.contains("TOPMARK-7Q"),
+            "--source {source} must reach scrollback (marker missing); got:\n{text}"
+        );
+        assert!(text.contains("xFILLERx"), "--source {source} must include the filler; got:\n{text}");
+        assert!(text.contains("BOTMARK-7Q"), "--source {source} must include the tail; got:\n{text}");
+    }
+
+    // And --lines still tails the recent window (top marker cut off).
+    let tail = cli(
+        &server,
+        &["--json", "agent-read", "--target", &surface.to_string(), "--source", "recent", "--lines", "3"],
+    );
+    assert_success(&tail);
+    let value = serde_json::from_slice::<serde_json::Value>(&tail.stdout).unwrap();
+    let text = value["text"].as_str().unwrap();
+    assert!(text.contains("BOTMARK-7Q"), "tail must keep the last line; got:\n{text}");
+    assert!(!text.contains("TOPMARK-7Q"), "tail must cut the top marker; got:\n{text}");
+}
+
+#[test]
+fn wait_agent_status_errors_when_surface_exits() {
+    // Review F2: an agent pane that dies while being waited on should
+    // error early ("exited while waiting"), not burn the full --timeout.
+    let server = HeadlessServer::start("wait-exit");
+    let workspace = cli(&server, &["new-workspace", "--name", "waiter-exit"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "working",
+            "--agent",
+            "exiter",
+        ],
+    );
+    assert_success(&report);
+
+    let socket = server.socket.clone();
+    let waiter = std::thread::spawn(move || {
+        Command::new(bin())
+            .args(["--socket"])
+            .arg(&socket)
+            .args([
+                "wait-agent-status",
+                "--target",
+                "exiter",
+                "--status",
+                "done",
+                "--timeout",
+                "10000",
+            ])
+            .env_remove("CMUX_MUX_SOCKET")
+            .output()
+            .unwrap()
+    });
+
+    // Let the wait subscribe server-side, then kill the pane.
+    std::thread::sleep(Duration::from_millis(400));
+    let close = cli(&server, &["close-surface", "--surface", &surface.to_string()]);
+    assert_success(&close);
+
+    let started = Instant::now();
+    let output = waiter.join().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a dead pane must fail the wait, not hang to the timeout; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("exited while waiting"),
+        "expected an early exit error, got: {stderr}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(8),
+        "must error well before the 10s timeout; took {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn agent_send_types_text_without_enter() {
+    // Issue #75 AC4: agent-send types literal text into the named pane
+    // WITHOUT submitting it — the command must sit on the prompt
+    // unexecuted until the caller sends Enter separately.
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let marker_file =
+        std::path::PathBuf::from(format!("/tmp/cmux-agent-send-{stamp}-{}", std::process::id()));
+    let marker_file = marker_file.to_str().unwrap().to_string();
+    let typed = format!("touch {marker_file}");
+
+    let server = HeadlessServer::start("agent-send");
+    let workspace = cli(&server, &["new-workspace", "--name", "sender"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let report = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "working", "--agent", "sender-1"],
+    );
+    assert_success(&report);
+
+    let sent = cli(&server, &["agent-send", "--target", "sender-1", "--text", &typed]);
+    assert_success(&sent);
+
+    // The text is echoed on the pane (typed) ...
+    let screen = wait_for_screen(&server, surface, &typed);
+    assert!(screen.contains(&typed), "typed text must appear on the pane; got {screen:?}");
+    // ... but NOT executed: no Enter was sent, so the file must not exist.
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        !std::path::Path::new(&marker_file).exists(),
+        "agent-send must not submit the text (no Enter)"
+    );
+
+    // Submitting separately (plain `send` + CR) runs it — proving the
+    // no-Enter assertion above was about the missing CR, not the text.
+    let submit = cli(&server, &["send", "--surface", &surface.to_string(), "--text", "", "--send-cr", "1"]);
+    assert_success(&submit);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !std::path::Path::new(&marker_file).exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(std::path::Path::new(&marker_file).exists(), "CR submit should execute the typed command");
+    let _ = std::fs::remove_file(&marker_file);
+
+    // Unknown target: exit 1.
+    let unknown = cli(&server, &["agent-send", "--target", "ghost-agent", "--text", "hi"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown agent"));
+}
+
+#[test]
+fn list_agents_plain_output_includes_name_and_message() {
+    // Issue #75 AC2: the plain `list-agents` line carries the agent name
+    // and last message (`-` when absent), alongside state/source/session.
+    let server = HeadlessServer::start("agents-plain");
+    let workspace = cli(&server, &["new-workspace", "--name", "plain-agents"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "blocked",
+            "--source",
+            "socket",
+            "--agent",
+            "worker-9",
+            "--message",
+            "needs a decision",
+        ],
+    );
+    assert_success(&report);
+
+    let plain = cli(&server, &["list-agents"]);
+    assert_success(&plain);
+    let text = String::from_utf8(plain.stdout).unwrap();
+    assert_eq!(text.trim(), format!("{surface} blocked socket - worker-9 needs a decision"));
+}
+
+#[test]
+fn report_agent_carries_message_and_agent_name() {
+    // Issue #75 AC1: --agent names the pane for the name-addressed verbs
+    // and --message carries free-text context; both round-trip through
+    // `list-agents` JSON and `list-workspaces` per-tab JSON.
+    let server = HeadlessServer::start("agent-name-msg");
+    let workspace = cli(&server, &["new-workspace", "--name", "named"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "working",
+            "--source",
+            "hook",
+            "--agent",
+            "worker-1",
+            "--message",
+            "compiling the kernel",
+        ],
+    );
+    assert_success(&report);
+
+    let list = cli(&server, &["--json", "list-agents"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let agents = value["agents"].as_array().unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["agent"].as_str(), Some("worker-1"));
+    assert_eq!(agents[0]["message"].as_str(), Some("compiling the kernel"));
+    assert!(agents[0]["updated_at_ms"].as_u64().is_some());
+
+    // The per-tab JSON (pane list) carries the message too.
+    let panes = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&panes);
+    let value: serde_json::Value = serde_json::from_slice(&panes.stdout).unwrap();
+    let tab = value["workspaces"]
+        .as_array()
+        .expect("workspaces array")
+        .iter()
+        .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+        .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+        .flat_map(|pane| pane["tabs"].as_array().into_iter().flatten())
+        .find(|tab| tab["surface"].as_u64() == Some(surface))
+        .expect("surface present")
+        .clone();
+    assert_eq!(tab["agent_status"].as_str(), Some("working"));
+    assert_eq!(tab["agent_message"].as_str(), Some("compiling the kernel"));
+}
+
+#[test]
+fn report_agent_defaults_surface_from_env_and_source_to_socket() {
+    // Issue #75 AC1: inside a cmux pane, `cmux report-agent --state X
+    // --message Y` self-reports without knowing its own surface id (from
+    // $CMUX_MUX_SURFACE, which every pane child inherits) and without
+    // --source (defaults to "socket", preserving the hook-authority
+    // model).
+    let server = HeadlessServer::start("agent-env-defaults");
+    let workspace = cli(&server, &["new-workspace", "--name", "env-defaults"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let report = Command::new(bin())
+        .args(["--socket"])
+        .arg(&server.socket)
+        .args(["report-agent", "--state", "idle", "--message", "waiting for work"])
+        .env_remove("CMUX_MUX_SOCKET")
+        .env("CMUX_MUX_SURFACE", surface.to_string())
+        .output()
+        .unwrap();
+    assert_success(&report);
+
+    let list = cli(&server, &["--json", "list-agents"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let agents = value["agents"].as_array().unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["surface"].as_u64(), Some(surface));
+    assert_eq!(agents[0]["source"].as_str(), Some("socket"));
+    assert_eq!(agents[0]["state"].as_str(), Some("idle"));
+    assert_eq!(agents[0]["message"].as_str(), Some("waiting for work"));
+
+    // Without --surface and without $CMUX_MUX_SURFACE the verb errors
+    // (usage exit 2, before any socket traffic).
+    let missing = Command::new(bin())
+        .args(["--socket"])
+        .arg(&server.socket)
+        .args(["report-agent", "--state", "idle"])
+        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SURFACE")
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(2));
 }
 
 #[test]

@@ -326,6 +326,7 @@ impl Terminal {
             sys::GHOSTTY_POINT_TAG_VIEWPORT,
             (start.0, start.1 as u64),
             (end.0, end.1 as u64),
+            true,
         )
     }
 
@@ -347,7 +348,7 @@ impl Terminal {
         if (end.1, end.0) < (start.1, start.0) {
             return None;
         }
-        self.selection_text_with_tag(sys::GHOSTTY_POINT_TAG_SCREEN, start, end)
+        self.selection_text_with_tag(sys::GHOSTTY_POINT_TAG_SCREEN, start, end, true)
     }
 
     fn selection_text_with_tag(
@@ -355,6 +356,7 @@ impl Terminal {
         tag: sys::GhosttyPointTag,
         start: (u16, u64),
         end: (u16, u64),
+        unwrap: bool,
     ) -> Option<String> {
         let grid_ref = |x: u16, y: u64| -> Option<sys::GhosttyGridRef> {
             let y = u32::try_from(y).ok()?;
@@ -378,7 +380,7 @@ impl Terminal {
         let opts = sys::GhosttyFormatterTerminalOptions {
             size: std::mem::size_of::<sys::GhosttyFormatterTerminalOptions>(),
             emit: sys::GHOSTTY_FORMATTER_FORMAT_PLAIN,
-            unwrap: true,
+            unwrap,
             trim: true,
             extra: sys::GhosttyFormatterTerminalExtra {
                 size: std::mem::size_of::<sys::GhosttyFormatterTerminalExtra>(),
@@ -405,6 +407,72 @@ impl Terminal {
             selection: ptr::null(),
         };
         Ok(String::from_utf8_lossy(&self.format(opts)?).into_owned())
+    }
+
+    /// Plain-text dump of the active screen with soft line-wraps undone
+    /// (the formatter's `unwrap: true` variant of [`Terminal::plain_text`]):
+    /// a row wrapped by the terminal is re-joined into one line. Same
+    /// active-screen-only scope as `plain_text`.
+    pub fn plain_text_unwrapped(&mut self) -> Result<String> {
+        let opts = sys::GhosttyFormatterTerminalOptions {
+            size: std::mem::size_of::<sys::GhosttyFormatterTerminalOptions>(),
+            emit: sys::GHOSTTY_FORMATTER_FORMAT_PLAIN,
+            unwrap: true,
+            trim: true,
+            extra: sys::GhosttyFormatterTerminalExtra {
+                size: std::mem::size_of::<sys::GhosttyFormatterTerminalExtra>(),
+                ..Default::default()
+            },
+            selection: ptr::null(),
+        };
+        Ok(String::from_utf8_lossy(&self.format(opts)?).into_owned())
+    }
+
+    /// Plain text of the VIEWPORT rows only (issue #75's `--source
+    /// visible`), via the PLAIN selection formatter over the whole
+    /// visible area in viewport coordinates (so a scrolled-up viewport
+    /// still reads what is on screen). `unwrap: true` re-joins
+    /// soft-wrapped rows. Falls back to the full plain dump if the
+    /// selection formatter refuses the range.
+    pub fn plain_text_viewport(&mut self, unwrap: bool) -> Result<String> {
+        let last_col = self.cols().saturating_sub(1);
+        let last_row = u64::from(self.rows().saturating_sub(1));
+        match self.selection_text_with_tag(
+            sys::GHOSTTY_POINT_TAG_VIEWPORT,
+            (0, 0),
+            (last_col, last_row),
+            unwrap,
+        ) {
+            Some(text) => Ok(text),
+            None if unwrap => self.plain_text_unwrapped(),
+            None => self.plain_text(),
+        }
+    }
+
+    /// Plain text of the last `lines` rows of the screen, SCROLLBACK
+    /// included (issue #75's `--source recent`): a bottom-anchored
+    /// window in absolute screen coordinates spanning at least the
+    /// viewport and at most the requested row budget. `unwrap: true`
+    /// re-joins soft-wrapped rows. Falls back to the full plain dump
+    /// when the terminal reports no scrollbar geometry (or the
+    /// formatter refuses the range).
+    pub fn plain_text_recent(&mut self, lines: usize, unwrap: bool) -> Result<String> {
+        if let Some(sb) = self.scrollbar() {
+            if sb.len <= sb.total && sb.total > 0 {
+                let span = (lines.max(sb.len as usize) as u64).min(sb.total);
+                let start = sb.total - span;
+                let last_col = self.cols().saturating_sub(1);
+                if let Some(text) = self.selection_text_with_tag(
+                    sys::GHOSTTY_POINT_TAG_SCREEN,
+                    (0, start),
+                    (last_col, sb.total - 1),
+                    unwrap,
+                ) {
+                    return Ok(text);
+                }
+            }
+        }
+        if unwrap { self.plain_text_unwrapped() } else { self.plain_text() }
     }
 
     /// VT-sequence replay of the terminal's current state: feeding the

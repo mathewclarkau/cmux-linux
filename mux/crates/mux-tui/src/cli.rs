@@ -304,7 +304,11 @@ const VERBS: &[VerbSpec] = &[
         // "session" collides with the global --session (mux session name)
         // flag, so the agent's own session id is --agent-session on the
         // CLI even though the wire protocol field is plain "session".
-        allowed: &["surface", "state", "source", "agent-session"],
+        // Issue #75: --agent names the pane for the name-addressed verbs,
+        // --message carries free-text context, --surface may be omitted
+        // inside a pane ($CMUX_MUX_SURFACE) and --source defaults to
+        // socket (hooks stay the authority).
+        allowed: &["surface", "state", "source", "agent-session", "agent", "message"],
         build: build_report_agent,
         print: print_empty,
         stream: false,
@@ -380,6 +384,33 @@ const VERBS: &[VerbSpec] = &[
         allowed: &["name"],
         build: build_agent_pattern_remove,
         print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
+        // Issue #75 AC3: read an agent's pane by name (or surface id).
+        name: "agent-read",
+        allowed: &["target", "source", "lines"],
+        build: build_agent_read,
+        print: print_read_screen,
+        stream: false,
+    },
+    VerbSpec {
+        // Issue #75 AC4: type literal text into an agent's pane by name
+        // (or surface id) WITHOUT Enter — submit separately.
+        name: "agent-send",
+        allowed: &["target", "text", "shell"],
+        build: build_agent_send,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
+        // Issue #75 AC5: block until the named agent reaches --status.
+        // The response can take up to --timeout ms, so run_command
+        // overrides this verb's socket read timeout.
+        name: "wait-agent-status",
+        allowed: &["target", "status", "timeout"],
+        build: build_wait_agent_status,
+        print: print_read_screen,
         stream: false,
     },
     VerbSpec {
@@ -611,6 +642,17 @@ fn run_command(args: CliArgs) -> i32 {
     };
     if args.verb.stream {
         let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+    } else if args.verb.name == "wait-agent-status" {
+        // The wait verb's reply legitimately arrives after up to
+        // `--timeout` ms, so give the socket read that budget plus
+        // slack instead of the default 10 s (which would kill every
+        // longer wait with a spurious "transport error").
+        let wait_ms = args
+            .flags
+            .optional("timeout")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(wait_ms.saturating_add(5_000))));
     } else {
         let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     }
@@ -1114,13 +1156,35 @@ fn build_scroll_surface(flags: &FlagMap) -> Result<Value, UsageError> {
 }
 
 fn build_report_agent(flags: &FlagMap) -> Result<Value, UsageError> {
+    // Issue #75 AC1: --surface defaults to $CMUX_MUX_SURFACE so a pane's
+    // own child (hook or agent) can self-report without knowing its id.
+    let surface = match flags.optional("surface") {
+        Some(raw) => parse_u64("surface", &raw)?,
+        None => match std::env::var("CMUX_MUX_SURFACE") {
+            Ok(value) => parse_u64("CMUX_MUX_SURFACE", &value)?,
+            Err(_) => {
+                return Err(UsageError(
+                    "--surface is required (or run inside a cmux pane via $CMUX_MUX_SURFACE)"
+                        .into(),
+                ))
+            }
+        },
+    };
+    // --source defaults to "socket": an in-pane self-report keeps the
+    // existing authority model where hook reports still override it.
     let mut value = json!({
-        "surface": flags.required_u64("surface")?,
+        "surface": surface,
         "state": flags.required("state")?,
-        "source": flags.required("source")?,
+        "source": flags.optional("source").unwrap_or_else(|| "socket".into()),
     });
     if let Some(session) = flags.optional("agent-session") {
         value["session"] = json!(session);
+    }
+    if let Some(agent) = flags.optional("agent") {
+        value["agent"] = json!(agent);
+    }
+    if let Some(message) = flags.optional("message") {
+        value["message"] = json!(message);
     }
     Ok(value)
 }
@@ -1147,8 +1211,56 @@ fn build_agent_pattern_add(flags: &FlagMap) -> Result<Value, UsageError> {
     Ok(value)
 }
 
+fn build_agent_read(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({ "target": flags.required("target")? });
+    if let Some(source) = flags.optional("source") {
+        if !matches!(source.as_str(), "visible" | "recent" | "recent-unwrapped") {
+            return Err(UsageError(format!(
+                "--source must be one of visible, recent, recent-unwrapped (got {source:?})"
+            )));
+        }
+        value["source"] = json!(source);
+    }
+    if let Some(lines) = flags.optional("lines") {
+        value["lines"] = json!(parse_usize("lines", &lines)?);
+    }
+    Ok(value)
+}
+
 fn build_agent_pattern_remove(flags: &FlagMap) -> Result<Value, UsageError> {
     Ok(json!({ "name": flags.required("name")? }))
+}
+
+fn build_agent_send(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({
+        "target": flags.required("target")?,
+        "text": flags.required("text")?,
+    });
+    if let Some(shell) = flags.optional("shell") {
+        if !matches!(shell.as_str(), "auto" | "fish" | "bash" | "zsh" | "sh" | "nu" | "raw") {
+            return Err(UsageError(format!(
+                "--shell must be one of auto, fish, bash, zsh, sh, nu, raw (got {shell:?})"
+            )));
+        }
+        value["shell"] = json!(shell);
+    }
+    Ok(value)
+}
+
+fn build_wait_agent_status(flags: &FlagMap) -> Result<Value, UsageError> {
+    // Issue #75 AC5: the issue's flag names (--status / --timeout in ms),
+    // mapped onto the wire's state/timeout_ms.
+    let status = flags.required("status")?;
+    if !matches!(status.as_str(), "idle" | "working" | "blocked" | "done" | "unknown") {
+        return Err(UsageError(format!(
+            "--status must be one of idle, working, blocked, done, unknown (got {status:?})"
+        )));
+    }
+    Ok(json!({
+        "target": flags.required("target")?,
+        "state": status,
+        "timeout_ms": parse_u64("timeout", &flags.required("timeout")?)?,
+    }))
 }
 
 fn build_kill_session(flags: &FlagMap) -> Result<Value, UsageError> {
@@ -1963,14 +2075,19 @@ fn print_agents(data: &Value, out: &mut dyn Write) -> io::Result<()> {
     let Some(agents) = data.get("agents").and_then(Value::as_array) else {
         return Ok(());
     };
+    // Issue #75 AC2: the line ends with the agent name and last message
+    // (`-` when absent), so the message (which may contain spaces) is
+    // always the final, unambiguous column.
     for agent in agents {
         writeln!(
             out,
-            "{} {} {} {}",
+            "{} {} {} {} {} {}",
             agent.get("surface").and_then(Value::as_u64).unwrap_or(0),
             agent.get("state").and_then(Value::as_str).unwrap_or("unknown"),
             agent.get("source").and_then(Value::as_str).unwrap_or("?"),
             agent.get("session").and_then(Value::as_str).unwrap_or("-"),
+            agent.get("agent").and_then(Value::as_str).unwrap_or("-"),
+            agent.get("message").and_then(Value::as_str).unwrap_or("-"),
         )?;
     }
     Ok(())

@@ -493,12 +493,21 @@ enum Command {
     },
     /// Reports agent state for a surface. Hook-sourced reports have
     /// authority over socket-sourced ones (see `spec/commands.md`).
+    /// `source` defaults to `"socket"` when absent (issue #75: in-pane
+    /// self-reports omit it; hooks pass `"hook"` explicitly and keep
+    /// their override authority). `agent` names the pane for the
+    /// name-addressed verbs; `message` is free-text context (issue #75).
     ReportAgent {
         surface: SurfaceId,
         state: String,
-        source: String,
+        #[serde(default)]
+        source: Option<String>,
         #[serde(default)]
         session: Option<String>,
+        #[serde(default)]
+        agent: Option<String>,
+        #[serde(default)]
+        message: Option<String>,
     },
     /// Known agent-status records, optionally filtered.
     ListAgents {
@@ -557,6 +566,45 @@ enum Command {
     PaneWorktreeRemove {
         pane: PaneId,
         branch: String,
+    },
+    /// Issue #75 AC3: read a pane's screen by agent name or surface id.
+    /// `source` is one of "visible" (default), "recent", or
+    /// "recent-unwrapped"; `recent`/`recent-unwrapped` are currently the
+    /// same active-screen content as "visible" (scrollback is not yet
+    /// surfaced by the VT formatter — see spec/commands.md), with
+    /// "recent-unwrapped" undoing soft line-wraps. `lines` tails the
+    /// last N lines (default 40).
+    /// Issue #75 AC3: read a pane by agent name or surface id. `source`
+    /// is one of "visible" (default: viewport rows only), "recent" (a
+    /// bottom-anchored window including scrollback), or
+    /// "recent-unwrapped" (the recent window with soft line-wraps
+    /// re-joined). `lines` tails the last N lines (default 40).
+    AgentRead {
+        target: String,
+        #[serde(default)]
+        source: Option<String>,
+        #[serde(default)]
+        lines: Option<usize>,
+    },
+    /// Issue #75 AC4: type literal text into a pane addressed by agent
+    /// name or surface id, WITHOUT a trailing CR — the caller submits
+    /// separately (e.g. `send --text "" --send-cr`). Shell sanitisation
+    /// mirrors `send` (`raw` default).
+    AgentSend {
+        target: String,
+        text: String,
+        #[serde(default)]
+        shell: Option<String>,
+    },
+    /// Issue #75 AC5: block until the target agent's reported state
+    /// reaches `state`, or `timeout_ms` elapses (exit-1 timeout error).
+    /// `timeout_ms: 0` is a single immediate check. Capped server-side
+    /// at [`MAX_AGENT_WAIT_MS`] so a leaked waiter can't park on its
+    /// connection thread forever.
+    WaitAgentStatus {
+        target: String,
+        state: String,
+        timeout_ms: u64,
     },
     /// Rename THIS daemon's session (issue #63): atomically move its
     /// `.sock`/`.pid` to the new name, update the logical session name,
@@ -742,6 +790,15 @@ fn pane_json(state: &State, id: PaneId, short_ids: &HashMap<u64, String>) -> Val
                     .filter(|d| !d.is_unknown())
                     .and_then(|d| d.confidence)
                     .map(|c| c.as_str()),
+                // Issue #75 AC6: `agent_status` is always a string
+                // (default "unknown" for bare panes), unlike the
+                // nullable back-compat `agent_state` above.
+                "agent_status": surface
+                    .and_then(|s| s.agent_report())
+                    .map(|r| r.state.as_str())
+                    .unwrap_or("unknown"),
+                "agent_message": surface.and_then(|s| s.agent_report()).and_then(|r| r.message.clone()),
+                "agent_updated_at_ms": surface.and_then(|s| s.agent_report()).map(|r| r.updated_at_ms),
                 "size": surface.map(|s| {
                     let (c, r) = s.size();
                     json!({"cols": c, "rows": r})
@@ -958,12 +1015,74 @@ fn get_surface(mux: &Mux, id: SurfaceId) -> anyhow::Result<Arc<crate::Surface>> 
     mux.surface(id).ok_or_else(|| anyhow::anyhow!("unknown surface {id}"))
 }
 
+/// Last `n` lines of `text`, ignoring trailing blank rows the VT plain
+/// formatter can leave below the cursor (issue #75's `agent-read --lines`).
+fn tail_lines(text: &str, n: usize) -> String {
+    if n == 0 {
+        return String::new();
+    }
+    let mut lines: Vec<&str> = text.lines().collect();
+    while matches!(lines.last(), Some(last) if last.trim().is_empty()) {
+        lines.pop();
+    }
+    if lines.len() > n {
+        lines.drain(..lines.len() - n);
+    }
+    lines.join("\n")
+}
+
+/// Upper bound for `wait-agent-status` timeouts (10 minutes): the
+/// server parks one connection thread per waiter, so an unbounded
+/// timeout would let leaked waiters accumulate forever (plan §5.4).
+const MAX_AGENT_WAIT_MS: u64 = 600_000;
+
+/// Shared validation for `wait-agent-status` (issue #75): the state
+/// string and the timeout cap. Extracted from the handler so the table
+/// test can pin both rejections.
+fn validate_wait_request(state: &str, timeout_ms: u64) -> anyhow::Result<crate::AgentState> {
+    let wanted = crate::AgentState::parse(state).ok_or_else(|| {
+        anyhow::anyhow!("bad state {state:?} (want idle, working, blocked, done, or unknown)")
+    })?;
+    if timeout_ms > MAX_AGENT_WAIT_MS {
+        anyhow::bail!("timeout {timeout_ms}ms exceeds the {MAX_AGENT_WAIT_MS}ms cap");
+    }
+    Ok(wanted)
+}
+
+/// Success payload for `wait-agent-status`: the matched report plus the
+/// surface's current plain-text snapshot (the "read payload").
+fn wait_agent_status_json(
+    surface: &crate::Surface,
+    surface_id: SurfaceId,
+    report: &crate::AgentReport,
+    elapsed_ms: u64,
+) -> Value {
+    // The read payload is auxiliary to a MATCHED wait: `agent-read`
+    // propagates terminal-read errors (`??`), but failing an already-
+    // matched wait because a best-effort text snapshot failed would be
+    // worse, so an empty payload is the deliberate fallback here.
+    let text =
+        surface.try_with_terminal(|t| t.plain_text()).ok().and_then(|r| r.ok()).unwrap_or_default();
+    json!({
+        "matched": true,
+        "surface": surface_id,
+        "state": report.state.as_str(),
+        "agent": report.agent,
+        "message": report.message,
+        "updated_at_ms": report.updated_at_ms,
+        "elapsed_ms": elapsed_ms,
+        "text": text,
+    })
+}
+
 fn agent_report_json(surface: SurfaceId, report: &crate::AgentReport) -> Value {
     json!({
         "surface": surface,
         "state": report.state.as_str(),
         "source": report.source.as_str(),
         "session": report.session,
+        "agent": report.agent,
+        "message": report.message,
         "updated_at_ms": report.updated_at_ms,
     })
 }
@@ -1490,14 +1609,14 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             surface.try_with_terminal(|t| t.scroll_delta(delta))?;
             Ok(json!({}))
         }
-        Command::ReportAgent { surface, state, source, session } => {
+        Command::ReportAgent { surface, state, source, session, agent, message } => {
             get_surface(mux, surface)?;
             let state = crate::AgentState::parse(&state)
                 .ok_or_else(|| anyhow::anyhow!("bad state {state:?}"))?;
-            let source = crate::AgentStateSource::parse(&source)
+            let source = crate::AgentStateSource::parse(source.as_deref().unwrap_or("socket"))
                 .ok_or_else(|| anyhow::anyhow!("bad source {source:?}"))?;
             let report = mux
-                .report_agent(surface, state, source, session)
+                .report_agent(surface, state, source, session, agent, message)
                 .ok_or_else(|| anyhow::anyhow!("surface {surface} does not support agent state"))?;
             Ok(agent_report_json(surface, &report))
         }
@@ -1575,6 +1694,93 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
         Command::PaneWorktreeRemove { pane, branch } => {
             mux.pane_worktree_remove(pane, &branch)?;
             Ok(json!({}))
+        }
+        Command::AgentRead { target, source, lines } => {
+            let surface_id = mux.resolve_agent_target(&target)?;
+            let surface = get_surface(mux, surface_id)?;
+            require_pty(&surface)?;
+            let lines = lines.unwrap_or(40);
+            // Herdr's visibility ladder (review F1): `visible` reads the
+            // viewport rows only; `recent`/`recent-unwrapped` read a
+            // bottom-anchored window that includes SCROLLBACK (the
+            // unwrapped variant re-joins soft-wrapped rows).
+            let text = match source.as_deref().unwrap_or("visible") {
+                "visible" => surface.try_with_terminal(|t| t.plain_text_viewport(false))??,
+                "recent" => surface.try_with_terminal(|t| t.plain_text_recent(lines, false))??,
+                "recent-unwrapped" => {
+                    surface.try_with_terminal(|t| t.plain_text_recent(lines, true))??
+                }
+                other => anyhow::bail!(
+                    "bad source {other:?} (want \"visible\", \"recent\", or \"recent-unwrapped\")"
+                ),
+            };
+            Ok(json!({ "surface": surface_id, "text": tail_lines(&text, lines) }))
+        }
+        Command::AgentSend { target, text, shell } => {
+            let surface_id = mux.resolve_agent_target(&target)?;
+            let surface = get_surface(mux, surface_id)?;
+            require_pty(&surface)?;
+            // Same write path as `send`, minus the CR: agent-send types
+            // the text and leaves submitting to the caller (AC4).
+            let mode = resolve_shell_mode(shell.as_deref(), surface.child_pid())?;
+            let bytes = sanitise_text(mode, &text).into_bytes();
+            surface.write_bytes(&bytes)?;
+            Ok(json!({ "surface": surface_id }))
+        }
+        Command::WaitAgentStatus { target, state, timeout_ms } => {
+            let wanted = validate_wait_request(&state, timeout_ms)?;
+            let surface_id = mux.resolve_agent_target(&target)?;
+            let surface = get_surface(mux, surface_id)?;
+            require_pty(&surface)?;
+            // Subscribe BEFORE the immediate check so a report landing
+            // between the two is still observed by the loop below (the
+            // channel is unbounded, so `emit` never blocks the reporter).
+            let events = mux.subscribe();
+            let started = std::time::Instant::now();
+            if let Some(report) = surface.agent_report() {
+                if report.state == wanted {
+                    return Ok(wait_agent_status_json(
+                        &surface,
+                        surface_id,
+                        &report,
+                        started.elapsed().as_millis() as u64,
+                    ));
+                }
+            }
+            if timeout_ms == 0 {
+                anyhow::bail!("timeout waiting for agent status {state}");
+            }
+            let deadline = started + std::time::Duration::from_millis(timeout_ms);
+            loop {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    anyhow::bail!("timeout waiting for agent status {state}");
+                }
+                match events.recv_timeout(remaining) {
+                    Ok(MuxEvent::AgentStateChanged { surface: s, report, .. })
+                        if s == surface_id && report.state == wanted =>
+                    {
+                        return Ok(wait_agent_status_json(
+                            &surface,
+                            surface_id,
+                            &report,
+                            started.elapsed().as_millis() as u64,
+                        ));
+                    }
+                    // Review F2: the pane died mid-wait (agent crashed /
+                    // surface closed). It can never reach the target
+                    // state, so error now instead of parking until the
+                    // deadline — the K3-orchestrator "wait for the agent
+                    // to finish" case wants the fast failure.
+                    Ok(MuxEvent::SurfaceExited(s)) if s == surface_id => {
+                        anyhow::bail!(
+                            "surface {surface_id} exited while waiting for agent status {state}"
+                        );
+                    }
+                    Ok(_) => continue,
+                    Err(_) => anyhow::bail!("timeout waiting for agent status {state}"),
+                }
+            }
         }
         Command::RenameSession { new_name } => {
             // Issue #63. Scout-plan Q4 ordering: the socket rename is the
@@ -1720,6 +1926,8 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                             "state": report.state.as_str(),
                             "source": report.source.as_str(),
                             "session": report.session,
+                            "agent": report.agent,
+                            "message": report.message,
                             "updated_at_ms": report.updated_at_ms,
                         }),
                         MuxEvent::OscNotification { surface, title, body } => json!({
@@ -1881,6 +2089,32 @@ mod tests {
         assert_eq!(parse_workspace_color("#1234ab").unwrap(), Rgb { r: 0x12, g: 0x34, b: 0xab });
         assert_eq!(parse_workspace_color("blue").unwrap(), Rgb { r: 0, g: 0, b: 255 });
         assert!(parse_workspace_color("ultraviolet").is_err());
+    }
+
+    #[test]
+    fn wait_agent_status_validates_state_and_timeout_table() {
+        // Issue #75: bad state strings and over-cap timeouts are
+        // rejected before any blocking; 0 and the cap itself are legal.
+        for good in ["idle", "working", "blocked", "done", "unknown"] {
+            assert!(validate_wait_request(good, 1000).is_ok(), "{good} should be valid");
+        }
+        assert!(validate_wait_request("nonsense", 1000).is_err());
+        assert!(validate_wait_request("idle", MAX_AGENT_WAIT_MS + 1).is_err());
+        assert!(validate_wait_request("idle", MAX_AGENT_WAIT_MS).is_ok());
+        assert!(validate_wait_request("idle", 0).is_ok());
+    }
+
+    #[test]
+    fn tail_lines_drops_trailing_blank_rows_and_tails() {
+        // Issue #75 agent-read --lines: trailing blank rows (the VT plain
+        // formatter can leave empty rows below the cursor) don't consume
+        // the tail budget, and 0 yields empty.
+        let screen = "cmd\nrow-a\nrow-b\nrow-c\n\n \n";
+        assert_eq!(tail_lines(screen, 0), "");
+        assert_eq!(tail_lines(screen, 1), "row-c");
+        assert_eq!(tail_lines(screen, 2), "row-b\nrow-c");
+        assert_eq!(tail_lines(screen, 10), "cmd\nrow-a\nrow-b\nrow-c");
+        assert_eq!(tail_lines("", 5), "");
     }
 
     #[test]

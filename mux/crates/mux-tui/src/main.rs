@@ -147,8 +147,9 @@ CLI VERBS
   trigger-flash, resize-surface,
   focus-pane, select-tab, select-screen, select-workspace, move-tab,
   move-workspace, scroll-surface, subscribe, attach-surface, report-agent,
-  list-agents, detect-agent, detect-agents, agent-pattern-add,
-  agent-pattern-list, agent-pattern-remove, browser-reload, list-sessions,
+  list-agents, agent-read, agent-send, wait-agent-status, detect-agent,
+  detect-agents, agent-pattern-add, agent-pattern-list,
+  agent-pattern-remove, browser-reload, list-sessions,
   kill-session, kill-stale, rename-session, layout-export, layout-apply,
   layout-export-all, theme list,
   pane-worktree-create, pane-worktree-list, pane-worktree-remove
@@ -213,6 +214,27 @@ AGENT DETECTION
       `min_confidence = \"high\"|\"medium\"|\"low\"` (default \"low\"). With
       detection disabled, the detect verbs error with
       `agent detection disabled by configuration`.
+
+AGENT STATE (issue #75)
+  cmux report-agent [--surface <id>] --state <idle|working|blocked|done|unknown>
+                    [--source <detected|socket|hook>] [--agent-session <id>]
+                    [--agent <name>] [--message <text>]
+      Agent self-report. --surface defaults to $CMUX_MUX_SURFACE (set in
+      every pane, so an agent can report from inside its pane) and
+      --source defaults to socket (hook reports keep authority).
+  cmux list-agents [--surface <id>] [--state <state>]
+      Every pane with a report: surface, state, source, session, agent
+      name, last message. JSON via --json (includes updated_at_ms).
+  cmux agent-read --target <name-or-surface-id>
+                   [--source visible|recent|recent-unwrapped] [--lines <n>]
+      Read an agent's pane by name; tails the last N lines (default 40).
+  cmux agent-send --target <name-or-surface-id> --text <text> [--shell <mode>]
+      Type text into an agent's pane WITHOUT Enter; submit separately
+      (e.g. cmux send --surface <id> --text \"\" --send-cr 1).
+  cmux wait-agent-status --target <name-or-surface-id>
+                         --status <state> --timeout <ms>
+      Block until the agent reaches --status; prints the pane text,
+      exit 1 on timeout. --timeout 0 = single immediate check.
 
 RENAME-SESSION
   cmux rename-session --old <name> --new <name> [--json]

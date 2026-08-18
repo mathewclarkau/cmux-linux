@@ -2239,10 +2239,14 @@ object{
     state: "working"|"blocked"|"idle"|"done"|"unknown",
     source: "detected"|"socket"|"hook",
     session: string|null,
+    agent: string|null,
+    message: string|null,
     updated_at_ms: uint64
   }>
 }
 ```
+
+`agent` is the pane's reported agent name (issue #75's `--agent`; preserved across later reports that omit it) and `message` is the latest report's free-text context (absent = cleared). Every pane in the `list-workspaces` per-tab JSON also carries `agent_status` (always a string; `"unknown"` for bare panes), `agent_message`, and `agent_updated_at_ms` alongside the older nullable `agent_state`/`agent_session`.
 
 Errors:
 
@@ -2258,7 +2262,7 @@ CLI mapping:
 | ------------ | -------------------------------------------------------------- |
 | Verb         | `list-agents`                                                  |
 | Flags        | `[--surface <id>] [--state working                             | blocked | idle | done | unknown]` |
-| Plain stdout | one line per agent: `<surface> <state> <source> <session-or->` |
+| Plain stdout | one line per agent: `<surface> <state> <source> <session-or-> <agent-or--> <message-or->` |
 | JSON stdout  | exact result object                                            |
 | Exit codes   | common                                                         |
 
@@ -2266,7 +2270,7 @@ Example:
 
 ```json
 {"id":107,"cmd":"list-agents","state":"blocked"}
-{"id":107,"ok":true,"data":{"agents":[{"surface":1,"state":"blocked","source":"hook","session":"abc","updated_at_ms":1710000000000}]}}
+{"id":107,"ok":true,"data":{"agents":[{"surface":1,"state":"blocked","source":"hook","session":"abc","agent":"worker-1","message":"needs input","updated_at_ms":1710000000000}]}}
 ```
 
 ### report-agent
@@ -2285,13 +2289,15 @@ Params:
 | --------- | --------- | ---------------- | ------------------------------------------------------------ |
 | `surface` | `IdRef`   | required         | Surface associated with the agent                            |
 | `state`   | `string`  | required         | `"working"`, `"blocked"`, `"idle"`, `"done"`, or `"unknown"` |
-| `source`  | `string`  | required         | `"socket"` or `"hook"`                                       |
+| `source`  | `string`  | default `"socket"` | `"detected"`, `"socket"`, or `"hook"`                       |
 | `session` | `string`  | default null     | Optional upstream agent session id                           |
+| `agent`   | `string`  | default null     | Optional agent name (issue #75); preserved by later reports that omit it, used for the name-addressed verbs |
+| `message` | `string`  | default null     | Optional free-text context (issue #75); the latest applied report wins |
 
 Result:
 
 ```text
-object{surface:Id,state:string,source:string,session:string|null}
+object{surface:Id,state:string,source:string,session:string|null,agent:string|null,message:string|null,updated_at_ms:uint64}
 ```
 
 Errors:
@@ -2308,7 +2314,7 @@ CLI mapping:
 | Item         | Value                           |
 | ------------ | ------------------------------- |
 | Verb         | `report-agent`                  |
-| Flags        | `--surface <id> --state working | blocked | idle | done | unknown --source socket | hook [--session <id>]` |
+| Flags        | `[--surface <id>] --state working | blocked | idle | done | unknown [--source detected | socket | hook] [--agent-session <id>] [--agent <name>] [--message <text>]` |
 | Plain stdout | no output                       |
 | JSON stdout  | exact result object             |
 | Exit codes   | common                          |
@@ -2317,7 +2323,133 @@ Example:
 
 ```json
 {"id":108,"cmd":"report-agent","surface":1,"state":"working","source":"socket","session":"abc"}
-{"id":108,"ok":true,"data":{"surface":1,"state":"working","source":"socket","session":"abc"}}
+{"id":108,"ok":true,"data":{"surface":1,"state":"working","source":"socket","session":"abc","agent":null,"message":null,"updated_at_ms":1710000000000}}
+```
+
+Issue #75 defaults: on the CLI, `--surface` falls back to `$CMUX_MUX_SURFACE` (set for every pane child, so an agent can self-report from inside its pane without knowing its id) and `--source` defaults to `socket`, keeping hook reports the authority — an in-pane socket self-report is rejected (state unchanged, exit 0) while a hook report is in effect. A report omitting `--agent` keeps the pane's established name; omitting `--message` clears the message.
+
+### agent-read
+
+| Field  | Value         |
+| ------ | ------------- |
+| name   | `agent-read`  |
+| status | implemented   |
+| since  | protocol 6 (issue #75; additive — old servers reject the unknown cmd) |
+
+Reads a pane's screen text, addressing the pane by its reported agent name (`report-agent --agent`) or by numeric surface id. Duplicate names are an error; use surface ids to disambiguate.
+
+Params:
+
+| Name     | JSON type | Required/default   | Constraints                                       |
+| -------- | --------- | ------------------ | ------------------------------------------------- |
+| `target` | `string`  | required           | Agent name or numeric surface id                  |
+| `source` | `string`  | default `"visible"` | `"visible"`, `"recent"`, or `"recent-unwrapped"` |
+| `lines`  | `usize`   | default 40         | Tail the last N lines (trailing blank rows dropped first) |
+
+`source` mirrors Herdr's visibility ladder: `visible` reads the viewport rows only (what is on screen now, honouring a scrolled-up viewport); `recent` reads a bottom-anchored window that includes SCROLLBACK (the last `max(lines, viewport)` rows of the screen); `recent-unwrapped` is the recent window with soft line-wraps re-joined. All sources tail the result to `lines`.
+
+Result:
+
+```text
+object{surface:Id,text:string}
+```
+
+Errors: `unknown agent <target>`, `ambiguous agent name <n> (surfaces a, b)`, `bad source <s>`, `bad request: ...`.
+
+CLI mapping:
+
+| Item         | Value                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| Verb         | `agent-read`                                                                                |
+| Flags        | `--target <name-or-id> [--source visible | recent | recent-unwrapped] [--lines <n>]`        |
+| Plain stdout | the text itself                                                                             |
+| JSON stdout  | exact result object                                                                         |
+| Exit codes   | common (bad `--source` values exit 2; target resolution errors exit 1)                      |
+
+Example:
+
+```json
+{"id":110,"cmd":"agent-read","target":"worker-1","lines":5}
+{"id":110,"ok":true,"data":{"surface":4,"text":"$ "}}
+```
+
+### agent-send
+
+| Field  | Value         |
+| ------ | ------------- |
+| name   | `agent-send`  |
+| status | implemented   |
+| since  | protocol 6 (issue #75; additive) |
+
+Types literal text into a pane addressed by agent name or surface id, WITHOUT a trailing CR — the caller submits separately (e.g. `cmux send --surface <id> --text "" --send-cr 1`). Same shell-aware sanitisation as `send` (`shell`, default `raw`).
+
+Params:
+
+| Name     | JSON type | Required/default  | Constraints                        |
+| -------- | --------- | ----------------- | ---------------------------------- |
+| `target` | `string`  | required          | Agent name or numeric surface id   |
+| `text`   | `string`  | required          | Text to type (no Enter appended)   |
+| `shell`  | `string`  | default `"raw"`   | `auto`, `fish`, `bash`, `zsh`, `sh`, `nu`, `raw` |
+
+Result:
+
+```text
+object{surface:Id}
+```
+
+Errors: target errors as for `agent-read`; `bad shell <s>`.
+
+CLI mapping:
+
+| Item         | Value                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| Verb         | `agent-send`                                                                                |
+| Flags        | `--target <name-or-id> --text <text> [--shell auto | fish | bash | zsh | sh | nu | raw]`    |
+| Plain stdout | no output                                                                                   |
+| JSON stdout  | exact result object                                                                         |
+| Exit codes   | common                                                                                      |
+
+### wait-agent-status
+
+| Field  | Value                 |
+| ------ | --------------------- |
+| name   | `wait-agent-status`   |
+| status | implemented           |
+| since  | protocol 6 (issue #75; additive) |
+
+Blocks until the target agent's reported state reaches `state`, then returns the matched report plus the pane's current text (the read payload). Herdr semantics: if the state already matches, return immediately. `timeout_ms: 0` is a single immediate check. Timeout expiry is the error `timeout waiting for agent status <state>` (CLI exit 1). If the target surface exits while waiting, the wait fails immediately with `surface <id> exited while waiting for agent status <state>` instead of parking until the deadline. Timeouts are capped at 600 000 ms server-side so a leaked waiter thread can't park on its connection forever. Blocking holds only this command's own connection thread; the event channel is unbounded, so reporters never block.
+
+Params:
+
+| Name         | JSON type | Required/default | Constraints                                               |
+| ------------ | --------- | ---------------- | --------------------------------------------------------- |
+| `target`     | `string`  | required         | Agent name or numeric surface id                          |
+| `state`      | `string`  | required         | `"idle"`, `"working"`, `"blocked"`, `"done"`, `"unknown"` |
+| `timeout_ms` | `uint64`  | required         | `0` = single immediate check; max 600 000                 |
+
+Result:
+
+```text
+object{matched:true,surface:Id,state:string,agent:string|null,message:string|null,updated_at_ms:uint64,elapsed_ms:uint64,text:string}
+```
+
+Errors: `bad state <s>`, `timeout <n>ms exceeds the 600000ms cap`, target errors as for `agent-read`, `surface <id> exited while waiting for agent status <state>`, `timeout waiting for agent status <state>`.
+
+CLI mapping:
+
+| Item         | Value                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| Verb         | `wait-agent-status`                                                                         |
+| Flags        | `--target <name-or-id> --status idle | working | blocked | done | unknown --timeout <ms>`   |
+| Plain stdout | the read payload (text)                                                                     |
+| JSON stdout  | exact result object                                                                         |
+| Exit codes   | common; the client extends its socket read timeout to `--timeout + 5 s` so long waits aren't killed by the default 10 s transport timeout |
+
+Example:
+
+```json
+{"id":109,"cmd":"wait-agent-status","target":"worker-1","state":"idle","timeout_ms":300000}
+{"id":109,"ok":true,"data":{"matched":true,"surface":4,"state":"idle","agent":"worker-1","message":"done for now","updated_at_ms":1710000005000,"elapsed_ms":412,"text":"$ "}}
 ```
 
 ### pane-worktree-create
