@@ -117,6 +117,7 @@ struct RawConfig {
 
 /// Raw `[[agent_detection]]` table (issue #78 AC7).
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawAgentDetection {
     #[serde(default)]
     enabled: Option<bool>,
@@ -1484,6 +1485,40 @@ min_confidence = "high"
             config.agent_detection.min_confidence,
             mux_core::agent_detect::Confidence::High
         );
+    }
+
+    /// Review fix F2: typos in `[[agent_detection]]` keys (e.g.
+    /// `enable = false`, `min-confidences = "high"`) must be rejected,
+    /// not silently ignored — a user who thinks they disabled detection
+    /// silently keeps it on otherwise. This matches the discipline of
+    /// every sibling sub-table (`deny_unknown_fields`) documented in
+    /// `RawOverlay`/`RawConfig`.
+    #[test]
+    fn agent_detection_rejects_unknown_keys() {
+        // TOML: `enable` (missing `d`) and `min-confidences` (plural, hyphen).
+        let bad_toml: Result<RawConfig, _> = toml::from_str(
+            "[[agent_detection]]\nenable = false\nmin_confidences = \"high\"\n",
+        );
+        assert!(bad_toml.is_err(), "unknown keys in [[agent_detection]] must be rejected");
+
+        // JSON: `minConfidence` (camelCase) and `enable` (missing `d`).
+        let bad_json: Result<RawConfig, _> = serde_json::from_str(
+            r##"{"agent_detection":[{"enable":false,"minConfidence":"high"}]}"##,
+        );
+        assert!(bad_json.is_err(), "unknown keys in agent_detection JSON must be rejected");
+
+        // Sanity: well-known keys still parse (this stays valid in both
+        // directions; the negative case above is the lock-down).
+        let good_toml: RawConfig = toml::from_str(
+            "[[agent_detection]]\nenabled = false\nmin_confidence = \"high\"\n",
+        )
+        .unwrap();
+        assert_eq!(good_toml.agent_detection[0].enabled, Some(false));
+        let good_json: RawConfig = serde_json::from_str(
+            r##"{"agent_detection":[{"enabled":false,"min_confidence":"medium"}]}"##,
+        )
+        .unwrap();
+        assert_eq!(good_json.agent_detection[0].enabled, Some(false));
     }
 
     #[test]
