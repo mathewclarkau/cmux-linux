@@ -147,21 +147,10 @@ CLI VERBS
   trigger-flash, resize-surface,
   focus-pane, select-tab, select-screen, select-workspace, move-tab,
   move-workspace, scroll-surface, subscribe, attach-surface, report-agent,
-  list-agents, browser-reload, list-sessions, kill-session, kill-stale,
-  rename-session, layout-export, layout-apply, layout-export-all,
-  theme list
-
-SEND
-  cmux send --surface <id> --text <text> [--shell auto|fish|bash|zsh|sh|nu|raw]
-      Writes input to a PTY surface (stdin is used when neither --text nor
-      --bytes is given). --shell enables shell-aware sanitisation (issue
-      #35): with fish/bash/zsh/nu, a leading newline is prefixed when the
-      text starts with a shell metacharacter ($, !, quote, bracket, ~, #)
-      or contains an unclosed quote, so '$ pwd\n' is typed literally
-      instead of being interpreted by the shell's line editor. auto
-      resolves the pane's shell from /proc on Linux. Default: raw
-      (verbatim passthrough, unchanged from before).
-
+  list-agents, detect-agent, detect-agents, agent-pattern-add,
+  agent-pattern-list, agent-pattern-remove, browser-reload, list-sessions,
+  kill-session, kill-stale, rename-session, layout-export, layout-apply,
+  layout-export-all, theme list
 LAYOUT EXPORT/APPLY (issue #76)
   cmux layout-export --workspace <name-or-id> --output <file>.json
       Save one workspace's tab/pane/agent-argv topology as versioned JSON
@@ -182,6 +171,34 @@ LAYOUT EXPORT/APPLY (issue #76)
       Layout-export records these argv/env pairs; for remote sessions
       compose `layout-apply` against the remote socket with a follow-up
       `cmux attach --apply-local-config`.
+
+AGENT DETECTION
+  cmux detect-agent --surface <id>
+      Ambiently detect which AI agent is running in a pane (issue #78):
+      walks the pane PTY's process tree (/proc comm/cmdline) and scrapes
+      the visible screen against the pattern registry. Prints
+      `<surface> <agent> <confidence> <evidence>` (agent is one of
+      claude, codex, pi, opencode, cursor, aider, unknown — plus any
+      user-added names; confidence is high/medium/low or none). The
+      result is cached and surfaces in `list-workspaces` as agent_name.
+  cmux detect-agents
+      Detection on every pane in one call: `<surface> <agent>` rows
+      (the issue's `agent detect-batch`; --json prints
+      {\"agents\":{\"<surface>\":\"<agent>\"}} — keys are surface ids).
+  cmux agent-pattern <add|list|remove>
+      Manage the live detection registry. add: `cmux agent-pattern add
+      <name> --pattern <marker> [--kind process|screen] [--confidence
+      high|medium|low] [--case-insensitive]`. Patterns are
+      substring/glob ('*' wildcard), NOT regex; process patterns match
+      whole argv tokens (a bare `pi` pattern never matches `spider`).
+      kind defaults to screen; confidence defaults to medium. Bundled
+      patterns for the top-6 agents ship in agents.json and cannot be
+      removed. Custom patterns live for the daemon's session (v1).
+  Config: [[agent_detection]] in mux.toml (or \"agent_detection\" in
+      mux.json) — `enabled = true|false` (default true) and
+      `min_confidence = \"high\"|\"medium\"|\"low\"` (default \"low\"). With
+      detection disabled, the detect verbs error with
+      `agent detection disabled by configuration`.
 
 RENAME-SESSION
   cmux rename-session --old <name> --new <name> [--json]
@@ -417,6 +434,7 @@ fn main() {
         if !first.starts_with('-')
             && first != "workspace-color"
             && first != "agents"
+            && first != "agent-pattern"
             && first != "ssh"
             && first != "socket-watchdog"
         {
@@ -484,6 +502,45 @@ fn main() {
             "--color".to_string(),
             raw_args[command_index + 2].clone(),
         ]);
+        std::process::exit(cli::run(&args, USAGE));
+    }
+    // `cmux agent-pattern <add|list|remove> ...` (issue #78 AC4): the
+    // issue's noun form, translated into the flat wire verbs the way
+    // `workspace-color` is. The daemon owns the live registry, so adds
+    // survive across CLI invocations within a session.
+    if raw_args.get(command_index).map(String::as_str) == Some("agent-pattern") {
+        let rest = &raw_args[command_index + 1..];
+        let mut args = raw_args[..command_index].to_vec();
+        match rest.first().map(String::as_str) {
+            Some("add") => {
+                let Some(name) = rest.get(1).filter(|n| !n.starts_with('-')) else {
+                    eprintln!("cmux: usage: cmux agent-pattern add <name> --pattern <pattern>");
+                    std::process::exit(2);
+                };
+                args.extend([
+                    "agent-pattern-add".to_string(),
+                    "--name".to_string(),
+                    name.clone(),
+                ]);
+                args.extend(rest[2..].to_vec());
+            }
+            Some("list") => args.push("agent-pattern-list".to_string()),
+            Some("remove") => {
+                let Some(name) = rest.get(1).filter(|n| !n.starts_with('-')) else {
+                    eprintln!("cmux: usage: cmux agent-pattern remove <name>");
+                    std::process::exit(2);
+                };
+                args.extend([
+                    "agent-pattern-remove".to_string(),
+                    "--name".to_string(),
+                    name.clone(),
+                ]);
+            }
+            _ => {
+                eprintln!("cmux: usage: cmux agent-pattern <add|list|remove> ...");
+                std::process::exit(2);
+            }
+        }
         std::process::exit(cli::run(&args, USAGE));
     }
     if cli::is_cli_invocation(&raw_args) {
@@ -723,6 +780,12 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     // server config with the laptop's own. Browser and scrollbar stay
     // server-side truth and are not published here.
     mux.set_resolved_chrome(config.resolved_chrome_value());
+    // Issue #78 AC7: push the resolved [[agent_detection]] settings into
+    // the daemon so the detect verbs honour them.
+    mux.set_agent_detection(mux_core::agent_detect::DetectionSettings {
+        enabled: config.agent_detection.enabled,
+        min_confidence: config.agent_detection.min_confidence,
+    });
     mux.restore_session();
     for workspace in &config.workspaces {
         let id = mux.with_state(|state| {

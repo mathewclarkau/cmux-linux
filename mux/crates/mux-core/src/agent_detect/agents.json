@@ -1,0 +1,17 @@
+{
+  "agents": [
+    { "name": "claude",   "kind": "process", "pattern": "claude",       "confidence": "high" },
+    { "name": "claude",   "kind": "screen",  "pattern": "Claude Code",  "confidence": "medium" },
+    { "name": "codex",    "kind": "process", "pattern": "codex",        "confidence": "high" },
+    { "name": "codex",    "kind": "screen",  "pattern": "codex>",       "confidence": "medium" },
+    { "name": "pi",       "kind": "process", "pattern": "pi",           "confidence": "high" },
+    { "name": "pi",       "kind": "screen",  "pattern": "pi> ",         "confidence": "medium" },
+    { "name": "opencode", "kind": "process", "pattern": "opencode",     "confidence": "high" },
+    { "name": "opencode", "kind": "screen",  "pattern": "opencode",     "confidence": "low" },
+    { "name": "cursor",   "kind": "process", "pattern": "cursor-agent", "confidence": "high" },
+    { "name": "cursor",   "kind": "process", "pattern": "cursor",       "confidence": "high" },
+    { "name": "cursor",   "kind": "screen",  "pattern": "cursor-agent", "confidence": "low", "case_insensitive": true },
+    { "name": "aider",    "kind": "process", "pattern": "aider",        "confidence": "high" },
+    { "name": "aider",    "kind": "screen",  "pattern": "Aider",        "confidence": "medium" }
+  ]
+}

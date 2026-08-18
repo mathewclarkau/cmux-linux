@@ -40,6 +40,17 @@ fn active_row_background(workspace_color: Option<Color>, theme_background: Color
     workspace_color.unwrap_or(theme_background)
 }
 
+/// Sidebar badge for the active pane's detected agent (issue #78 AC6):
+/// `" [claude]"` — short, bracketed, appended to the pane subtitle.
+/// Long names truncate to 8 characters so the badge never starves the
+/// title. `None`/empty renders no badge.
+fn agent_badge(name: Option<&str>) -> String {
+    match name.filter(|n| !n.is_empty()) {
+        Some(name) => format!(" [{}]", truncate(name, 8)),
+        None => String::new(),
+    }
+}
+
 /// Bright, fixed pulse color for a manual flash: deliberately ignores
 /// the workspace's own color/active state so it reads as "look here"
 /// regardless of context. Layered on top of `rail_color`'s result, not a
@@ -129,14 +140,18 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
         let branch = pane.and_then(|p| p.active_cwd()).and_then(|cwd| app.git_info.branch_for(cwd));
         let prefix = branch.map(|b| format!("{b} · ")).unwrap_or_default();
         let prefix_w = prefix.chars().count();
+        // Issue #78 AC6: the active pane's detected agent as a short
+        // bracketed badge appended to the subtitle (e.g. `main.rs [claude]`).
+        let badge = agent_badge(pane.and_then(|p| p.active_agent_name()));
+        let badge_w = badge.chars().count();
         let screen_count = ws.screens.len();
         let subtitle = if screen_count > 1 {
             format!(
-                " {prefix}{} ({screen_count} screens)",
-                truncate(title, content_w.saturating_sub(13 + prefix_w))
+                " {prefix}{}{badge} ({screen_count} screens)",
+                truncate(title, content_w.saturating_sub(13 + prefix_w + badge_w))
             )
         } else {
-            format!(" {prefix}{}", truncate(title, content_w.saturating_sub(3 + prefix_w)))
+            format!(" {prefix}{}{badge}", truncate(title, content_w.saturating_sub(3 + prefix_w + badge_w)))
         };
         let sub_style = if active { active_style.add_modifier(Modifier::DIM) } else { dim };
         let agent_state = pane.and_then(|p| p.active_agent_state());
@@ -194,5 +209,17 @@ mod tests {
     #[test]
     fn rail_color_hidden_when_inactive_without_workspace_color() {
         assert_eq!(rail_color(None, false, THEME_RAIL), None);
+    }
+
+    /// Issue #78 AC6: the badge is a short, bracketed suffix on the pane
+    /// subtitle — never long enough to starve the title.
+    #[test]
+    fn agent_badge_text_is_short_and_bracketed() {
+        assert_eq!(agent_badge(None), "");
+        assert_eq!(agent_badge(Some("")), "");
+        assert_eq!(agent_badge(Some("claude")), " [claude]");
+        assert_eq!(agent_badge(Some("pi")), " [pi]");
+        // Longer than 8 chars truncates with the shared ellipsis helper.
+        assert_eq!(agent_badge(Some("cursor-agent")), " [cursor-…]");
     }
 }

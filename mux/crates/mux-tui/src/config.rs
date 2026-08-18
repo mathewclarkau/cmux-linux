@@ -103,11 +103,26 @@ struct RawConfig {
     scrollbar: RawScrollbar,
     #[serde(default)]
     workspaces: Vec<WorkspaceConfig>,
+    /// Issue #78 AC7: `[[agent_detection]]` — turn ambient agent detection
+    /// on/off and override the default confidence threshold. Entries
+    /// apply in order; the last value for each key wins.
+    #[serde(default)]
+    agent_detection: Vec<RawAgentDetection>,
     /// Key bindings: `"prefix"` plus one entry per action. Values may be
     /// a chord string, an array of chord strings, `"none"`, or
     /// `"alt_shortcuts": false`.
     #[serde(default)]
     keys: HashMap<String, Value>,
+}
+
+/// Raw `[[agent_detection]]` table (issue #78 AC7).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAgentDetection {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    min_confidence: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -882,6 +897,24 @@ pub struct Config {
     pub scrollbar: Scrollbar,
     pub keys: Keys,
     pub workspaces: Vec<WorkspaceConfig>,
+    pub agent_detection: AgentDetectionConfig,
+}
+
+/// Resolved `[[agent_detection]]` settings (issue #78 AC7). Detection is
+/// on with a `low` threshold by default, so every match surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentDetectionConfig {
+    pub enabled: bool,
+    pub min_confidence: mux_core::agent_detect::Confidence,
+}
+
+impl Default for AgentDetectionConfig {
+    fn default() -> Self {
+        AgentDetectionConfig {
+            enabled: true,
+            min_confidence: mux_core::agent_detect::Confidence::Low,
+        }
+    }
 }
 
 impl Config {
@@ -1087,6 +1120,22 @@ pub fn load() -> Config {
     }
     config.keys.apply(&raw.keys);
     config.workspaces = raw.workspaces;
+    // Issue #78 AC7: `[[agent_detection]]` entries apply in order; the
+    // last value for each key wins. An unknown min_confidence warns and
+    // is ignored (config degradation, matching the browser settings).
+    for entry in &raw.agent_detection {
+        if let Some(enabled) = entry.enabled {
+            config.agent_detection.enabled = enabled;
+        }
+        if let Some(confidence) = &entry.min_confidence {
+            match mux_core::agent_detect::Confidence::parse(confidence) {
+                Some(parsed) => config.agent_detection.min_confidence = parsed,
+                None => eprintln!(
+                    "cmux: ignoring agent_detection.min_confidence={confidence:?}; expected high, medium, or low"
+                ),
+            }
+        }
+    }
     config
 }
 
@@ -1387,6 +1436,89 @@ icon = "robot"
         .unwrap();
         assert_eq!(json.workspaces[0].name, "Docs");
         assert_eq!(json.workspaces[0].color.as_deref(), Some("#123456"));
+    }
+
+    /// Issue #78 AC7: `[[agent_detection]]` parses from TOML (array of
+    /// tables) and JSON (array), and resolves through `load()` — last
+    /// entry wins per key.
+    #[test]
+    fn agent_detection_loads_from_toml_and_json() {
+        let toml: RawConfig = toml::from_str(
+            r##"[[agent_detection]]
+enabled = false
+min_confidence = "high"
+"##,
+        )
+        .unwrap();
+        assert_eq!(toml.agent_detection.len(), 1);
+        assert_eq!(toml.agent_detection[0].enabled, Some(false));
+        assert_eq!(toml.agent_detection[0].min_confidence.as_deref(), Some("high"));
+
+        let json: RawConfig = serde_json::from_str(
+            r##"{"agent_detection":[{"enabled":false,"min_confidence":"medium"}]}"##,
+        )
+        .unwrap();
+        assert_eq!(json.agent_detection[0].enabled, Some(false));
+        assert_eq!(json.agent_detection[0].min_confidence.as_deref(), Some("medium"));
+
+        // Resolution through load(): the table reaches the resolved Config.
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("mux-agent-detect-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mux.toml");
+        std::fs::write(
+            &path,
+            r##"[[agent_detection]]
+enabled = false
+min_confidence = "high"
+"##,
+        )
+        .unwrap();
+        std::env::set_var("CMUX_MUX_CONFIG", &path);
+        let config = load();
+        std::env::remove_var("CMUX_MUX_CONFIG");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+        assert!(!config.agent_detection.enabled, "detection should resolve to disabled");
+        assert_eq!(
+            config.agent_detection.min_confidence,
+            mux_core::agent_detect::Confidence::High
+        );
+    }
+
+    /// Review fix F2: typos in `[[agent_detection]]` keys (e.g.
+    /// `enable = false`, `min-confidences = "high"`) must be rejected,
+    /// not silently ignored — a user who thinks they disabled detection
+    /// silently keeps it on otherwise. This matches the discipline of
+    /// every sibling sub-table (`deny_unknown_fields`) documented in
+    /// `RawOverlay`/`RawConfig`.
+    #[test]
+    fn agent_detection_rejects_unknown_keys() {
+        // TOML: `enable` (missing `d`) and `min-confidences` (plural, hyphen).
+        let bad_toml: Result<RawConfig, _> = toml::from_str(
+            "[[agent_detection]]\nenable = false\nmin_confidences = \"high\"\n",
+        );
+        assert!(bad_toml.is_err(), "unknown keys in [[agent_detection]] must be rejected");
+
+        // JSON: `minConfidence` (camelCase) and `enable` (missing `d`).
+        let bad_json: Result<RawConfig, _> = serde_json::from_str(
+            r##"{"agent_detection":[{"enable":false,"minConfidence":"high"}]}"##,
+        );
+        assert!(bad_json.is_err(), "unknown keys in agent_detection JSON must be rejected");
+
+        // Sanity: well-known keys still parse (this stays valid in both
+        // directions; the negative case above is the lock-down).
+        let good_toml: RawConfig = toml::from_str(
+            "[[agent_detection]]\nenabled = false\nmin_confidence = \"high\"\n",
+        )
+        .unwrap();
+        assert_eq!(good_toml.agent_detection[0].enabled, Some(false));
+        let good_json: RawConfig = serde_json::from_str(
+            r##"{"agent_detection":[{"enabled":false,"min_confidence":"medium"}]}"##,
+        )
+        .unwrap();
+        assert_eq!(good_json.agent_detection[0].enabled, Some(false));
     }
 
     #[test]

@@ -229,6 +229,10 @@ pub struct SurfaceMeta {
     pub id: SurfaceId,
     /// User-assigned tab name (rename tab); shared by every surface kind.
     pub(crate) name: Mutex<Option<String>>,
+    /// Last ambient agent-detection result (issue #78), cached for
+    /// `list-workspaces`/sidebar rendering. Refreshed only by explicit
+    /// `detect-agent` calls (v1: no background polling).
+    pub(crate) detected_agent: Mutex<Option<crate::agent_detect::Detection>>,
 }
 
 /// A pane tab runtime.
@@ -409,7 +413,11 @@ impl Surface {
             term.set_default_colors(colors.fg, colors.bg);
         }
         let surface = Arc::new(Surface::Pty(PtySurface {
-            meta: SurfaceMeta { id, name: Mutex::new(None) },
+            meta: SurfaceMeta {
+                id,
+                name: Mutex::new(None),
+                detected_agent: Mutex::new(None),
+            },
             term: Mutex::new(term),
             writer: Mutex::new(writer),
             master: Mutex::new(pty.master),
@@ -575,6 +583,19 @@ impl Surface {
 
     pub fn name(&self) -> Option<String> {
         self.name.lock().unwrap().clone()
+    }
+
+    /// Cache the latest ambient agent-detection result (issue #78).
+    /// Informational only — it never touches `AgentReport` state.
+    pub fn set_detected_agent(&self, detection: crate::agent_detect::Detection) {
+        *self.detected_agent.lock().unwrap() = Some(detection);
+    }
+
+    /// The last ambient agent-detection result, if `detect-agent` ever
+    /// ran on this surface. `None` until then (distinct from a cached
+    /// `unknown` detection, which is `Some`).
+    pub fn detected_agent(&self) -> Option<crate::agent_detect::Detection> {
+        self.detected_agent.lock().unwrap().clone()
     }
 
     /// Snapshot the terminal into `rs` (holds the terminal lock only for

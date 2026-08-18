@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
+use crate::agent_detect::{AgentPattern, Detection, DetectionSettings};
 use crate::browser::{self, BrowserBootstrap, BrowserRuntime};
 use crate::model::{IconName, Node, Pane, Screen, State, Workspace};
 use crate::surface::{
@@ -95,6 +96,13 @@ pub struct Mux {
     /// (so panes spawned after a rename inherit the new `CMUX_MUX_SOCKET`).
     /// `None` until `server::serve` calls [`set_socket_path`](Self::set_socket_path).
     socket_path: Mutex<Option<PathBuf>>,
+    /// Ambient agent-detection settings (issue #78 AC7), pushed from the
+    /// TUI host after `config::load()`.
+    agent_detection: Mutex<DetectionSettings>,
+    /// User-added agent patterns layered on top of the bundled registry
+    /// (issue #78 AC4). Session-lifetime only in v1 — not persisted
+    /// across daemon restarts.
+    custom_agent_patterns: Mutex<Vec<AgentPattern>>,
 }
 
 impl Mux {
@@ -120,6 +128,8 @@ impl Mux {
             persistence_enabled: std::sync::atomic::AtomicBool::new(false),
             session: Mutex::new(session),
             socket_path: Mutex::new(None),
+            agent_detection: Mutex::new(DetectionSettings::default()),
+            custom_agent_patterns: Mutex::new(Vec::new()),
         })
     }
 
@@ -1489,6 +1499,100 @@ reattaching to remote session {session_id} on {host} \
             .collect()
     }
 
+    /// Ambient agent-detection settings (issue #78 AC7).
+    pub fn set_agent_detection(&self, settings: DetectionSettings) {
+        *self.agent_detection.lock().unwrap() = settings;
+    }
+
+    pub fn agent_detection(&self) -> DetectionSettings {
+        *self.agent_detection.lock().unwrap()
+    }
+
+    /// Add a user pattern on top of the bundled registry. Validates the
+    /// pattern and rejects exact duplicates.
+    pub fn agent_pattern_add(&self, pattern: AgentPattern) -> anyhow::Result<()> {
+        pattern.validate().map_err(anyhow::Error::msg)?;
+        let mut custom = self.custom_agent_patterns.lock().unwrap();
+        if custom.iter().any(|p| p == &pattern) {
+            anyhow::bail!("pattern {:?} for agent {:?} is already registered", pattern.pattern, pattern.name);
+        }
+        custom.push(pattern);
+        Ok(())
+    }
+
+    /// Remove every user-added pattern named `name`. Bundled patterns
+    /// cannot be removed.
+    pub fn agent_pattern_remove(&self, name: &str) -> anyhow::Result<()> {
+        let mut custom = self.custom_agent_patterns.lock().unwrap();
+        let before = custom.len();
+        custom.retain(|p| p.name != name);
+        if custom.len() == before {
+            anyhow::bail!("no user pattern for agent {name:?} (bundled patterns cannot be removed)");
+        }
+        Ok(())
+    }
+
+    /// The effective pattern registry: bundled patterns plus user adds.
+    pub fn agent_pattern_list(&self) -> anyhow::Result<Vec<AgentPattern>> {
+        let mut all = crate::agent_detect::bundled_patterns()?;
+        all.extend(self.custom_agent_patterns.lock().unwrap().iter().cloned());
+        Ok(all)
+    }
+
+    /// Run ambient detection on one surface (issue #78 AC1): collect
+    /// process + screen evidence, score it against the registry, cache
+    /// the result on the surface, and emit `TreeChanged` so frontends
+    /// re-snapshot (`pane_json` exposes `agent_name`).
+    pub fn detect_agent(&self, surface: SurfaceId) -> anyhow::Result<Detection> {
+        let settings = self.agent_detection();
+        if !settings.enabled {
+            anyhow::bail!("agent detection disabled by configuration");
+        }
+        let surface = self
+            .surface(surface)
+            .ok_or_else(|| anyhow::anyhow!("unknown surface {surface}"))?;
+        let detection = self.detect_on_surface(&surface)?;
+        surface.set_detected_agent(detection.clone());
+        self.emit(MuxEvent::TreeChanged);
+        Ok(detection)
+    }
+
+    /// Run detection on every live surface (issue #78 AC2).
+    pub fn detect_all_agents(&self) -> anyhow::Result<Vec<(SurfaceId, Detection)>> {
+        if !self.agent_detection().enabled {
+            anyhow::bail!("agent detection disabled by configuration");
+        }
+        let ids: Vec<SurfaceId> = self.with_state(|s| s.surfaces.keys().copied().collect());
+        ids.into_iter().map(|id| Ok((id, self.detect_agent(id)?))).collect()
+    }
+
+    /// Evidence collection + scoring for one surface, shared by
+    /// `detect-agent` and `detect-agents`.
+    fn detect_on_surface(&self, surface: &Arc<Surface>) -> anyhow::Result<Detection> {
+        let settings = self.agent_detection();
+        let patterns = self.agent_pattern_list()?;
+        if surface.kind() != crate::SurfaceKind::Pty {
+            return Ok(Detection::unknown("browser surface: no PTY process tree or screen to scan"));
+        }
+        // A cmuxd-remote surface's local child is the ssh transport, not
+        // the pane's real processes — skip process evidence there; the
+        // screen half (the VT is local) may still match.
+        let remote = surface.remote_spec().is_some();
+        let process = if remote {
+            Vec::new()
+        } else {
+            crate::agent_detect::collect_process_evidence(surface.child_pid())
+        };
+        let screen = surface.try_with_terminal(|t| t.plain_text())??;
+        let mut detection =
+            crate::agent_detect::detect(&process, &screen, &patterns, settings.min_confidence);
+        if remote && detection.is_unknown() {
+            detection.evidence =
+                "remote surface: process tree not local; no screen marker matched".to_string();
+        }
+        Ok(detection)
+    }
+
     /// Set a screen's user-visible name. An empty name clears it (the
     /// screen falls back to its number).
     pub fn rename_screen(&self, target: ScreenId, name: String) -> bool {
@@ -2500,6 +2604,62 @@ mod tests {
             ids[1]
         });
         assert!(err.contains(&format!("pane-id {pane_id}")), "error was: {err}");
+    }
+
+    #[test]
+    fn detect_agent_caches_result_and_agent_pattern_add_extends_registry() {
+        use crate::agent_detect::{Confidence, PatternKind};
+        use std::time::{Duration, Instant};
+
+        let mux = test_mux();
+        mux.new_workspace(None, None).unwrap();
+        let surface_id = mux.with_state(|s| {
+            let pane = s.workspaces[0].screens[0].active_pane;
+            s.panes[&pane].tabs[0]
+        });
+        let surface = mux.surface(surface_id).unwrap();
+        assert!(surface.detected_agent().is_none(), "no detection cached yet");
+
+        // A user pattern extends the registry on top of the bundled one.
+        let custom = AgentPattern {
+            name: "myagent".into(),
+            kind: PatternKind::Screen,
+            pattern: "MYMARKER>".into(),
+            confidence: Confidence::Medium,
+            case_insensitive: false,
+        };
+        mux.agent_pattern_add(custom.clone()).unwrap();
+        let listed = mux.agent_pattern_list().unwrap();
+        assert!(listed.iter().any(|p| p.name == "myagent" && p.pattern == "MYMARKER>"));
+        assert!(listed.iter().any(|p| p.name == "claude"), "bundled patterns stay listed");
+
+        // Duplicate adds are rejected, not duplicated.
+        assert!(mux.agent_pattern_add(custom.clone()).is_err());
+
+        // /bin/cat echoes its input on the pty: write the marker and poll
+        // until the echo lands on the screen, then detect.
+        surface.write_bytes(b"MYMARKER> ").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut detection = Detection::unknown("no run yet");
+        while Instant::now() < deadline {
+            detection = mux.detect_agent(surface_id).unwrap();
+            if detection.agent == "myagent" {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(detection.agent, "myagent");
+        assert_eq!(detection.confidence, Some(Confidence::Medium));
+        assert!(detection.evidence.contains("MYMARKER>"), "evidence: {:?}", detection.evidence);
+
+        // The result is cached on the surface (pane_json / sidebar read it).
+        assert_eq!(surface.detected_agent().unwrap().agent, "myagent");
+
+        // Unknown surfaces error; removal drops only the custom pattern.
+        assert!(mux.detect_agent(surface_id + 999).is_err());
+        mux.agent_pattern_remove("myagent").unwrap();
+        assert!(mux.agent_pattern_remove("myagent").is_err(), "no longer present");
+        assert!(!mux.agent_pattern_list().unwrap().iter().any(|p| p.name == "myagent"));
     }
 
     #[test]

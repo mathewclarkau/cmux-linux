@@ -2361,6 +2361,142 @@ Example:
 
 Closing the resulting surface detaches the remote shell (`pty.detach`) rather than killing it (`pty.close`); see `docs/getting-started.md`'s "Remote (SSH) workspaces" section for the persistence/restore story and how to actually terminate a stale remote session.
 
+### detect-agent
+
+| Field  | Value           |
+| ------ | --------------- |
+| name   | `detect-agent`  |
+| status | implemented     |
+| since  | protocol 6      |
+
+Ambient agent detection for one surface (issue #78; the issue's `pane detect-agent --pane <id>` — a pane's content lives on its active tab surface, which is what this repo's flat verbs target). Detects which AI agent (claude, codex, pi, opencode, cursor, aider, or a user-added name) is running by (a) walking the pane PTY's process tree (`/proc/<pid>/comm` + `/proc/<pid>/cmdline`, token-exact process patterns) and (b) scraping the visible screen text for marker patterns (substring/`*`-glob, NOT regex). Any process match outranks any screen match; among process matches the most recently spawned process (`/proc/<pid>/stat` starttime, field 22) wins, and on a starttime tie the agent that also has screen evidence wins (the implementable approximation of the issue's "prefer the most recent output"). The result is cached on the surface and surfaces in `list-workspaces` as per-tab `agent_name`/`agent_confidence`; it does NOT set `AgentState` (that wiring, via the existing `source: "detected"` tier, is a follow-up to the agent_status work — issue #1; detection and self-report are deliberately separate).
+
+Params:
+
+| Name      | JSON type | Required/default | Constraints                |
+| --------- | --------- | ---------------- | -------------------------- |
+| `surface` | `IdRef`   | required         | The pane-content surface   |
+
+Result:
+
+```text
+object{
+  surface: Id,
+  agent: string,            // "claude"|"codex"|"pi"|"opencode"|"cursor"|"aider"|"unknown"|user-added
+  confidence: "high"|"medium"|"low"|null,  // null iff agent == "unknown"
+  evidence: string          // e.g. "process 'claude' (pid 1234)" / "screen marker 'pi> '"
+}
+```
+
+Errors:
+
+| Error                                        | Condition                                    |
+| -------------------------------------------- | -------------------------------------------- |
+| `unknown surface <id>`                       | Surface id does not exist                    |
+| `agent detection disabled by configuration`  | `[[agent_detection]] enabled = false`        |
+| `bad request: ...`                           | Wrong JSON type                              |
+
+CLI mapping:
+
+| Item         | Value                                                        |
+| ------------ | ------------------------------------------------------------ |
+| Verb         | `detect-agent`                                               |
+| Flags        | `--surface <id>`                                             |
+| Plain stdout | one line: `<surface> <agent> <confidence> <evidence>`        |
+| JSON stdout  | exact result object                                          |
+| Exit codes   | common                                                       |
+
+Example:
+
+```json
+{"id":120,"cmd":"detect-agent","surface":3}
+{"id":120,"ok":true,"data":{"surface":3,"agent":"claude","confidence":"high","evidence":"process 'claude' (pid 1234)"}}
+```
+
+### detect-agents
+
+| Field  | Value           |
+| ------ | --------------- |
+| name   | `detect-agents` |
+| status | implemented     |
+| since  | protocol 6      |
+
+Runs `detect-agent` on every live surface in one call (issue #78's `agent detect-batch`, for fleet dashboards). Keys of the map are surface ids — this repo's pane-content ids (`Workspace → Screen → Pane → Surface`).
+
+Params: none.
+
+Result:
+
+```text
+object{agents: map<string, string>}  // {"3": "claude", "7": "unknown", ...}
+```
+
+Errors: same `agent detection disabled by configuration` gate as `detect-agent`.
+
+CLI mapping:
+
+| Item         | Value                                     |
+| ------------ | ----------------------------------------- |
+| Verb         | `detect-agents`                           |
+| Flags        | none                                      |
+| Plain stdout | one `<surface> <agent>` row per surface   |
+| JSON stdout  | exact result object                       |
+| Exit codes   | common                                    |
+
+### agent-pattern-add
+
+| Field  | Value                |
+| ------ | -------------------- |
+| name   | `agent-pattern-add`  |
+| status | implemented          |
+| since  | protocol 6           |
+
+Adds a user pattern to the daemon's live detection registry, layered on top of the bundled one (issue #78 AC4). Patterns are substring/glob (`*` wildcard spans any run of characters), NOT regex — no runtime crate in the workspace links `regex`. Process patterns match whole argv tokens (a bare `pi` pattern matches the pi CLI but never `spider`/`pip`); screen patterns match anywhere in the visible text. User patterns live for the daemon's session (not persisted across restarts in v1); duplicates are rejected.
+
+Params:
+
+| Name              | JSON type | Required/default | Constraints                                        |
+| ----------------- | --------- | ---------------- | -------------------------------------------------- |
+| `name`            | `string`  | required         | Agent name; not empty, no whitespace, not `unknown`|
+| `pattern`         | `string`  | required         | Non-empty marker (substring/glob)                   |
+| `kind`            | `string`  | default `screen`  | `process` or `screen`                               |
+| `confidence`      | `string`  | default `medium`  | `high`, `medium`, or `low`                          |
+| `case_insensitive`| `bool`    | default `false`   | Case-fold before matching                           |
+
+Result: the registered pattern object (`name`, `kind`, `pattern`, `confidence`, `case_insensitive`).
+
+Errors:
+
+| Error                        | Condition                                       |
+| ---------------------------- | ----------------------------------------------- |
+| `agent name cannot be ...`   | Empty / whitespace / reserved `unknown`         |
+| `pattern cannot be empty`    | Empty pattern                                   |
+| `pattern ... already registered` | Exact duplicate                             |
+| `bad kind <k>`               | Kind not process/screen                         |
+| `bad confidence <c>`         | Confidence not high/medium/low                 |
+
+CLI mapping: noun form `cmux agent-pattern add <name> --pattern <marker> [--kind process|screen] [--confidence high|medium|low] [--case-insensitive]` (translated to this verb, the `workspace-color` precedent); no output on success.
+
+### agent-pattern-list
+
+| Field  | Value                 |
+| ------ | --------------------- |
+| name   | `agent-pattern-list`  |
+| status | implemented           |
+| since  | protocol 6            |
+
+Lists the effective pattern registry: the bundled top-6 patterns (embedded from `mux-core/src/agent_detect/agents.json`; cannot be removed) plus user adds. Params: none. Result: `object{patterns: array<object{name, kind, pattern, confidence, case_insensitive}>}`. CLI: `cmux agent-pattern list` → one `<name> <kind> <confidence> <pattern>` row per pattern.
+
+### agent-pattern-remove
+
+| Field  | Value                   |
+| ------ | ----------------------- |
+| name   | `agent-pattern-remove`  |
+| status | implemented             |
+| since  | protocol 6              |
+
+Removes every user-added pattern named `name`. Bundled patterns cannot be removed. Params: `name: string` (required). Result: empty object. Errors: `no user pattern for agent <name> ...` when nothing matched. CLI: `cmux agent-pattern remove <name>`; no output on success.
+
 ## Proposed Hooks Config
 
 Hooks are proposed protocol v6 config, not a socket command. They are declared in `~/.config/cmux/mux.json` under `hooks`.

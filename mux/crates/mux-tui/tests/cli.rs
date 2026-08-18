@@ -343,6 +343,221 @@ fn agent_session_round_trips_through_list_workspaces_json() {
     assert_eq!(tab["agent_session"].as_str(), Some("sess-rpc-42"));
 }
 
+/// Issue #78 AC1/AC3: a visible screen marker is detected with its
+/// confidence and an evidence line naming the marker, both in --json and
+/// in the human one-liner.
+#[test]
+fn detect_agent_reports_screen_marker_evidence() {
+    let server = HeadlessServer::start("detect-agent");
+    let workspace = cli(&server, &["new-workspace", "--name", "detect"]);
+    assert_success(&workspace);
+    let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+
+    let send = cli(
+        &server,
+        &["send", "--surface", &surface.to_string(), "--text", "printf 'codex> '\n"],
+    );
+    assert_success(&send);
+    let _ = wait_for_screen(&server, surface, "codex>");
+
+    let out = cli(&server, &["--json", "detect-agent", "--surface", &surface.to_string()]);
+    assert_success(&out);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["surface"].as_u64(), Some(surface));
+    assert_eq!(value["agent"].as_str(), Some("codex"));
+    assert_eq!(value["confidence"].as_str(), Some("medium"));
+    let evidence = value["evidence"].as_str().expect("evidence line");
+    assert!(evidence.contains("codex>"), "evidence was {evidence:?}");
+
+    // Human output: `<surface> <agent> <confidence> <evidence>`.
+    let plain = cli(&server, &["detect-agent", "--surface", &surface.to_string()]);
+    assert_success(&plain);
+    let text = String::from_utf8(plain.stdout).unwrap();
+    assert!(
+        text.trim().starts_with(&format!("{surface} codex medium ")),
+        "human line was {text:?}"
+    );
+}
+
+/// Issue #78 AC1: a bare shell detects as `unknown`, and an unknown
+/// surface id is a clean exit-1 error.
+#[test]
+fn detect_agent_unknown_for_bare_shell_and_errors_on_unknown_surface() {
+    let server = HeadlessServer::start("detect-unknown");
+    let workspace = cli(&server, &["new-workspace", "--name", "bare"]);
+    assert_success(&workspace);
+    let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+
+    let out = cli(&server, &["--json", "detect-agent", "--surface", &surface.to_string()]);
+    assert_success(&out);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["agent"].as_str(), Some("unknown"));
+    assert_eq!(value["confidence"], serde_json::Value::Null);
+    assert!(!value["evidence"].as_str().unwrap_or("").is_empty());
+
+    let bad = cli(&server, &["detect-agent", "--surface", "999"]);
+    assert_eq!(bad.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown surface 999"));
+}
+
+/// Issue #78 AC2: one call returns a `{surface: agent}` entry for every
+/// live pane.
+#[test]
+fn detect_agents_batch_returns_map_for_every_pane() {
+    let server = HeadlessServer::start("detect-batch");
+    let one = cli(&server, &["new-workspace", "--name", "one"]);
+    assert_success(&one);
+    let s1: u64 = String::from_utf8(one.stdout).unwrap().trim().parse().unwrap();
+    let two = cli(&server, &["new-workspace", "--name", "two"]);
+    assert_success(&two);
+    let s2: u64 = String::from_utf8(two.stdout).unwrap().trim().parse().unwrap();
+
+    let out = cli(&server, &["--json", "detect-agents"]);
+    assert_success(&out);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let agents = value["agents"].as_object().expect("agents map");
+    assert_eq!(agents.len(), 2, "one entry per surface, got {agents:?}");
+    assert_eq!(agents.get(&s1.to_string()).and_then(|v| v.as_str()), Some("unknown"));
+    assert_eq!(agents.get(&s2.to_string()).and_then(|v| v.as_str()), Some("unknown"));
+
+    // Human output: `<surface> <agent>` rows.
+    let plain = cli(&server, &["detect-agents"]);
+    assert_success(&plain);
+    let text = String::from_utf8(plain.stdout).unwrap();
+    assert!(text.contains(&format!("{s1} unknown")), "rows were {text:?}");
+    assert!(text.contains(&format!("{s2} unknown")), "rows were {text:?}");
+}
+
+/// Issue #78 AC4: `cmux agent-pattern add <name> --pattern <marker>`
+/// extends the live registry (noun form), `list` shows it, detection
+/// hits it, duplicates are rejected, and `remove` drops it.
+#[test]
+fn agent_pattern_add_round_trip_through_socket() {
+    let server = HeadlessServer::start("agent-pattern");
+    let workspace = cli(&server, &["new-workspace", "--name", "patterns"]);
+    assert_success(&workspace);
+    let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+
+    let add = cli(&server, &["agent-pattern", "add", "myagent", "--pattern", "MYMARKER>"]);
+    assert_success(&add);
+    assert!(add.stdout.is_empty(), "agent-pattern add should be quiet on success");
+
+    let list = cli(&server, &["agent-pattern", "list"]);
+    assert_success(&list);
+    let listed = String::from_utf8(list.stdout).unwrap();
+    assert!(listed.contains("myagent"), "list output: {listed}");
+    assert!(listed.contains("MYMARKER>"), "list output: {listed}");
+    // Bundled patterns are listed too.
+    assert!(listed.contains("claude"), "list output: {listed}");
+
+    let send = cli(
+        &server,
+        &["send", "--surface", &surface.to_string(), "--text", "printf 'MYMARKER> '\n"],
+    );
+    assert_success(&send);
+    let _ = wait_for_screen(&server, surface, "MYMARKER>");
+
+    let out = cli(&server, &["--json", "detect-agent", "--surface", &surface.to_string()]);
+    assert_success(&out);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["agent"].as_str(), Some("myagent"));
+
+    // Duplicate adds are a server error (exit 1).
+    let dup = cli(&server, &["agent-pattern", "add", "myagent", "--pattern", "MYMARKER>"]);
+    assert_eq!(dup.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&dup.stderr).contains("already registered"));
+
+    // Removing the pattern drops the detection back to unknown (the
+    // marker is still on screen, but nothing matches it anymore).
+    let remove = cli(&server, &["agent-pattern", "remove", "myagent"]);
+    assert_success(&remove);
+    let out = cli(&server, &["--json", "detect-agent", "--surface", &surface.to_string()]);
+    assert_success(&out);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["agent"].as_str(), Some("unknown"));
+
+    // Removing again errors: no user pattern by that name anymore.
+    let gone = cli(&server, &["agent-pattern", "remove", "myagent"]);
+    assert_eq!(gone.status.code(), Some(1));
+}
+
+/// Issue #78: `pane_json` carries the cached detection (`agent_name` /
+/// `agent_confidence`) per tab after a detect call, so fleet dashboards
+/// can read it from `list-workspaces` alone; a surface never detected
+/// reports null.
+#[test]
+fn list_workspaces_json_exposes_agent_name_per_tab() {
+    let server = HeadlessServer::start("agent-name-rpc");
+    let workspace = cli(&server, &["new-workspace", "--name", "named"]);
+    assert_success(&workspace);
+    let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let other = cli(&server, &["new-workspace", "--name", "other"]);
+    assert_success(&other);
+    let other_surface: u64 = String::from_utf8(other.stdout).unwrap().trim().parse().unwrap();
+
+    let send = cli(
+        &server,
+        &["send", "--surface", &surface.to_string(), "--text", "printf 'codex> '\n"],
+    );
+    assert_success(&send);
+    let _ = wait_for_screen(&server, surface, "codex>");
+
+    let detect = cli(&server, &["detect-agent", "--surface", &surface.to_string()]);
+    assert_success(&detect);
+
+    let list = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let tabs = value["workspaces"]
+        .as_array()
+        .expect("workspaces array")
+        .iter()
+        .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+        .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+        .flat_map(|pane| pane["tabs"].as_array().into_iter().flatten())
+        .collect::<Vec<_>>();
+    let tab = tabs
+        .iter()
+        .find(|tab| tab["surface"].as_u64() == Some(surface))
+        .expect("detected surface in list-workspaces");
+    assert_eq!(tab["agent_name"].as_str(), Some("codex"));
+    assert_eq!(tab["agent_confidence"].as_str(), Some("medium"));
+    // A surface that was never detected reports null, distinct from a
+    // cached unknown.
+    let other_tab = tabs
+        .iter()
+        .find(|tab| tab["surface"].as_u64() == Some(other_surface))
+        .expect("other surface in list-workspaces");
+    assert_eq!(other_tab["agent_name"], serde_json::Value::Null);
+    assert_eq!(other_tab["agent_confidence"], serde_json::Value::Null);
+}
+
+/// Issue #78 AC7: `[[agent_detection]] enabled = false` in cmux.toml
+/// turns detection off — both detect verbs error with a clear message
+/// instead of detecting.
+#[test]
+fn detect_agent_respects_agent_detection_config_disabled() {
+    let server = HeadlessServer::start_with_config(
+        "detect-disabled",
+        "[[agent_detection]]\nenabled = false\n",
+    );
+    let workspace = cli(&server, &["new-workspace", "--name", "off"]);
+    assert_success(&workspace);
+    let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+
+    let out = cli(&server, &["detect-agent", "--surface", &surface.to_string()]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("agent detection disabled"),
+        "stderr was {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let batch = cli(&server, &["detect-agents"]);
+    assert_eq!(batch.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&batch.stderr).contains("agent detection disabled"));
+}
+
 #[test]
 fn set_workspace_color_sets_and_clears() {
     let server = HeadlessServer::start("workspace-color");

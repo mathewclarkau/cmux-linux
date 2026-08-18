@@ -492,6 +492,37 @@ enum Command {
         #[serde(default)]
         state: Option<String>,
     },
+    /// Ambient agent detection on one surface (issue #78 AC1): walk the
+    /// pane PTY's process tree + scrape the visible screen against the
+    /// pattern registry, cache the result, and return it with a
+    /// confidence and the evidence line that triggered the match.
+    DetectAgent {
+        surface: SurfaceId,
+    },
+    /// Ambient detection on every live surface in one call (issue #78
+    /// AC2): `{"agents": {"<surface>": "<agent>"}}` for fleet
+    /// dashboards. Keys are surface ids — the cmux pane-content ids
+    /// (this repo's model is Workspace → Screen → Pane → Surface).
+    DetectAgents,
+    /// Add a user pattern to the live registry (issue #78 AC4). Patterns
+    /// are substring/glob (`*` wildcard), not regex. `kind` defaults to
+    /// `screen`; `confidence` defaults to `medium`.
+    AgentPatternAdd {
+        name: String,
+        pattern: String,
+        #[serde(default)]
+        kind: Option<String>,
+        #[serde(default)]
+        confidence: Option<String>,
+        #[serde(default)]
+        case_insensitive: Option<bool>,
+    },
+    /// List the effective pattern registry (bundled + user adds).
+    AgentPatternList,
+    /// Remove every user-added pattern named `name`.
+    AgentPatternRemove {
+        name: String,
+    },
     /// Rename THIS daemon's session (issue #63): atomically move its
     /// `.sock`/`.pid` to the new name, update the logical session name,
     /// and best-effort reparent the persisted snapshot file. The listener
@@ -662,6 +693,19 @@ fn pane_json(state: &State, id: PaneId, short_ids: &HashMap<u64, String>) -> Val
                 "cwd": surface.and_then(|s| s.cwd()),
                 "agent_state": surface.and_then(|s| s.agent_report()).map(|r| r.state.as_str()),
                 "agent_session": surface.and_then(|s| s.agent_report()).and_then(|r| r.session.clone()),
+                // Issue #78: the last ambient detection result (name +
+                // confidence), cached by `detect-agent`/`detect-agents`. A
+                // cached `unknown` detection reports as null so dashboards
+                // can distinguish "never detected" from "detected unknown".
+                "agent_name": surface
+                    .and_then(|s| s.detected_agent())
+                    .filter(|d| !d.is_unknown())
+                    .map(|d| d.agent),
+                "agent_confidence": surface
+                    .and_then(|s| s.detected_agent())
+                    .filter(|d| !d.is_unknown())
+                    .and_then(|d| d.confidence)
+                    .map(|c| c.as_str()),
                 "size": surface.map(|s| {
                     let (c, r) = s.size();
                     json!({"cols": c, "rows": r})
@@ -885,6 +929,27 @@ fn agent_report_json(surface: SurfaceId, report: &crate::AgentReport) -> Value {
         "source": report.source.as_str(),
         "session": report.session,
         "updated_at_ms": report.updated_at_ms,
+    })
+}
+
+/// Issue #78 AC1 response: agent name + confidence + the evidence line
+/// that triggered the match.
+fn detection_json(surface: SurfaceId, detection: &crate::agent_detect::Detection) -> Value {
+    json!({
+        "surface": surface,
+        "agent": detection.agent,
+        "confidence": detection.confidence.map(|c| c.as_str()),
+        "evidence": detection.evidence,
+    })
+}
+
+fn agent_pattern_json(pattern: &crate::agent_detect::AgentPattern) -> Value {
+    json!({
+        "name": pattern.name,
+        "kind": pattern.kind.as_str(),
+        "pattern": pattern.pattern,
+        "confidence": pattern.confidence.as_str(),
+        "case_insensitive": pattern.case_insensitive,
     })
 }
 
@@ -1391,6 +1456,52 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                 .map(|(id, report)| agent_report_json(*id, report))
                 .collect::<Vec<_>>();
             Ok(json!({ "agents": agents }))
+        }
+        Command::DetectAgent { surface } => {
+            let detection = mux.detect_agent(surface)?;
+            Ok(detection_json(surface, &detection))
+        }
+        Command::DetectAgents => {
+            let detections = mux.detect_all_agents()?;
+            let agents: serde_json::Map<String, Value> = detections
+                .into_iter()
+                .map(|(id, detection)| (id.to_string(), Value::String(detection.agent)))
+                .collect();
+            Ok(json!({ "agents": agents }))
+        }
+        Command::AgentPatternAdd { name, pattern, kind, confidence, case_insensitive } => {
+            let kind = match kind.as_deref() {
+                None | Some("screen") => crate::agent_detect::PatternKind::Screen,
+                Some("process") => crate::agent_detect::PatternKind::Process,
+                Some(other) => anyhow::bail!("bad kind {other:?} (want \"process\" or \"screen\")"),
+            };
+            let confidence = match confidence.as_deref() {
+                None | Some("medium") => crate::agent_detect::Confidence::Medium,
+                Some(other) => crate::agent_detect::Confidence::parse(other).ok_or_else(|| {
+                    anyhow::anyhow!("bad confidence {other:?} (want \"high\", \"medium\", or \"low\")")
+                })?,
+            };
+            let pattern = crate::agent_detect::AgentPattern {
+                name,
+                kind,
+                pattern,
+                confidence,
+                case_insensitive: case_insensitive.unwrap_or(false),
+            };
+            mux.agent_pattern_add(pattern.clone())?;
+            Ok(agent_pattern_json(&pattern))
+        }
+        Command::AgentPatternList => {
+            let patterns = mux
+                .agent_pattern_list()?
+                .iter()
+                .map(agent_pattern_json)
+                .collect::<Vec<_>>();
+            Ok(json!({ "patterns": patterns }))
+        }
+        Command::AgentPatternRemove { name } => {
+            mux.agent_pattern_remove(&name)?;
+            Ok(json!({}))
         }
         Command::RenameSession { new_name } => {
             // Issue #63. Scout-plan Q4 ordering: the socket rename is the
