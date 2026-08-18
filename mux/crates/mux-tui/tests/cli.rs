@@ -730,6 +730,187 @@ fn agent_read_rejects_unknown_source() {
 }
 
 #[test]
+fn wait_agent_status_returns_immediately_when_state_matches() {
+    // Issue #75 AC5 (Herdr semantics): if the agent already reports the
+    // target state, the wait returns immediately with the matched state.
+    let server = HeadlessServer::start("wait-immediate");
+    let workspace = cli(&server, &["new-workspace", "--name", "waiter-1"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "done",
+            "--agent",
+            "finisher",
+            "--message",
+            "all green",
+        ],
+    );
+    assert_success(&report);
+
+    let wait = cli(
+        &server,
+        &["--json", "wait-agent-status", "--target", "finisher", "--status", "done", "--timeout", "5000"],
+    );
+    assert_success(&wait);
+    let value: serde_json::Value = serde_json::from_slice(&wait.stdout).unwrap();
+    assert_eq!(value["matched"].as_bool(), Some(true));
+    assert_eq!(value["state"].as_str(), Some("done"));
+    assert_eq!(value["agent"].as_str(), Some("finisher"));
+    assert_eq!(value["message"].as_str(), Some("all green"));
+    assert!(value["elapsed_ms"].as_u64().unwrap() < 2000, "should be immediate");
+    assert!(value["text"].as_str().is_some(), "payload includes the read payload");
+}
+
+#[test]
+fn wait_agent_status_blocks_until_report() {
+    // Issue #75 AC5: the wait blocks on the server until a later report
+    // flips the agent into the target state (this is the orchestrator's
+    // "block on finished instead of polling screens" primitive).
+    let server = HeadlessServer::start("wait-blocks");
+    let workspace = cli(&server, &["new-workspace", "--name", "waiter-2"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "working", "--agent", "worker-w"],
+    );
+    assert_success(&report);
+
+    let socket = server.socket.clone();
+    let surface_str = surface.to_string();
+    let reporter = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        let _ = Command::new(bin())
+            .args(["--socket"])
+            .arg(&socket)
+            .args(["report-agent", "--surface", &surface_str, "--state", "idle", "--source", "hook"])
+            .env_remove("CMUX_MUX_SOCKET")
+            .output()
+            .unwrap();
+    });
+
+    let started = Instant::now();
+    let wait = cli(
+        &server,
+        &["--json", "wait-agent-status", "--target", "worker-w", "--status", "idle", "--timeout", "15000"],
+    );
+    let wall = started.elapsed();
+    assert_success(&wait);
+    let value: serde_json::Value = serde_json::from_slice(&wait.stdout).unwrap();
+    assert_eq!(value["state"].as_str(), Some("idle"));
+    assert!(
+        value["elapsed_ms"].as_u64().unwrap() >= 250,
+        "must have actually waited; elapsed_ms={}",
+        value["elapsed_ms"]
+    );
+    assert!(wall >= Duration::from_millis(350), "wall {wall:?}");
+    reporter.join().unwrap();
+}
+
+#[test]
+fn wait_agent_status_times_out_exit_1() {
+    let server = HeadlessServer::start("wait-timeout");
+    let workspace = cli(&server, &["new-workspace", "--name", "waiter-3"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "working", "--agent", "stuck-w"],
+    );
+    assert_success(&report);
+
+    let started = Instant::now();
+    let wait = cli(
+        &server,
+        &["wait-agent-status", "--target", "stuck-w", "--status", "done", "--timeout", "200"],
+    );
+    assert_eq!(wait.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&wait.stderr);
+    assert!(stderr.contains("timeout"), "stderr: {stderr}");
+    assert!(started.elapsed() < Duration::from_secs(5), "must fail at its own timeout, not a transport one");
+}
+
+#[test]
+fn wait_agent_status_zero_timeout_is_single_check() {
+    // timeout 0 = one immediate check, no blocking (mirrors wait-for).
+    let server = HeadlessServer::start("wait-zero");
+    let workspace = cli(&server, &["new-workspace", "--name", "waiter-4"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "idle", "--agent", "zero-w"],
+    );
+    assert_success(&report);
+
+    // Matching state: immediate success even with a zero budget.
+    let hit = cli(
+        &server,
+        &["--json", "wait-agent-status", "--target", "zero-w", "--status", "idle", "--timeout", "0"],
+    );
+    assert_success(&hit);
+
+    // Non-matching state: immediate timeout, exit 1, well under a second.
+    let started = Instant::now();
+    let miss = cli(
+        &server,
+        &["wait-agent-status", "--target", "zero-w", "--status", "done", "--timeout", "0"],
+    );
+    assert_eq!(miss.status.code(), Some(1));
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[test]
+fn agent_target_resolution_rejects_unknown_and_ambiguous_names() {
+    // Issue #75: every name-addressed verb resolves its --target the
+    // same way: exact name, else numeric surface id, else error — and a
+    // name reported by two panes is ambiguous across all of them.
+    let server = HeadlessServer::start("agent-targets");
+    let ws1 = cli(&server, &["new-workspace", "--name", "dup-a"]);
+    assert_success(&ws1);
+    let s1 = String::from_utf8(ws1.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let ws2 = cli(&server, &["new-workspace", "--name", "dup-b"]);
+    assert_success(&ws2);
+    let s2 = String::from_utf8(ws2.stdout).unwrap().trim().parse::<u64>().unwrap();
+    for surface in [s1, s2] {
+        let report = cli(
+            &server,
+            &["report-agent", "--surface", &surface.to_string(), "--state", "idle", "--agent", "dupe"],
+        );
+        assert_success(&report);
+    }
+
+    let read = cli(&server, &["agent-read", "--target", "dupe"]);
+    assert_eq!(read.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&read.stderr).contains("ambiguous"));
+
+    let send = cli(&server, &["agent-send", "--target", "dupe", "--text", "hi"]);
+    assert_eq!(send.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&send.stderr).contains("ambiguous"));
+
+    let wait = cli(
+        &server,
+        &["wait-agent-status", "--target", "dupe", "--status", "idle", "--timeout", "0"],
+    );
+    assert_eq!(wait.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&wait.stderr).contains("ambiguous"));
+
+    let unknown = cli(&server, &["agent-read", "--target", "nobody-here"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown agent"));
+
+    // Numeric ids disambiguate.
+    let by_id = cli(&server, &["agent-read", "--target", &s1.to_string()]);
+    assert_success(&by_id);
+}
+
+#[test]
 fn agent_send_types_text_without_enter() {
     // Issue #75 AC4: agent-send types literal text into the named pane
     // WITHOUT submitting it — the command must sit on the prompt

@@ -404,6 +404,16 @@ const VERBS: &[VerbSpec] = &[
         stream: false,
     },
     VerbSpec {
+        // Issue #75 AC5: block until the named agent reaches --status.
+        // The response can take up to --timeout ms, so run_command
+        // overrides this verb's socket read timeout.
+        name: "wait-agent-status",
+        allowed: &["target", "status", "timeout"],
+        build: build_wait_agent_status,
+        print: print_read_screen,
+        stream: false,
+    },
+    VerbSpec {
         name: "browser-reload",
         allowed: &["surface"],
         build: build_surface,
@@ -632,6 +642,17 @@ fn run_command(args: CliArgs) -> i32 {
     };
     if args.verb.stream {
         let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+    } else if args.verb.name == "wait-agent-status" {
+        // The wait verb's reply legitimately arrives after up to
+        // `--timeout` ms, so give the socket read that budget plus
+        // slack instead of the default 10 s (which would kill every
+        // longer wait with a spurious "transport error").
+        let wait_ms = args
+            .flags
+            .optional("timeout")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(wait_ms.saturating_add(5_000))));
     } else {
         let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     }
@@ -1224,6 +1245,22 @@ fn build_agent_send(flags: &FlagMap) -> Result<Value, UsageError> {
         value["shell"] = json!(shell);
     }
     Ok(value)
+}
+
+fn build_wait_agent_status(flags: &FlagMap) -> Result<Value, UsageError> {
+    // Issue #75 AC5: the issue's flag names (--status / --timeout in ms),
+    // mapped onto the wire's state/timeout_ms.
+    let status = flags.required("status")?;
+    if !matches!(status.as_str(), "idle" | "working" | "blocked" | "done" | "unknown") {
+        return Err(UsageError(format!(
+            "--status must be one of idle, working, blocked, done, unknown (got {status:?})"
+        )));
+    }
+    Ok(json!({
+        "target": flags.required("target")?,
+        "state": status,
+        "timeout_ms": parse_u64("timeout", &flags.required("timeout")?)?,
+    }))
 }
 
 fn build_kill_session(flags: &FlagMap) -> Result<Value, UsageError> {
