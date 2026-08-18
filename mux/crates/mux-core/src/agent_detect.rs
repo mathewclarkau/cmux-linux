@@ -261,24 +261,25 @@ pub fn detect(
         }
     });
 
-    if let Some((_, pattern, evidence)) = best_process {
-        return if pattern.confidence >= threshold {
-            Detection {
-                agent: pattern.name.clone(),
-                confidence: Some(pattern.confidence),
-                evidence: format!("process '{}' (pid {})", pattern.pattern, evidence.pid),
-            }
-        } else {
-            Detection::unknown(format!(
-                "process match '{}' below confidence threshold",
-                pattern.pattern
-            ))
+    // Threshold is the evidence bar for any *single* match (review fix
+    // F3), not a class filter: an above-threshold process match outranks
+    // everything (per AC3); a below-threshold process match does NOT
+    // discard a viable above-threshold screen match — we fall through
+    // and try the screen branch. An above-threshold screen match with
+    // no process evidence also wins.
+    if let Some((_, pattern, evidence)) = best_process.filter(|(_, p, _)| p.confidence >= threshold)
+    {
+        return Detection {
+            agent: pattern.name.clone(),
+            confidence: Some(pattern.confidence),
+            evidence: format!("process '{}' (pid {})", pattern.pattern, evidence.pid),
         };
     }
 
-    // No process match: fall back to the highest-confidence screen
-    // marker (pattern order breaks ties, keeping it deterministic —
-    // `min_by` keeps the FIRST minimum, so indices compare reversed).
+    // No (or below-threshold) process match: fall back to the highest-
+    // confidence screen marker (pattern order breaks ties, keeping it
+    // deterministic — `min_by` keeps the FIRST minimum, so indices
+    // compare reversed).
     let best_screen = patterns
         .iter()
         .enumerate()
@@ -290,7 +291,13 @@ pub fn detect(
             confidence: Some(pattern.confidence),
             evidence: format!("screen marker '{}'", pattern.pattern),
         },
-        _ => Detection::unknown("no agent markers above confidence threshold"),
+        _ => Detection::unknown(match best_process {
+            Some((_, pattern, _)) => format!(
+                "process match '{}' below confidence threshold and no screen marker met it",
+                pattern.pattern
+            ),
+            None => "no agent markers above confidence threshold".to_string(),
+        }),
     }
 }
 
@@ -640,5 +647,34 @@ mod tests {
         assert!(value > 0, "starttime must be nonzero (field 22, not itrealvalue=0); got {value}");
         let _ = child.kill();
         let _ = child.wait();
+    }
+
+    /// Review fix F3: a below-threshold process match must not discard a
+    /// viable above-threshold screen match. The threshold is the evidence
+    /// bar for *any* single match (not a class filter): a user-added
+    /// low-confidence process pattern plus a bundled medium-confidence
+    /// screen marker, with `min_confidence = "medium"`, should report
+    /// the screen match — not `unknown`.
+    #[test]
+    fn below_threshold_process_match_falls_back_to_screen_match() {
+        let mut patterns = bundled_patterns().unwrap();
+        patterns.push(AgentPattern {
+            name: "weakproc".into(),
+            kind: PatternKind::Process,
+            pattern: "sleep".into(),
+            confidence: Confidence::Low,
+            case_insensitive: false,
+        });
+        let process = vec![ev(5, "sleep", "sleep 999", Some(10))];
+        let detection = detect(&process, "codex> thinking", &patterns, Confidence::Medium);
+        assert_eq!(detection.agent, "codex");
+        assert_eq!(detection.confidence, Some(Confidence::Medium));
+        assert!(detection.evidence.contains("codex>"), "evidence: {:?}", detection.evidence);
+
+        // Sanity: with the threshold dropped to low, the (now-above-threshold)
+        // process match beats the screen match (process outranks screen).
+        let detection = detect(&process, "codex> thinking", &patterns, Confidence::Low);
+        assert_eq!(detection.agent, "weakproc");
+        assert_eq!(detection.confidence, Some(Confidence::Low));
     }
 }
