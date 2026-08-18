@@ -911,6 +911,159 @@ fn agent_target_resolution_rejects_unknown_and_ambiguous_names() {
 }
 
 #[test]
+fn agent_read_recent_source_includes_scrollback() {
+    // Review F1 / issue #75 AC3: --source recent must include SCROLLBACK
+    // content, not just the viewport (the same visibility-source
+    // semantics as pane read). Push a unique early marker out of the
+    // 24-row viewport with 60 filler lines; `visible` can't see it but
+    // `recent` (and its unwrapped variant) must.
+    let server = HeadlessServer::start("agent-read-recent");
+    let workspace = cli(&server, &["new-workspace", "--name", "recent-reader"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let send = cli(
+        &server,
+        &[
+            "send",
+            "--surface",
+            &surface.to_string(),
+            "--text",
+            "printf 'TOPMARK-7Q\\n'; i=0; while [ $i -lt 60 ]; do echo xFILLERx; i=$((i+1)); done; printf 'BOTMARK-7Q\\n'\n",
+        ],
+    );
+    assert_success(&send);
+
+    // Wait until the BOTMARK OUTPUT line rendered (a standalone line, not
+    // the echoed command text). VT processing is sequential, so by then
+    // TOPMARK + all filler rows are already in the terminal state.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let screen = wait_for_screen(&server, surface, "BOTMARK-7Q");
+        if screen.lines().any(|l| l.trim() == "BOTMARK-7Q") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "loop output never rendered; screen: {screen:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    // Sanity: the early marker (and the echoed command) really did scroll
+    // out of the 24-row viewport.
+    let visible = cli(
+        &server,
+        &["--json", "agent-read", "--target", &surface.to_string(), "--source", "visible", "--lines", "200"],
+    );
+    assert_success(&visible);
+    let visible_text =
+        serde_json::from_slice::<serde_json::Value>(&visible.stdout).unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    assert!(
+        !visible_text.contains("TOPMARK-7Q"),
+        "sanity failed: marker still visible in the viewport; got {visible_text:?}"
+    );
+    assert!(visible_text.contains("xFILLERx"), "viewport tail should still show filler");
+
+    // recent: scrollback + viewport, unwrapped variant included.
+    for source in ["recent", "recent-unwrapped"] {
+        let read = cli(
+            &server,
+            &["--json", "agent-read", "--target", &surface.to_string(), "--source", source, "--lines", "300"],
+        );
+        assert_success(&read);
+        let value = serde_json::from_slice::<serde_json::Value>(&read.stdout).unwrap();
+        let text = value["text"].as_str().unwrap();
+        assert!(
+            text.contains("TOPMARK-7Q"),
+            "--source {source} must reach scrollback (marker missing); got:\n{text}"
+        );
+        assert!(text.contains("xFILLERx"), "--source {source} must include the filler; got:\n{text}");
+        assert!(text.contains("BOTMARK-7Q"), "--source {source} must include the tail; got:\n{text}");
+    }
+
+    // And --lines still tails the recent window (top marker cut off).
+    let tail = cli(
+        &server,
+        &["--json", "agent-read", "--target", &surface.to_string(), "--source", "recent", "--lines", "3"],
+    );
+    assert_success(&tail);
+    let value = serde_json::from_slice::<serde_json::Value>(&tail.stdout).unwrap();
+    let text = value["text"].as_str().unwrap();
+    assert!(text.contains("BOTMARK-7Q"), "tail must keep the last line; got:\n{text}");
+    assert!(!text.contains("TOPMARK-7Q"), "tail must cut the top marker; got:\n{text}");
+}
+
+#[test]
+fn wait_agent_status_errors_when_surface_exits() {
+    // Review F2: an agent pane that dies while being waited on should
+    // error early ("exited while waiting"), not burn the full --timeout.
+    let server = HeadlessServer::start("wait-exit");
+    let workspace = cli(&server, &["new-workspace", "--name", "waiter-exit"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+    let report = cli(
+        &server,
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "working",
+            "--agent",
+            "exiter",
+        ],
+    );
+    assert_success(&report);
+
+    let socket = server.socket.clone();
+    let waiter = std::thread::spawn(move || {
+        Command::new(bin())
+            .args(["--socket"])
+            .arg(&socket)
+            .args([
+                "wait-agent-status",
+                "--target",
+                "exiter",
+                "--status",
+                "done",
+                "--timeout",
+                "10000",
+            ])
+            .env_remove("CMUX_MUX_SOCKET")
+            .output()
+            .unwrap()
+    });
+
+    // Let the wait subscribe server-side, then kill the pane.
+    std::thread::sleep(Duration::from_millis(400));
+    let close = cli(&server, &["close-surface", "--surface", &surface.to_string()]);
+    assert_success(&close);
+
+    let started = Instant::now();
+    let output = waiter.join().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a dead pane must fail the wait, not hang to the timeout; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("exited while waiting"),
+        "expected an early exit error, got: {stderr}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(8),
+        "must error well before the 10s timeout; took {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn agent_send_types_text_without_enter() {
     // Issue #75 AC4: agent-send types literal text into the named pane
     // WITHOUT submitting it — the command must sit on the prompt

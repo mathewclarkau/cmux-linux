@@ -574,6 +574,11 @@ enum Command {
     /// surfaced by the VT formatter — see spec/commands.md), with
     /// "recent-unwrapped" undoing soft line-wraps. `lines` tails the
     /// last N lines (default 40).
+    /// Issue #75 AC3: read a pane by agent name or surface id. `source`
+    /// is one of "visible" (default: viewport rows only), "recent" (a
+    /// bottom-anchored window including scrollback), or
+    /// "recent-unwrapped" (the recent window with soft line-wraps
+    /// re-joined). `lines` tails the last N lines (default 40).
     AgentRead {
         target: String,
         #[serde(default)]
@@ -1052,6 +1057,10 @@ fn wait_agent_status_json(
     report: &crate::AgentReport,
     elapsed_ms: u64,
 ) -> Value {
+    // The read payload is auxiliary to a MATCHED wait: `agent-read`
+    // propagates terminal-read errors (`??`), but failing an already-
+    // matched wait because a best-effort text snapshot failed would be
+    // worse, so an empty payload is the deliberate fallback here.
     let text =
         surface.try_with_terminal(|t| t.plain_text()).ok().and_then(|r| r.ok()).unwrap_or_default();
     json!({
@@ -1690,16 +1699,22 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             let surface_id = mux.resolve_agent_target(&target)?;
             let surface = get_surface(mux, surface_id)?;
             require_pty(&surface)?;
-            let unwrapped = match source.as_deref().unwrap_or("visible") {
-                "visible" | "recent" => false,
-                "recent-unwrapped" => true,
+            let lines = lines.unwrap_or(40);
+            // Herdr's visibility ladder (review F1): `visible` reads the
+            // viewport rows only; `recent`/`recent-unwrapped` read a
+            // bottom-anchored window that includes SCROLLBACK (the
+            // unwrapped variant re-joins soft-wrapped rows).
+            let text = match source.as_deref().unwrap_or("visible") {
+                "visible" => surface.try_with_terminal(|t| t.plain_text_viewport(false))??,
+                "recent" => surface.try_with_terminal(|t| t.plain_text_recent(lines, false))??,
+                "recent-unwrapped" => {
+                    surface.try_with_terminal(|t| t.plain_text_recent(lines, true))??
+                }
                 other => anyhow::bail!(
                     "bad source {other:?} (want \"visible\", \"recent\", or \"recent-unwrapped\")"
                 ),
             };
-            let text = surface
-                .try_with_terminal(|t| if unwrapped { t.plain_text_unwrapped() } else { t.plain_text() })??;
-            Ok(json!({ "surface": surface_id, "text": tail_lines(&text, lines.unwrap_or(40)) }))
+            Ok(json!({ "surface": surface_id, "text": tail_lines(&text, lines) }))
         }
         Command::AgentSend { target, text, shell } => {
             let surface_id = mux.resolve_agent_target(&target)?;
@@ -1751,6 +1766,16 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                             &report,
                             started.elapsed().as_millis() as u64,
                         ));
+                    }
+                    // Review F2: the pane died mid-wait (agent crashed /
+                    // surface closed). It can never reach the target
+                    // state, so error now instead of parking until the
+                    // deadline — the K3-orchestrator "wait for the agent
+                    // to finish" case wants the fast failure.
+                    Ok(MuxEvent::SurfaceExited(s)) if s == surface_id => {
+                        anyhow::bail!(
+                            "surface {surface_id} exited while waiting for agent status {state}"
+                        );
                     }
                     Ok(_) => continue,
                     Err(_) => anyhow::bail!("timeout waiting for agent status {state}"),

@@ -2346,7 +2346,7 @@ Params:
 | `source` | `string`  | default `"visible"` | `"visible"`, `"recent"`, or `"recent-unwrapped"` |
 | `lines`  | `usize`   | default 40         | Tail the last N lines (trailing blank rows dropped first) |
 
-`source` mirrors Herdr's visibility sources, degraded for now: the VT plain formatter covers the active screen only, so `recent` returns the same content as `visible` (scrollback is not yet surfaced); `recent-unwrapped` additionally undoes soft line-wraps.
+`source` mirrors Herdr's visibility ladder: `visible` reads the viewport rows only (what is on screen now, honouring a scrolled-up viewport); `recent` reads a bottom-anchored window that includes SCROLLBACK (the last `max(lines, viewport)` rows of the screen); `recent-unwrapped` is the recent window with soft line-wraps re-joined. All sources tail the result to `lines`.
 
 Result:
 
@@ -2417,7 +2417,7 @@ CLI mapping:
 | status | implemented           |
 | since  | protocol 6 (issue #75; additive) |
 
-Blocks until the target agent's reported state reaches `state`, then returns the matched report plus the pane's current text (the read payload). Herdr semantics: if the state already matches, return immediately. `timeout_ms: 0` is a single immediate check. Timeout expiry is the error `timeout waiting for agent status <state>` (CLI exit 1). Timeouts are capped at 600 000 ms server-side so a leaked waiter thread can't park on its connection forever. Blocking holds only this command's own connection thread; the event channel is unbounded, so reporters never block.
+Blocks until the target agent's reported state reaches `state`, then returns the matched report plus the pane's current text (the read payload). Herdr semantics: if the state already matches, return immediately. `timeout_ms: 0` is a single immediate check. Timeout expiry is the error `timeout waiting for agent status <state>` (CLI exit 1). If the target surface exits while waiting, the wait fails immediately with `surface <id> exited while waiting for agent status <state>` instead of parking until the deadline. Timeouts are capped at 600 000 ms server-side so a leaked waiter thread can't park on its connection forever. Blocking holds only this command's own connection thread; the event channel is unbounded, so reporters never block.
 
 Params:
 
@@ -2433,7 +2433,7 @@ Result:
 object{matched:true,surface:Id,state:string,agent:string|null,message:string|null,updated_at_ms:uint64,elapsed_ms:uint64,text:string}
 ```
 
-Errors: `bad state <s>`, `timeout <n>ms exceeds the 600000ms cap`, target errors as for `agent-read`, `timeout waiting for agent status <state>`.
+Errors: `bad state <s>`, `timeout <n>ms exceeds the 600000ms cap`, target errors as for `agent-read`, `surface <id> exited while waiting for agent status <state>`, `timeout waiting for agent status <state>`.
 
 CLI mapping:
 
