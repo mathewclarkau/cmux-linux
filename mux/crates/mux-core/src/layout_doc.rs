@@ -534,6 +534,7 @@ mod tests {
                     extra_env: vec![("FLEET_WORKER".into(), "9".into())],
                     cwd: Some("/tmp".into()),
                 }),
+                None,
             )
             .unwrap();
         assert!(s2.id > 0);

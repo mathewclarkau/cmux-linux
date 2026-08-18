@@ -2,7 +2,7 @@
 //! and broadcasts [`MuxEvent`]s to subscribed frontends.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -103,6 +103,10 @@ pub struct Mux {
     /// (issue #78 AC4). Session-lifetime only in v1 — not persisted
     /// across daemon restarts.
     custom_agent_patterns: Mutex<Vec<AgentPattern>>,
+    /// Operator-configured worktree path pattern (issue #77 AC6), set
+    /// from `mux-tui`'s `run_server` after `config::load()`.
+    /// `None` means the default `<repo>/../<repo>.<branch>/`.
+    worktree_pattern: Mutex<Option<String>>,
 }
 
 impl Mux {
@@ -130,6 +134,7 @@ impl Mux {
             socket_path: Mutex::new(None),
             agent_detection: Mutex::new(DetectionSettings::default()),
             custom_agent_patterns: Mutex::new(Vec::new()),
+            worktree_pattern: Mutex::new(None),
         })
     }
 
@@ -315,6 +320,7 @@ impl Mux {
                 tabs: vec![surface],
                 active_tab: 0,
                 active_at: self.next_active_at(),
+                worktrees: Vec::new(),
             },
         )
     }
@@ -697,7 +703,7 @@ reattaching to remote session {session_id} on {host} \
                         let overrides = layout_tab_overrides(tab)
                             .expect("a pty layout tab always maps to spawn overrides");
                         let surface = self
-                            .new_tab_with_overrides(Some(pane_id), None, None, Some(&overrides))
+                            .new_tab_with_overrides(Some(pane_id), None, None, Some(&overrides), None)
                             .map_err(|e| anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}"))?;
                         if let Some(name) = name {
                             self.rename_surface(surface.id, name.clone());
@@ -755,7 +761,7 @@ reattaching to remote session {session_id} on {host} \
                 let tab0 = &screen.panes[new_index].tabs[0];
                 let overrides = layout_tab_overrides(tab0);
                 let new_surface = self
-                    .split_with_overrides(root, (*dir).into(), None, overrides.as_ref())
+                    .split_with_overrides(root, (*dir).into(), None, overrides.as_ref(), None)
                     .map_err(|e| anyhow::anyhow!("pane {new_index}: {e} (pane not created)"))?;
                 let new_pane = self.with_state(|s| s.pane_of(new_surface.id).unwrap());
                 self.set_ratio(root, (*dir).into(), *ratio);
@@ -1016,18 +1022,23 @@ reattaching to remote session {session_id} on {host} \
         cwd: Option<String>,
         size: Option<(u16, u16)>,
     ) -> anyhow::Result<Arc<Surface>> {
-        self.new_tab_with_overrides(pane, cwd, size, None)
+        // Issue #76 override path, no worktree.
+        self.new_tab_with_overrides(pane, cwd, size, None, None)
     }
 
     /// Issue #76: [`Self::new_tab`] with explicit spawn overrides — the
     /// agent-start primitive (`cmux new-tab --exec -- <argv>` on the CLI,
-    /// `command`/`env` fields on the socket command).
+    /// `command`/`env` fields on the socket command). The optional
+    /// `worktree` is appended to the pane's `Pane.worktrees` registry on
+    /// attach (issue #77 AC4); passing both `overrides` and a `worktree`
+    /// is the `new-tab --exec --branch` composition.
     pub fn new_tab_with_overrides(
         self: &Arc<Self>,
         pane: Option<PaneId>,
         cwd: Option<String>,
         size: Option<(u16, u16)>,
         overrides: Option<&SpawnOverrides>,
+        worktree: Option<&crate::worktree::WorktreeRecord>,
     ) -> anyhow::Result<Arc<Surface>> {
         // Resolve and validate the target before spawning a child.
         let target = {
@@ -1043,6 +1054,22 @@ reattaching to remote session {session_id} on {host} \
             }
         };
         let Some(target) = target else {
+            // Empty session: still spawn inside the worktree if one was
+            // requested, then attach the record to the new pane.
+            if let Some(record) = worktree {
+                let surface = self.spawn_surface(Some(record.path.clone()), size, overrides)?;
+                let attached = self.attach_new_workspace(surface, None);
+                let pane = self.with_state(|s| s.pane_of(attached.id).unwrap());
+                {
+                    let mut state = self.state.lock().unwrap();
+                    if let Some(p) = state.panes.get_mut(&pane) {
+                        p.worktrees.push(record.clone());
+                    }
+                }
+                self.emit(MuxEvent::TreeChanged);
+                self.reap_if_dead(&attached);
+                return Ok(attached);
+            }
             return self.new_workspace_with_overrides(None, size, overrides);
         };
 
@@ -1058,6 +1085,9 @@ reattaching to remote session {session_id} on {host} \
                     pane.tabs.push(surface.id);
                     pane.active_tab = pane.tabs.len() - 1;
                     pane.active_at = active_at;
+                    if let Some(record) = worktree {
+                        pane.worktrees.push(record.clone());
+                    }
                     true
                 }
                 None => {
@@ -1074,6 +1104,52 @@ reattaching to remote session {session_id} on {host} \
         self.emit(MuxEvent::TreeChanged);
         self.reap_if_dead(&surface);
         Ok(surface)
+    }
+
+    /// `new-tab --branch <name>` (issue #77 AC4): create the worktree
+    /// BEFORE the surface spawns and pass its path as the spawn cwd, so
+    /// the pane starts inside the worktree — the agent launched into the
+    /// pane by the existing send flow lands on the branch by
+    /// construction. The record attaches to the pane owning the new tab.
+    pub fn new_tab_with_worktree(
+        self: &Arc<Self>,
+        pane: Option<PaneId>,
+        cwd: Option<String>,
+        size: Option<(u16, u16)>,
+        branch: &str,
+        label: Option<String>,
+    ) -> anyhow::Result<(Arc<Surface>, crate::worktree::WorktreeRecord)> {
+        // Repository to branch from: an explicit cwd wins, else the
+        // target pane's working directory (the active pane, matching
+        // new_tab's None semantics). With neither there is nothing to
+        // resolve a repository from.
+        let target = {
+            let state = self.state.lock().unwrap();
+            match pane {
+                Some(id) => {
+                    if !state.panes.contains_key(&id) {
+                        anyhow::bail!("unknown pane {id}");
+                    }
+                    Some(id)
+                }
+                None => state.active_pane(),
+            }
+        };
+        let start =
+            cwd.clone().or_else(|| target.and_then(|t| self.pane_surface_cwd(t)));
+        let Some(start) = start else {
+            anyhow::bail!("cannot resolve a repository: no --cwd and no pane working directory");
+        };
+        let record = self.create_worktree(&start, branch, label)?;
+        // Force the spawn cwd to the worktree path. Future callers can
+        // build their own overrides for new-tab --exec --branch
+        // composition; this wrapper keeps the simple --branch case to
+        // the canonical AC4 layout.
+        let mut overrides = SpawnOverrides::default();
+        overrides.cwd = Some(record.path.clone());
+        let surface =
+            self.new_tab_with_overrides(pane, cwd, size, Some(&overrides), Some(&record))?;
+        Ok((surface, record))
     }
 
     /// Create a browser tab in a pane (default: the active pane). When
@@ -1209,6 +1285,21 @@ reattaching to remote session {session_id} on {host} \
         surface.and_then(|s| s.pwd())
     }
 
+    /// Best-known working directory of a pane's active tab: the shell's
+    /// live OSC 7 report when available, otherwise the directory the
+    /// surface was spawned in. Unlike [`Self::pane_cwd`] (OSC 7 only),
+    /// this is what worktree resolution needs — a shell that never
+    /// reports OSC 7 (a bare `cat`, a fresh non-reporting shell) still
+    /// resolves its spawn repository (issue #77).
+    fn pane_surface_cwd(&self, pane: PaneId) -> Option<String> {
+        let surface = {
+            let state = self.state.lock().unwrap();
+            let active = state.panes.get(&pane)?.active_surface()?;
+            state.surfaces.get(&active).cloned()
+        };
+        surface.and_then(|s| s.cwd())
+    }
+
     /// Current cell size of a pane's active surface.
     fn pane_size(&self, pane: PaneId) -> Option<(u16, u16)> {
         let state = self.state.lock().unwrap();
@@ -1225,17 +1316,21 @@ reattaching to remote session {session_id} on {host} \
         dir: SplitDir,
         size: Option<(u16, u16)>,
     ) -> anyhow::Result<Arc<Surface>> {
-        self.split_with_overrides(target, dir, size, None)
+        // Issue #76 override path, no worktree.
+        self.split_with_overrides(target, dir, size, None, None)
     }
 
     /// Issue #76: [`Self::split`] with explicit spawn overrides for the
-    /// new pane's first tab.
+    /// new pane's first tab. The optional `worktree` is recorded on the
+    /// new pane so a subsequent `pane worktree list` sees it
+    /// (issue #77 AC4, the `split --exec --branch` composition).
     pub fn split_with_overrides(
         self: &Arc<Self>,
         target: PaneId,
         dir: SplitDir,
         size: Option<(u16, u16)>,
         overrides: Option<&SpawnOverrides>,
+        worktree: Option<&crate::worktree::WorktreeRecord>,
     ) -> anyhow::Result<Arc<Surface>> {
         let cwd = self.pane_cwd(target);
         // Halve the split axis as a fallback estimate; the frontend sends
@@ -1262,16 +1357,18 @@ reattaching to remote session {session_id} on {host} \
                 }
             }
             if done {
-                state.panes.insert(
-                    pane_id,
-                    Pane {
-                        id: pane_id,
-                        name: None,
-                        tabs: vec![surface.id],
-                        active_tab: 0,
-                        active_at,
-                    },
-                );
+                let mut pane = Pane {
+                    id: pane_id,
+                    name: None,
+                    tabs: vec![surface.id],
+                    active_tab: 0,
+                    active_at,
+                    worktrees: Vec::new(),
+                };
+                if let Some(record) = worktree {
+                    pane.worktrees.push(record.clone());
+                }
+                state.panes.insert(pane_id, pane);
             } else {
                 state.surfaces.remove(&surface.id);
             }
@@ -1283,6 +1380,87 @@ reattaching to remote session {session_id} on {host} \
         self.emit(MuxEvent::TreeChanged);
         self.reap_if_dead(&surface);
         Ok(surface)
+    }
+
+    /// `split --branch <name>` (issue #77 AC4): create the worktree
+    /// before spawning, so the NEW pane starts inside it and owns the
+    /// record.
+    pub fn split_with_worktree(
+        self: &Arc<Self>,
+        target: PaneId,
+        dir: SplitDir,
+        size: Option<(u16, u16)>,
+        branch: &str,
+        label: Option<String>,
+    ) -> anyhow::Result<(Arc<Surface>, crate::worktree::WorktreeRecord)> {
+        let start = self.pane_surface_cwd(target).ok_or_else(|| {
+            anyhow::anyhow!("pane {target} has no working directory to resolve a repository from")
+        })?;
+        let record = self.create_worktree(&start, branch, label)?;
+        let mut overrides = SpawnOverrides::default();
+        overrides.cwd = Some(record.path.clone());
+        let surface =
+            self.split_with_overrides(target, dir, size, Some(&overrides), Some(&record))?;
+        Ok((surface, record))
+    }
+
+    fn split_impl(
+        self: &Arc<Self>,
+        target: PaneId,
+        dir: SplitDir,
+        size: Option<(u16, u16)>,
+        spawn_cwd: Option<String>,
+        overrides: Option<&SpawnOverrides>,
+        worktree: Option<&crate::worktree::WorktreeRecord>,
+    ) -> anyhow::Result<(Arc<Surface>, Option<crate::worktree::WorktreeRecord>)> {
+        let cwd = spawn_cwd.or_else(|| self.pane_cwd(target));
+        // Halve the split axis as a fallback estimate; the frontend sends
+        // the exact size on its next layout pass.
+        let size = size.or_else(|| {
+            self.pane_size(target).map(|(cols, rows)| match dir {
+                SplitDir::Right => ((cols.saturating_sub(1) / 2).max(1), rows),
+                SplitDir::Down => (cols, (rows.saturating_sub(1) / 2).max(1)),
+            })
+        });
+        let surface = self.spawn_surface(cwd, size, overrides)?;
+        let pane_id = self.next_id();
+        let active_at = self.next_active_at();
+        let mut done = false;
+        {
+            let mut state = self.state.lock().unwrap();
+            'outer: for ws in state.workspaces.iter_mut() {
+                for screen in ws.screens.iter_mut() {
+                    if screen.root.split_leaf(target, dir, pane_id) {
+                        screen.active_pane = pane_id;
+                        done = true;
+                        break 'outer;
+                    }
+                }
+            }
+            if done {
+                let mut pane = Pane {
+                    id: pane_id,
+                    name: None,
+                    tabs: vec![surface.id],
+                    active_tab: 0,
+                    active_at,
+                    worktrees: Vec::new(),
+                };
+                if let Some(record) = worktree {
+                    pane.worktrees.push(record.clone());
+                }
+                state.panes.insert(pane_id, pane);
+            } else {
+                state.surfaces.remove(&surface.id);
+            }
+        }
+        if !done {
+            surface.kill();
+            anyhow::bail!("pane {target} not found");
+        }
+        self.emit(MuxEvent::TreeChanged);
+        self.reap_if_dead(&surface);
+        Ok((surface, worktree.cloned()))
     }
 
     /// Close one tab. When it was the pane's last tab, the pane collapses
@@ -1591,6 +1769,153 @@ reattaching to remote session {session_id} on {host} \
                 "remote surface: process tree not local; no screen marker matched".to_string();
         }
         Ok(detection)
+    }
+
+    /// Set the operator-configured worktree path pattern (issue #77
+    /// AC6). `None` (or never called) keeps the default
+    /// `<repo>/../<repo>.<branch>/`. Called from `mux-tui`'s `run_server`
+    /// after `config::load()`, mirroring `set_resolved_chrome`.
+    pub fn set_worktree_pattern(&self, pattern: Option<String>) {
+        *self.worktree_pattern.lock().unwrap() = pattern;
+    }
+
+    fn worktree_pattern(&self) -> String {
+        self.worktree_pattern
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| crate::worktree::DEFAULT_PATTERN.to_string())
+    }
+
+    /// Create the git worktree for `branch` rooted at the repository
+    /// containing `start_cwd`. Runs git OUTSIDE the state lock; on any
+    /// failure nothing is recorded and the caller's cwd is untouched
+    /// (issue #77 AC7).
+    fn create_worktree(
+        &self,
+        start_cwd: &str,
+        branch: &str,
+        label: Option<String>,
+    ) -> anyhow::Result<crate::worktree::WorktreeRecord> {
+        use crate::worktree;
+
+        let repo_root = worktree::find_repo_root(Path::new(start_cwd)).ok_or_else(|| {
+            anyhow::anyhow!("{start_cwd:?} is not inside a git repository")
+        })?;
+        let path = worktree::resolve_worktree_path(&repo_root, &self.worktree_pattern(), branch)?;
+        worktree::git_worktree_add(&repo_root, branch, &path)?;
+        Ok(crate::worktree::WorktreeRecord {
+            branch: branch.to_string(),
+            path: path.to_string_lossy().into_owned(),
+            label,
+            created_at_ms: crate::surface::now_ms(),
+        })
+    }
+
+    /// `pane worktree create` (issue #77 AC1): create the worktree for
+    /// `branch`, record it on the pane, and `cd` the pane's active tab
+    /// into it. On failure (dirty tree, bad branch, no repository) the
+    /// error propagates and the pane is left untouched (AC7).
+    pub fn pane_worktree_create(
+        self: &Arc<Self>,
+        pane: PaneId,
+        branch: &str,
+        label: Option<String>,
+    ) -> anyhow::Result<crate::worktree::WorktreeRecord> {
+        let surface = {
+            let state = self.state.lock().unwrap();
+            let Some(p) = state.panes.get(&pane) else {
+                anyhow::bail!("unknown pane {pane}")
+            };
+            let active = p
+                .active_surface()
+                .ok_or_else(|| anyhow::anyhow!("pane {pane} has no active tab"))?;
+            state.surfaces.get(&active).cloned()
+        };
+        let Some(surface) = surface else {
+            anyhow::bail!("pane {pane} has no active surface")
+        };
+        if surface.kind() != crate::SurfaceKind::Pty {
+            anyhow::bail!("pane {pane}'s active tab is not a pty surface");
+        }
+        let cwd = surface
+            .cwd()
+            .ok_or_else(|| anyhow::anyhow!("pane {pane} has no working directory yet"))?;
+        let record = self.create_worktree(&cwd, branch, label)?;
+        {
+            let mut state = self.state.lock().unwrap();
+            let Some(p) = state.panes.get_mut(&pane) else {
+                anyhow::bail!("unknown pane {pane}")
+            };
+            p.worktrees.push(record.clone());
+        }
+        // Same live `cd` the persist path uses (restore_tab): the pane
+        // keeps its shell, it just moves into the worktree. Best-effort:
+        // a dead pty keeps the record, which list/remove still manage.
+        let _ = surface.write_bytes(
+            format!("cd {} && clear\n", crate::persist::shell_quote(&record.path)).as_bytes(),
+        );
+        self.emit(MuxEvent::TreeChanged);
+        Ok(record)
+    }
+
+    /// `pane worktree list` (issue #77 AC2): every worktree attached to
+    /// the pane over its lifetime, in creation order.
+    pub fn pane_worktree_list(
+        &self,
+        pane: PaneId,
+    ) -> anyhow::Result<Vec<crate::worktree::WorktreeRecord>> {
+        let state = self.state.lock().unwrap();
+        let Some(p) = state.panes.get(&pane) else {
+            anyhow::bail!("unknown pane {pane}")
+        };
+        Ok(p.worktrees.clone())
+    }
+
+    /// `pane worktree remove` (issue #77 AC3): `git worktree remove` +
+    /// `prune`, then drop the record. Refuses (error, no force flag)
+    /// while the pane's working directory sits inside the target
+    /// worktree; a dirty worktree fails via git's own error.
+    pub fn pane_worktree_remove(self: &Arc<Self>, pane: PaneId, branch: &str) -> anyhow::Result<()> {
+        use crate::worktree;
+
+        let (record, cwd) = {
+            let state = self.state.lock().unwrap();
+            let Some(p) = state.panes.get(&pane) else {
+                anyhow::bail!("unknown pane {pane}")
+            };
+            let Some(record) = p.worktrees.iter().find(|w| w.branch == branch) else {
+                anyhow::bail!("no worktree for branch {branch:?} on pane {pane}")
+            };
+            let record = record.clone();
+            let cwd = p
+                .active_surface()
+                .and_then(|s| state.surfaces.get(&s))
+                .and_then(|s| s.cwd());
+            (record, cwd)
+        };
+        if cwd.as_deref().is_some_and(|cwd| Path::new(cwd).starts_with(record.path.as_str())) {
+            anyhow::bail!(
+                "pane {pane} is inside {}; cd elsewhere before removing it",
+                record.path
+            );
+        }
+        // Resolve the MAIN repository through the worktree's own `.git`
+        // pointer so remove/prune run from a stable repo context even if
+        // the pane has since cd'd away.
+        let root = worktree::main_repo_root(Path::new(&record.path)).ok_or_else(|| {
+            anyhow::anyhow!("could not resolve the main repository for worktree {}", record.path)
+        })?;
+        worktree::git_worktree_remove(&root, Path::new(&record.path))?;
+        worktree::git_worktree_prune(&root)?;
+        {
+            let mut state = self.state.lock().unwrap();
+            if let Some(p) = state.panes.get_mut(&pane) {
+                p.worktrees.retain(|w| w.branch != branch);
+            }
+        }
+        self.emit(MuxEvent::TreeChanged);
+        Ok(())
     }
 
     /// Set a screen's user-visible name. An empty name clears it (the
@@ -2056,9 +2381,9 @@ mod tests {
             }],
             active_workspace: 0,
             panes: HashMap::from([
-                (p1, Pane { id: p1, name: None, tabs: vec![1], active_tab: 0, active_at: 1 }),
-                (p2, Pane { id: p2, name: None, tabs: vec![2], active_tab: 0, active_at: 2 }),
-                (p3, Pane { id: p3, name: None, tabs: vec![3], active_tab: 0, active_at: 3 }),
+                (p1, Pane { id: p1, name: None, tabs: vec![1], active_tab: 0, active_at: 1, worktrees: Vec::new() }),
+                (p2, Pane { id: p2, name: None, tabs: vec![2], active_tab: 0, active_at: 2, worktrees: Vec::new() }),
+                (p3, Pane { id: p3, name: None, tabs: vec![3], active_tab: 0, active_at: 3, worktrees: Vec::new() }),
             ]),
             surfaces: HashMap::new(),
         };
@@ -2688,5 +3013,211 @@ mod tests {
             );
             assert_eq!(s.active_workspace, 0);
         });
+    }
+
+    // --- Per-pane git worktrees (issue #77) ---
+
+    /// A temp git repo with one commit, for worktree tests. `git` is
+    /// part of the pinned dev environment (AGENTS.md; CI images).
+    fn temp_git_repo(name: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let dir = std::env::temp_dir().join(format!(
+            "cmux-mux-wt-{name}-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = std::process::Command::new("git").arg("init").arg(&dir).output().unwrap();
+        assert!(
+            out.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.email=cmux@test", "-c", "user.name=cmux"])
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git commit failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        dir
+    }
+
+    /// A workspace whose pane's active tab is parked inside `repo`, so
+    /// worktree ops can resolve the repository from the pane's cwd.
+    fn pane_parked_in_repo(mux: &Arc<Mux>, repo: &std::path::Path) -> PaneId {
+        let s1 = mux.new_workspace(None, None).unwrap();
+        let pane = mux.with_state(|s| s.pane_of(s1.id).unwrap());
+        mux.new_tab(Some(pane), Some(repo.to_string_lossy().into_owned()), None).unwrap();
+        pane
+    }
+
+    #[test]
+    fn pane_worktree_create_records_and_lists_history() {
+        let mux = test_mux();
+        let repo = temp_git_repo("create-list");
+        let pane = pane_parked_in_repo(&mux, &repo);
+
+        let r1 = mux.pane_worktree_create(pane, "feat-auth", Some("auth".into())).unwrap();
+        assert_eq!(r1.branch, "feat-auth");
+        assert_eq!(r1.label.as_deref(), Some("auth"));
+        // Default pattern: <repo>/../<repo>.<branch>/ (issue #77 AC1/AC6).
+        assert!(
+            r1.path.ends_with(".feat-auth"),
+            "default pattern should be <repo>.<branch>, got {}",
+            r1.path
+        );
+        let wt1 = std::path::PathBuf::from(&r1.path);
+        assert!(wt1.is_dir(), "worktree {} should exist on disk", r1.path);
+        assert!(wt1.join(".git").is_file(), "linked worktree carries a .git file");
+        assert!(r1.created_at_ms > 0);
+
+        // A pane accumulates worktrees over its lifetime (AC2).
+        let r2 = mux.pane_worktree_create(pane, "feat-docs", None).unwrap();
+        let list = mux.pane_worktree_list(pane).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].branch, "feat-auth");
+        assert_eq!(list[1].branch, "feat-docs");
+        assert_eq!(list[1].label, None);
+        assert!(mux.pane_worktree_list(9999).is_err(), "unknown pane should error");
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&r1.path);
+        let _ = std::fs::remove_dir_all(&r2.path);
+    }
+
+    #[test]
+    fn pane_worktree_remove_prunes_and_drops_record() {
+        let mux = test_mux();
+        let repo = temp_git_repo("remove");
+        let pane = pane_parked_in_repo(&mux, &repo);
+        let record = mux.pane_worktree_create(pane, "feat-auth", None).unwrap();
+        // The pane's active tab is parked in the REPO (not the
+        // worktree), so remove is allowed.
+
+        mux.pane_worktree_remove(pane, "feat-auth").unwrap();
+        assert!(mux.pane_worktree_list(pane).unwrap().is_empty());
+        assert!(!std::path::PathBuf::from(&record.path).exists(), "worktree dir should be gone");
+        // git's own registry no longer knows the branch (remove + prune).
+        let out = std::process::Command::new("git")
+            .args(["worktree", "list"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let listing = String::from_utf8_lossy(&out.stdout);
+        assert!(!listing.contains("feat-auth"), "git worktree list should drop feat-auth: {listing}");
+
+        // Removing again finds no record.
+        assert!(mux.pane_worktree_remove(pane, "feat-auth").is_err());
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn new_tab_with_branch_spawns_inside_worktree() {
+        let mux = test_mux();
+        let repo = temp_git_repo("new-tab-branch");
+        let s1 = mux.new_workspace(None, None).unwrap();
+        let pane = mux.with_state(|s| s.pane_of(s1.id).unwrap());
+
+        // AC4: the worktree is created BEFORE the surface spawns, so the
+        // pane starts inside it by construction.
+        let (surface, record) = mux
+            .new_tab_with_worktree(
+                Some(pane),
+                Some(repo.to_string_lossy().into_owned()),
+                None,
+                "feat-nt",
+                Some("auth".into()),
+            )
+            .unwrap();
+        assert_eq!(surface.cwd().as_deref(), Some(record.path.as_str()));
+        assert!(std::path::PathBuf::from(&record.path).is_dir());
+        let list = mux.pane_worktree_list(pane).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].branch, "feat-nt");
+        assert_eq!(list[0].label.as_deref(), Some("auth"));
+
+        // Split with a branch: the NEW pane starts inside its worktree
+        // and owns the record.
+        let (s2, rec2) =
+            mux.split_with_worktree(pane, SplitDir::Right, None, "feat-split", None).unwrap();
+        assert_eq!(s2.cwd().as_deref(), Some(rec2.path.as_str()));
+        let p2 = mux.with_state(|s| s.pane_of(s2.id).unwrap());
+        assert_eq!(mux.pane_worktree_list(p2).unwrap().len(), 1);
+        assert_eq!(
+            mux.pane_worktree_list(pane).unwrap().len(),
+            1,
+            "the split's worktree record belongs to the new pane"
+        );
+
+        // Empty session: a branch-aware new tab creates the workspace
+        // with its pane already inside the worktree.
+        let mux2 = test_mux();
+        let (s3, rec3) = mux2
+            .new_tab_with_worktree(
+                None,
+                Some(repo.to_string_lossy().into_owned()),
+                None,
+                "feat-empty",
+                None,
+            )
+            .unwrap();
+        assert_eq!(s3.cwd().as_deref(), Some(rec3.path.as_str()));
+        let p3 = mux2.with_state(|s| s.pane_of(s3.id).unwrap());
+        assert_eq!(mux2.pane_worktree_list(p3).unwrap().len(), 1);
+
+        // A worktree failure propagates and spawns nothing.
+        let before = mux2.with_state(|s| s.surfaces.len());
+        assert!(mux2
+            .new_tab_with_worktree(
+                None,
+                Some(repo.to_string_lossy().into_owned()),
+                None,
+                "bad..name",
+                None
+            )
+            .is_err());
+        assert_eq!(mux2.with_state(|s| s.surfaces.len()), before);
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&record.path);
+        let _ = std::fs::remove_dir_all(&rec2.path);
+        let _ = std::fs::remove_dir_all(&rec3.path);
+    }
+
+    #[test]
+    fn pane_worktree_create_failure_leaves_no_record() {
+        let mux = test_mux();
+        let repo = temp_git_repo("create-failure");
+        let pane = pane_parked_in_repo(&mux, &repo);
+
+        let err = mux.pane_worktree_create(pane, "bad..name", None).unwrap_err();
+        assert!(
+            err.to_string().contains("not a valid branch name"),
+            "git's error should propagate (AC7), got: {err}"
+        );
+        assert!(mux.pane_worktree_list(pane).unwrap().is_empty(), "no record on failure (AC7)");
+        // The pane's working directory is unchanged.
+        let cwd = mux.with_state(|s| {
+            let active = s.panes[&pane].active_surface().unwrap();
+            s.surfaces[&active].cwd()
+        });
+        assert_eq!(cwd.as_deref(), Some(repo.to_string_lossy().as_ref()), "pane cwd unchanged (AC7)");
+
+        // Not-in-a-repo also propagates cleanly.
+        let bare = std::env::temp_dir().join(format!("cmux-mux-wt-bare-{}", std::process::id()));
+        std::fs::create_dir_all(&bare).unwrap();
+        mux.new_tab(Some(pane), Some(bare.to_string_lossy().into_owned()), None).unwrap();
+        let err = mux.pane_worktree_create(pane, "feat-x", None).unwrap_err();
+        assert!(err.to_string().contains("not inside a git repository"), "got: {err}");
+        assert!(mux.pane_worktree_list(pane).unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&bare);
     }
 }

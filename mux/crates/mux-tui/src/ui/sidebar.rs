@@ -137,8 +137,22 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
         let screen = ws.active_screen_ref();
         let pane = screen.and_then(|s| s.pane(s.active_pane));
         let title = pane.map(|p| p.display_name()).unwrap_or("shell");
-        let branch = pane.and_then(|p| p.active_cwd()).and_then(|cwd| app.git_info.branch_for(cwd));
-        let prefix = branch.map(|b| format!("{b} · ")).unwrap_or_default();
+        // Issue #77 AC5: when the pane owns worktree records, the badge
+        // shows the latest worktree's branch plus its short HEAD sha
+        // (`feat-auth: abc1234`), read from the worktree itself so it
+        // stays correct even after the pane cd's around. Without a
+        // record, fall back to the repo branch of the active tab's cwd.
+        let prefix = if let Some(worktree) = pane.and_then(|p| p.active_worktree()) {
+            match app.git_info.head_short_for(&worktree.path) {
+                Some(sha) => format!("{}: {} · ", worktree.branch, sha),
+                None => format!("{} · ", worktree.branch),
+            }
+        } else {
+            pane.and_then(|p| p.active_cwd())
+                .and_then(|cwd| app.git_info.branch_for(cwd))
+                .map(|b| format!("{b} · "))
+                .unwrap_or_default()
+        };
         let prefix_w = prefix.chars().count();
         // Issue #78 AC6: the active pane's detected agent as a short
         // bracketed badge appended to the subtitle (e.g. `main.rs [claude]`).

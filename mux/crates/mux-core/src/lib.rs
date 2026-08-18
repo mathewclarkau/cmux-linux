@@ -18,6 +18,7 @@ pub mod process;
 pub mod remote_pty;
 mod short_id;
 mod surface;
+pub mod worktree;
 
 pub mod agent_detect;
 pub mod layout;
@@ -48,6 +49,7 @@ pub use model::{IconName, Node, Pane, Screen, State, Workspace};
 pub use mux::{Mux, MuxEvent};
 pub use remote_pty::RemoteSpec;
 pub use short_id::assign_short_ids;
+pub use worktree::WorktreeRecord;
 pub use surface::{
     AgentReport, AgentState, AgentStateSource, AttachFrame, AttachStream, BrowserAttachState,
     BrowserFrame, BrowserFrameStream, BrowserSource, BrowserStatus, DefaultColors, SpawnOverrides,

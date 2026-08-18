@@ -398,14 +398,18 @@ Creates a new PTY tab in a pane and makes it the active tab. If `pane` is absent
 
 Params:
 
-| Name   | JSON type | Required/default | Constraints                       |
-| ------ | --------- | ---------------- | --------------------------------- |
-| `pane` | `Id`      | default null     | Target pane; unknown ids error    |
-| `cwd`  | `string`  | default null     | PTY child working directory       |
-| `cols` | `uint16`  | default null     | Used only when paired with `rows` |
-| `rows` | `uint16`  | default null     | Used only when paired with `cols` |
+| Name     | JSON type | Required/default | Constraints                                   |
+| -------- | --------- | ---------------- | --------------------------------------------- |
+| `pane`   | `Id`      | default null     | Target pane; unknown ids error                |
+| `cwd`    | `string`  | default null     | PTY child working directory                   |
+| `cols`   | `uint16`  | default null     | Used only when paired with `rows`             |
+| `rows`   | `uint16`  | default null     | Used only when paired with `cols`             |
+| `branch` | `string`  | default null     | Issue #77: create a git worktree, spawn inside |
+| `label`  | `string`  | default null     | Display label for the worktree record          |
 
 If only one of `cols` or `rows` is present, v5 ignores both because the server uses `cols.zip(rows)`.
+
+With `branch` (issue #77 AC4), the server runs `git worktree add -b <branch> <path>` BEFORE spawning the tab and passes the worktree path as the spawn cwd, so the pane starts inside the worktree; the agent is then launched into it by the existing `send` flow. The repository is resolved from `cwd` (explicit, else the target pane's working directory — the active pane when `pane` is absent). The record is attached to the pane owning the new tab and appears in `pane-worktree-list` and in `list-workspaces` pane JSON.
 
 Result:
 
@@ -419,6 +423,9 @@ Errors:
 | ------------------------------------- | ------------------------------------- |
 | `unknown pane <id>`                   | Supplied pane id does not exist       |
 | `pane disappeared while creating tab` | Target pane vanished after validation |
+| `"<path>" is not inside a git repository` | `branch` set but no repository resolves |
+| `cannot resolve a repository: ...`   | Empty session, `branch` set, no `cwd` |
+| git error string                      | `git worktree add` failed (bad branch name, dirty tree, existing path) — nothing spawns |
 | spawn or PTY error string             | PTY creation or child spawn fails     |
 | `bad request: ...`                    | Wrong JSON type                       |
 
@@ -427,10 +434,12 @@ CLI mapping:
 | Item         | Value                                                  |
 | ------------ | ------------------------------------------------------ |
 | Verb         | `new-tab`                                              |
-| Flags        | `[--pane <id>] [--cwd <path>] [--cols <n> --rows <n>]` |
+| Flags        | `[--pane <id>] [--cwd <path>] [--cols <n> --rows <n>] [--branch <name> [--label <text>]] [--prompt-file <path>]` |
 | Plain stdout | new surface id followed by newline                     |
 | JSON stdout  | exact result object                                    |
 | Exit codes   | common                                                 |
+
+`--prompt-file` reads a leading `---` frontmatter block (`branch:`/`label:` keys, closed by `---`) from an agent prompt file and maps it onto `--branch`/`--label` (issue #77 AC4: "when a pane starts, if a `branch: <name>` frontmatter is present in the agent prompt, the pane auto-creates the worktree before launching the agent"). Strict: malformed frontmatter (unterminated block, unknown/duplicate keys, empty values) is a usage error, exit 2. `--prompt-file` cannot be combined with `--branch`/`--label`.
 
 Example:
 
@@ -600,12 +609,14 @@ Splits the screen containing `pane`, inserts a new pane after the target leaf, s
 
 Params:
 
-| Name   | JSON type | Required/default | Constraints                       |
-| ------ | --------- | ---------------- | --------------------------------- |
-| `pane` | `Id`      | required         | Target split leaf                 |
-| `dir`  | `string`  | required         | `"right"` or `"down"`             |
-| `cols` | `uint16`  | default null     | Used only when paired with `rows` |
-| `rows` | `uint16`  | default null     | Used only when paired with `cols` |
+| Name     | JSON type | Required/default | Constraints                                   |
+| -------- | --------- | ---------------- | --------------------------------------------- |
+| `pane`   | `Id`      | required         | Target split leaf                             |
+| `dir`    | `string`  | required         | `"right"` or `"down"`                         |
+| `cols`   | `uint16`  | default null     | Used only when paired with `rows`             |
+| `rows`   | `uint16`  | default null     | Used only when paired with `cols`             |
+| `branch` | `string`  | default null     | Issue #77: worktree; the NEW pane spawns inside and owns the record |
+| `label`  | `string`  | default null     | Display label for the worktree record          |
 
 Result:
 
@@ -619,6 +630,8 @@ Errors:
 | -------------------------------------------- | ------------------------------------------- |
 | `bad dir "<value>" (want "right" or "down")` | `dir` is not allowed                        |
 | `pane <id> not found`                        | Target pane is not in any screen split tree |
+| `pane <id> has no working directory to resolve a repository from` | `branch` set but the pane has no known cwd |
+| git error string                             | `git worktree add` failed; nothing spawns   |
 | spawn or PTY error string                    | PTY creation or child spawn fails           |
 | `bad request: ...`                           | Missing fields or wrong JSON type           |
 
@@ -627,7 +640,7 @@ CLI mapping:
 | Item         | Value                              |
 | ------------ | ---------------------------------- |
 | Verb         | `split`                            |
-| Flags        | `--pane <id> --dir right           | down [--cols <n> --rows <n>]` |
+| Flags        | `--pane <id> --dir right           | down [--cols <n> --rows <n>] [--branch <name> [--label <text>]] |
 | Plain stdout | new surface id followed by newline |
 | JSON stdout  | exact result object                |
 | Exit codes   | common                             |
@@ -2306,6 +2319,159 @@ Example:
 {"id":108,"cmd":"report-agent","surface":1,"state":"working","source":"socket","session":"abc"}
 {"id":108,"ok":true,"data":{"surface":1,"state":"working","source":"socket","session":"abc"}}
 ```
+
+### pane-worktree-create
+
+| Field  | Value                    |
+| ------ | ------------------------ |
+| name   | `pane-worktree-create`   |
+| status | implemented              |
+| since  | protocol 6               |
+
+Creates a git worktree for `branch` rooted at the pane's repository, records it on the pane, and `cd`s the pane's active tab into it (issue #77 AC1). The worktree path pattern is `<repo>/../<repo>.<branch>/` by default; a `[[worktree_pattern]]` entry in `mux.toml`/`mux.json` overrides it (the issue text names this config block `cmux.toml`; cmux reads `mux.toml`/`mux.json` via `CMUX_MUX_CONFIG` or `~/.config/cmux/`). `/` in a branch name maps to `-` in the directory component. On any failure the error propagates (`ok:false`, CLI exit 1) and the pane is untouched — cwd unchanged, no record kept (AC7).
+
+The record is session-scoped: a daemon restart loses the registry (the on-disk worktrees remain and stay visible to `git worktree list`). `pane worktree remove` after a restart reports "no worktree for branch …".
+
+Params:
+
+| Name     | JSON type | Required/default | Constraints                          |
+| -------- | --------- | ---------------- | ------------------------------------ |
+| `pane`   | `Id`      | required         | Pane whose active tab resolves the repo |
+| `branch` | `string`  | required         | Branch for `git worktree add -b`     |
+| `label`  | `string`  | default null     | Display badge (sidebar / list)       |
+
+Result:
+
+```text
+object{pane:Id,branch:string,path:string}
+```
+
+Errors:
+
+| Error                                        | Condition                                    |
+| -------------------------------------------- | -------------------------------------------- |
+| `unknown pane <id>`                          | Pane id does not exist                       |
+| `pane <id> has no active tab`                | Pane has no surfaces                         |
+| `pane <id>'s active tab is not a pty surface`| Active tab is a browser surface              |
+| `"<cwd>" is not inside a git repository`     | The pane's working directory is outside git  |
+| `pane <id> has no working directory yet`     | No OSC 7 report and no spawn cwd             |
+| git error string                             | `git worktree add` failed (bad branch name, dirty tree, existing path, branch already checked out) |
+| `bad request: ...`                           | Missing fields or wrong JSON type            |
+
+CLI mapping:
+
+| Item         | Value                                                     |
+| ------------ | --------------------------------------------------------- |
+| Verb         | `pane-worktree-create` (alias: `pane worktree create`)    |
+| Flags        | `--pane <id> --branch <name> [--label <text>]`            |
+| Plain stdout | the worktree path followed by newline                     |
+| JSON stdout  | exact result object                                       |
+| Exit codes   | common                                                    |
+
+Example:
+
+```json
+{"id":201,"cmd":"pane-worktree-create","pane":3,"branch":"feat-auth","label":"auth"}
+{"id":201,"ok":true,"data":{"pane":3,"branch":"feat-auth","path":"/src/proj.feat-auth"}}
+```
+
+### pane-worktree-list
+
+| Field  | Value                  |
+| ------ | ---------------------- |
+| name   | `pane-worktree-list`   |
+| status | implemented            |
+| since  | protocol 6             |
+
+Returns every worktree attached to the pane over its lifetime, in creation order (issue #77 AC2 — a pane accumulates records as it moves between branches; removal drops a record but later ones stay).
+
+Params:
+
+| Name   | JSON type | Required/default | Constraints            |
+| ------ | --------- | ---------------- | ---------------------- |
+| `pane` | `Id`      | required         | Unknown ids are an error |
+
+Result:
+
+```text
+object{worktrees:array{branch:string,path:string,label:string|null,created_at_ms:uint64}}
+```
+
+Errors:
+
+| Error                 | Condition                   |
+| --------------------- | --------------------------- |
+| `unknown pane <id>`   | Pane id does not exist      |
+| `bad request: ...`    | Missing fields or wrong type |
+
+CLI mapping:
+
+| Item         | Value                                                   |
+| ------------ | ------------------------------------------------------- |
+| Verb         | `pane-worktree-list` (alias: `pane worktree list`)      |
+| Flags        | `--pane <id>`                                           |
+| Plain stdout | one line per worktree: `branch path label` (`-` when no label) |
+| JSON stdout  | exact result object                                     |
+| Exit codes   | common                                                  |
+
+Example:
+
+```json
+{"id":202,"cmd":"pane-worktree-list","pane":3}
+{"id":202,"ok":true,"data":{"worktrees":[{"branch":"feat-auth","path":"/src/proj.feat-auth","label":"auth","created_at_ms":1787010000000}]}}
+```
+
+### pane-worktree-remove
+
+| Field  | Value                   |
+| ------ | ----------------------- |
+| name   | `pane-worktree-remove`  |
+| status | implemented             |
+| since  | protocol 6              |
+
+Tears down one of a pane's worktrees: `git worktree remove` plus `git worktree prune`, then drops the record (issue #77 AC3). No force flag: a dirty worktree fails with git's own error, and the remove is REFUSED while the pane's working directory is inside the target worktree (cd elsewhere first). The main repository is resolved through the worktree's own `.git`/`commondir` pointers, so the pane may sit anywhere at remove time.
+
+Params:
+
+| Name     | JSON type | Required/default | Constraints                 |
+| -------- | --------- | ---------------- | --------------------------- |
+| `pane`   | `Id`      | required         | Pane owning the record      |
+| `branch` | `string`  | required         | Which record to tear down   |
+
+Result:
+
+```text
+object{}
+```
+
+Errors:
+
+| Error                                          | Condition                                   |
+| ---------------------------------------------- | ------------------------------------------- |
+| `unknown pane <id>`                            | Pane id does not exist                      |
+| `no worktree for branch "<b>" on pane <id>`    | No matching record (also after a restart)   |
+| `pane <id> is inside <path>; cd elsewhere before removing it` | The pane's cwd is inside the target |
+| git error string                               | `git worktree remove` failed (dirty worktree, missing admin data) |
+| `bad request: ...`                             | Missing fields or wrong JSON type           |
+
+CLI mapping:
+
+| Item         | Value                                                    |
+| ------------ | -------------------------------------------------------- |
+| Verb         | `pane-worktree-remove` (alias: `pane worktree remove`)   |
+| Flags        | `--pane <id> --branch <name>`                            |
+| Plain stdout | none                                                      |
+| JSON stdout  | exact result object                                       |
+| Exit codes   | common                                                    |
+
+Example:
+
+```json
+{"id":203,"cmd":"pane-worktree-remove","pane":3,"branch":"feat-auth"}
+{"id":203,"ok":true,"data":{}}
+```
+
+The three-word alias (`cmux pane worktree create|list|remove ...`) is rewritten to the flat verb at argv level in `main.rs`; the wire protocol only ever carries the flat kebab-case form (the issue documents the three-word spelling; every other cmux verb is flat).
 
 ### new-remote-workspace
 

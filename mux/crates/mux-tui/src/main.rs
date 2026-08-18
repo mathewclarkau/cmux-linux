@@ -150,7 +150,21 @@ CLI VERBS
   list-agents, detect-agent, detect-agents, agent-pattern-add,
   agent-pattern-list, agent-pattern-remove, browser-reload, list-sessions,
   kill-session, kill-stale, rename-session, layout-export, layout-apply,
-  layout-export-all, theme list
+  layout-export-all, theme list,
+  pane-worktree-create, pane-worktree-list, pane-worktree-remove
+      (also spelled `cmux pane worktree <create|list|remove>`; issue #77)
+
+SEND
+  cmux send --surface <id> --text <text> [--shell auto|fish|bash|zsh|sh|nu|raw]
+      Writes input to a PTY surface (stdin is used when neither --text nor
+      --bytes is given). --shell enables shell-aware sanitisation (issue
+      #35): with fish/bash/zsh/nu, a leading newline is prefixed when the
+      text starts with a shell metacharacter ($, !, quote, bracket, ~, #)
+      or contains an unclosed quote, so '$ pwd\n' is typed literally
+      instead of being interpreted by the shell's line editor. auto
+      resolves the pane's shell from /proc on Linux. Default: raw
+      (verbatim passthrough, unchanged from before).
+
 LAYOUT EXPORT/APPLY (issue #76)
   cmux layout-export --workspace <name-or-id> --output <file>.json
       Save one workspace's tab/pane/agent-argv topology as versioned JSON
@@ -385,7 +399,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
 
 fn main() {
     install_signal_handlers();
-    let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut raw_args = std::env::args().skip(1).collect::<Vec<_>>();
     if raw_args.first().map(|arg| arg.as_str()) == Some("help") {
         print!("{USAGE}");
         std::process::exit(0);
@@ -543,6 +557,11 @@ fn main() {
         }
         std::process::exit(cli::run(&args, USAGE));
     }
+    // Issue #77: accept the documented three-word form `cmux pane
+    // worktree create ...` by rewriting it to the flat verb before CLI
+    // dispatch (must run before `is_cli_invocation`, which would not
+    // recognise the triple as a verb position).
+    cli::rewrite_pane_worktree_alias(&mut raw_args);
     if cli::is_cli_invocation(&raw_args) {
         std::process::exit(cli::run(&raw_args, USAGE));
     }
@@ -786,6 +805,9 @@ fn run_server(args: Args) -> anyhow::Result<()> {
         enabled: config.agent_detection.enabled,
         min_confidence: config.agent_detection.min_confidence,
     });
+    // Issue #77 AC6: the operator's [[worktree_pattern]] override, or
+    // None for the default `<repo>/../<repo>.<branch>/`.
+    mux.set_worktree_pattern(config.worktree_pattern.clone());
     mux.restore_session();
     for workspace in &config.workspaces {
         let id = mux.with_state(|state| {

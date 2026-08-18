@@ -103,6 +103,8 @@ impl HeadlessServer {
     }
 }
 
+
+
 impl Drop for HeadlessServer {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -1111,6 +1113,546 @@ fn wait_for_screen(server: &HeadlessServer, surface: u64, marker: &str) -> Strin
     }
     last
 }
+// --- Per-pane git worktrees (issue #77) ---
+
+/// A temp git repo with one commit (git worktree add needs a HEAD).
+fn git_repo_fixture(name: &str) -> PathBuf {
+    let dir = unique_temp_dir(name);
+    fs::create_dir_all(&dir).unwrap();
+    let out = Command::new("git").arg("init").arg(&dir).output().unwrap();
+    assert!(
+        out.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = Command::new("git")
+        .args(["-c", "user.email=cmux@test", "-c", "user.name=cmux"])
+        .args(["commit", "--allow-empty", "-m", "init"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git commit failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    dir
+}
+
+/// The pane id holding `surface`, from `list-workspaces` JSON.
+fn pane_of_surface(server: &HeadlessServer, surface: u64) -> u64 {
+    let list = cli(server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    value["workspaces"]
+        .as_array()
+        .expect("workspaces array")
+        .iter()
+        .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+        .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+        .find(|pane| {
+            pane["tabs"].as_array().is_some_and(|tabs| {
+                tabs.iter().any(|tab| tab["surface"].as_u64() == Some(surface))
+            })
+        })
+        .expect("surface present in list-workspaces")
+        .get("id")
+        .and_then(serde_json::Value::as_u64)
+        .expect("pane id")
+}
+
+/// Every pane in `list-workspaces` JSON as (pane id, active tab cwd).
+fn pane_cwds(server: &HeadlessServer) -> Vec<(u64, Option<String>)> {
+    let list = cli(server, &["--json", "list-workspaces"]);
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    value["workspaces"]
+        .as_array()
+        .expect("workspaces array")
+        .iter()
+        .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+        .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+        .map(|pane| {
+            let id = pane.get("id").and_then(serde_json::Value::as_u64).expect("pane id");
+            let cwd = pane
+                .get("tabs")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|tabs| tabs.first())
+                .and_then(|tab| tab.get("cwd"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            (id, cwd)
+        })
+        .collect()
+}
+
+#[test]
+fn pane_worktree_create_list_remove_round_trip() {
+    let server = HeadlessServer::start("pane-worktree");
+    let repo = git_repo_fixture("pane-worktree-repo");
+    let workspace = cli(&server, &["new-workspace", "--name", "wt-test"]);
+    assert_success(&workspace);
+    let surface: u64 =
+        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    // Park the pane's active tab in the repo so create can resolve it.
+    let parked =
+        cli(&server, &["new-tab", "--cwd", repo.to_str().unwrap()]);
+    assert_success(&parked);
+    let pane = pane_of_surface(&server, surface);
+
+    // Create (AC1): the worktree path comes back on JSON stdout.
+    let created = cli(
+        &server,
+        &[
+            "--json",
+            "pane-worktree-create",
+            "--pane",
+            &pane.to_string(),
+            "--branch",
+            "feat-auth",
+            "--label",
+            "auth",
+        ],
+    );
+    assert_success(&created);
+    let value: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    assert_eq!(value["pane"].as_u64(), Some(pane));
+    assert_eq!(value["branch"].as_str(), Some("feat-auth"));
+    let path = value["path"].as_str().expect("worktree path").to_string();
+    assert!(PathBuf::from(&path).is_dir(), "worktree {path} should exist on disk");
+    // git itself knows the worktree.
+    let out = Command::new("git")
+        .args(["worktree", "list"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("feat-auth"),
+        "git worktree list should show feat-auth"
+    );
+
+    // List (AC2): JSON shape + one-line-per-record plain output.
+    let listed = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
+    );
+    assert_success(&listed);
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let worktrees = value["worktrees"].as_array().unwrap();
+    assert_eq!(worktrees.len(), 1);
+    assert_eq!(worktrees[0]["branch"].as_str(), Some("feat-auth"));
+    assert_eq!(worktrees[0]["path"].as_str(), Some(path.as_str()));
+    assert_eq!(worktrees[0]["label"].as_str(), Some("auth"));
+    assert!(worktrees[0]["created_at_ms"].as_u64().unwrap() > 0);
+
+    // The record also reaches attach clients via list-workspaces JSON
+    // (pane.worktrees), so a thin attach renders the sidebar badge.
+    let tree = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&tree);
+    let tree_value: serde_json::Value = serde_json::from_slice(&tree.stdout).unwrap();
+    let pane_json = tree_value["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+        .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+        .find(|entry| entry["id"].as_u64() == Some(pane))
+        .expect("pane in list-workspaces");
+    let wt_json = &pane_json["worktrees"].as_array().unwrap()[0];
+    assert_eq!(wt_json["branch"].as_str(), Some("feat-auth"));
+    assert_eq!(wt_json["path"].as_str(), Some(path.as_str()));
+    assert_eq!(wt_json["label"].as_str(), Some("auth"));
+
+    let plain = cli(&server, &["pane-worktree-list", "--pane", &pane.to_string()]);
+    assert_success(&plain);
+    let text = String::from_utf8(plain.stdout).unwrap();
+    assert!(
+        text.contains("feat-auth") && text.contains(&path) && text.contains("auth"),
+        "plain pane-worktree-list should name branch/path/label, got: {text}"
+    );
+
+    // Plain create output is just the path.
+    let plain_create = cli(
+        &server,
+        &["pane-worktree-create", "--pane", &pane.to_string(), "--branch", "feat-plain"],
+    );
+    assert_success(&plain_create);
+    let plain_path = String::from_utf8(plain_create.stdout).unwrap().trim().to_string();
+    assert!(plain_path.ends_with(".feat-plain"), "plain create prints the path, got {plain_path}");
+
+    // Remove (AC3): teardown drops dir + record.
+    let removed = cli(
+        &server,
+        &["pane-worktree-remove", "--pane", &pane.to_string(), "--branch", "feat-auth"],
+    );
+    assert_success(&removed);
+    assert!(!PathBuf::from(&path).exists(), "worktree dir should be gone after remove");
+    let listed = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
+    );
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let remaining: Vec<&str> = value["worktrees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|w| w["branch"].as_str())
+        .collect();
+    assert_eq!(remaining, vec!["feat-plain"], "only feat-plain should remain");
+
+    // Removing an unknown branch errors with exit 1.
+    let missing = cli(
+        &server,
+        &["pane-worktree-remove", "--pane", &pane.to_string(), "--branch", "nope"],
+    );
+    assert_eq!(missing.status.code(), Some(1));
+
+    // Best-effort cleanup of the second worktree (inside repo's parent).
+    let _ = fs::remove_dir_all(&plain_path);
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn pane_worktree_create_failure_returns_exit_1_and_cwd_unchanged() {
+    let server = HeadlessServer::start("pane-worktree-fail");
+    let repo = git_repo_fixture("pane-worktree-fail-repo");
+    let workspace = cli(&server, &["new-workspace", "--name", "wt-fail"]);
+    assert_success(&workspace);
+    let surface: u64 =
+        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let parked = cli(&server, &["new-tab", "--cwd", repo.to_str().unwrap()]);
+    assert_success(&parked);
+    let pane = pane_of_surface(&server, surface);
+
+    let before = pane_cwds(&server);
+
+    let failed = cli(
+        &server,
+        &[
+            "--json",
+            "pane-worktree-create",
+            "--pane",
+            &pane.to_string(),
+            "--branch",
+            "bad..name",
+        ],
+    );
+    assert_eq!(
+        failed.status.code(),
+        Some(1),
+        "git failure must surface as exit 1 (AC7), got {:?}\nstderr: {}",
+        failed.status.code(),
+        String::from_utf8_lossy(&failed.stderr)
+    );
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("not a valid branch name"));
+    assert!(failed.stdout.is_empty(), "no JSON on failure");
+
+    // Pane cwd unchanged (AC7) and no record was kept.
+    assert_eq!(pane_cwds(&server), before, "pane cwd must be unchanged after failure");
+    let listed = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
+    );
+    assert_success(&listed);
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(value["worktrees"].as_array().unwrap().len(), 0);
+
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn worktree_pattern_config_overrides_default() {
+    // AC6: `[[worktree_pattern]]` in mux.toml redirects where worktrees
+    // are created. (The issue text says `cmux.toml`; cmux reads
+    // mux.toml/mux.json — see the scout plan's config-path correction.)
+    let server = HeadlessServer::start_with_config(
+        "pane-worktree-config",
+        "[[worktree_pattern]]\npattern = \"../cmux-wt-<repo>-<branch>\"\n",
+    );
+    let repo = git_repo_fixture("pane-worktree-config-repo");
+    let workspace = cli(&server, &["new-workspace", "--name", "wt-config"]);
+    assert_success(&workspace);
+    let surface: u64 =
+        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let parked = cli(&server, &["new-tab", "--cwd", repo.to_str().unwrap()]);
+    assert_success(&parked);
+    let pane = pane_of_surface(&server, surface);
+
+    let created = cli(
+        &server,
+        &[
+            "--json",
+            "pane-worktree-create",
+            "--pane",
+            &pane.to_string(),
+            "--branch",
+            "feat-pattern",
+        ],
+    );
+    assert_success(&created);
+    let value: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    let path = value["path"].as_str().expect("worktree path").to_string();
+    // ../cmux-wt-<repo>-<branch> resolved against the repo root; the
+    // <repo> placeholder keeps the path unique per run (the repo fixture
+    // dir is unique), so leftovers never collide across runs.
+    assert!(
+        path.ends_with(&format!(
+            "cmux-wt-{}-feat-pattern",
+            repo.file_name().unwrap().to_str().unwrap()
+        )),
+        "configured pattern should win over the default, got {path}"
+    );
+    assert!(PathBuf::from(&path).is_dir());
+
+    let _ = fs::remove_dir_all(&path);
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn new_tab_with_prompt_file_frontmatter_creates_worktree() {
+    // AC4: a `branch:` frontmatter in the agent prompt makes the pane
+    // auto-create its worktree BEFORE the tab spawns (the pane starts
+    // inside it; the agent is then launched by the existing send flow).
+    let server = HeadlessServer::start("wt-frontmatter");
+    let repo = git_repo_fixture("wt-frontmatter-repo");
+    let workspace = cli(&server, &["new-workspace", "--name", "wt-fm"]);
+    assert_success(&workspace);
+    let surface: u64 =
+        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let pane = pane_of_surface(&server, surface);
+
+    let prompt = server.dir.join("prompt.md");
+    fs::write(&prompt, "---\nbranch: feat-auth\nlabel: auth\n---\nFix the login flow.\n")
+        .unwrap();
+    let tab = cli(
+        &server,
+        &[
+            "--json",
+            "new-tab",
+            "--cwd",
+            repo.to_str().unwrap(),
+            "--prompt-file",
+            prompt.to_str().unwrap(),
+        ],
+    );
+    assert_success(&tab);
+    let value: serde_json::Value = serde_json::from_slice(&tab.stdout).unwrap();
+    let new_surface = value["surface"].as_u64().unwrap();
+
+    // The pane owns the record and its active tab started INSIDE the
+    // worktree (cwd == record path; OSC 7 never fires under /bin/sh).
+    let listed = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
+    );
+    assert_success(&listed);
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let worktrees = value["worktrees"].as_array().unwrap();
+    assert_eq!(worktrees.len(), 1);
+    assert_eq!(worktrees[0]["branch"].as_str(), Some("feat-auth"));
+    assert_eq!(worktrees[0]["label"].as_str(), Some("auth"));
+    let wt_path = worktrees[0]["path"].as_str().unwrap().to_string();
+    assert!(PathBuf::from(&wt_path).is_dir());
+
+    let tree = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&tree);
+    let value: serde_json::Value = serde_json::from_slice(&tree.stdout).unwrap();
+    let tab_json = value["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+        .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+        .flat_map(|pane| pane["tabs"].as_array().into_iter().flatten())
+        .find(|tab| tab["surface"].as_u64() == Some(new_surface))
+        .expect("new tab in list-workspaces");
+    assert_eq!(
+        tab_json["cwd"].as_str().map(|s| s.to_string()),
+        Some(wt_path),
+        "the pane must start inside the worktree (AC4)"
+    );
+
+    // A bare --branch works too, and --prompt-file without frontmatter
+    // is just a normal new-tab (no worktree).
+    let plain = cli(
+        &server,
+        &["--json", "new-tab", "--cwd", repo.to_str().unwrap(), "--branch", "feat-docs"],
+    );
+    assert_success(&plain);
+    let no_fm_prompt = server.dir.join("plain.md");
+    fs::write(&no_fm_prompt, "no frontmatter here\n").unwrap();
+    let no_fm = cli(
+        &server,
+        &[
+            "--json",
+            "new-tab",
+            "--cwd",
+            repo.to_str().unwrap(),
+            "--prompt-file",
+            no_fm_prompt.to_str().unwrap(),
+        ],
+    );
+    assert_success(&no_fm);
+    let listed = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
+    );
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let branches: Vec<&str> = value["worktrees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|w| w["branch"].as_str())
+        .collect();
+    assert_eq!(branches, vec!["feat-auth", "feat-docs"], "no-frontmatter adds no worktree");
+
+    // Malformed frontmatter is a client-side usage error (exit 2), and
+    // combining --prompt-file with --branch is refused.
+    let bad_prompt = server.dir.join("bad.md");
+    fs::write(&bad_prompt, "---\ncommit: abc\n---\nbody\n").unwrap();
+    let bad = cli(
+        &server,
+        &["new-tab", "--prompt-file", bad_prompt.to_str().unwrap()],
+    );
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("frontmatter"));
+
+    let conflict = cli(
+        &server,
+        &[
+            "new-tab",
+            "--prompt-file",
+            prompt.to_str().unwrap(),
+            "--branch",
+            "feat-x",
+        ],
+    );
+    assert_eq!(conflict.status.code(), Some(2));
+
+    // split --branch gives the NEW pane its own worktree.
+    let split = cli(
+        &server,
+        &[
+            "--json",
+            "split",
+            "--pane",
+            &pane.to_string(),
+            "--dir",
+            "right",
+            "--branch",
+            "feat-split",
+        ],
+    );
+    assert_success(&split);
+    let value: serde_json::Value = serde_json::from_slice(&split.stdout).unwrap();
+    let split_surface = value["surface"].as_u64().unwrap();
+    let split_pane = pane_of_surface(&server, split_surface);
+    let listed = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &split_pane.to_string()],
+    );
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(
+        value["worktrees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|w| w["branch"].as_str())
+            .collect::<Vec<_>>(),
+        vec!["feat-split"]
+    );
+
+    // Best-effort cleanup: drop the three worktrees (siblings of repo).
+    let listed = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
+    );
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    for w in value["worktrees"].as_array().unwrap() {
+        let _ = fs::remove_dir_all(w["path"].as_str().unwrap());
+    }
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn pane_worktree_three_word_alias_matches_flat_verb() {
+    let server = HeadlessServer::start("pane-worktree-alias");
+    let repo = git_repo_fixture("pane-worktree-alias-repo");
+    let workspace = cli(&server, &["new-workspace", "--name", "wt-alias"]);
+    assert_success(&workspace);
+    let surface: u64 =
+        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let parked = cli(&server, &["new-tab", "--cwd", repo.to_str().unwrap()]);
+    assert_success(&parked);
+    let pane = pane_of_surface(&server, surface);
+
+    // The issue's documented three-word form works verbatim (issue #77
+    // AC1; see the naming-conflict note in the scout plan §2.8).
+    let created = cli(
+        &server,
+        &[
+            "--json",
+            "pane",
+            "worktree",
+            "create",
+            "--pane",
+            &pane.to_string(),
+            "--branch",
+            "feat-alias",
+        ],
+    );
+    assert_success(&created);
+    let value: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    let path = value["path"].as_str().expect("worktree path").to_string();
+    assert!(PathBuf::from(&path).is_dir());
+
+    // Both list forms return the same JSON.
+    let via_alias = cli(
+        &server,
+        &["--json", "pane", "worktree", "list", "--pane", &pane.to_string()],
+    );
+    let via_flat = cli(
+        &server,
+        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
+    );
+    assert_success(&via_alias);
+    assert_success(&via_flat);
+    assert_eq!(via_alias.stdout, via_flat.stdout, "alias and flat verb must agree");
+
+    // The three-word remove form tears down too.
+    let removed = cli(
+        &server,
+        &["pane", "worktree", "remove", "--pane", &pane.to_string(), "--branch", "feat-alias"],
+    );
+    assert_success(&removed);
+    assert!(!PathBuf::from(&path).exists());
+
+    let _ = fs::remove_dir_all(&repo);
+}
+
+
+
+
+
+
+// Refuses when the install target is a symlink; exit non-zero, message
+// mentions "symlink", and the symlink target file is byte-identical after the
+// run (regression test for the symlink_metadata pre-check in claude_hook.rs).
+
+
+
+
+// Regression test for the symlink_metadata guard added to
+// grok_hook::run_install_skill (PR #24 follow-up). Sibling to the Claude
+// test above (PR #18 / issue #10) — the grok non-global skill path is
+// `.agents/skills/cmux-orchestration/SKILL.md` (see grok_hook.rs:147-149),
+// so the fixture is built with `top = ".agents"`. Exercises the same
+// attack vector on the new grok install path: an attacker-placed symlink
+// must NOT silently redirect fs::write at the target file.
+
+
+
 
 fn cli(server: &HeadlessServer, args: &[&str]) -> Output {
     Command::new(bin())
@@ -1161,7 +1703,6 @@ struct SymlinkSkillFixture {
     /// test can compare against it after running install-skill.
     original_content: String,
 }
-
 impl SymlinkSkillFixture {
     /// Default fixture for the Claude install-skill path (`.claude/...`).
     fn new() -> Self {
@@ -1208,6 +1749,8 @@ impl SymlinkSkillFixture {
         Self { project_dir, symlink_path, target_path, original_content }
     }
 }
+
+
 
 impl Drop for SymlinkSkillFixture {
     fn drop(&mut self) {
@@ -2722,12 +3265,6 @@ fn first_attach_to_dead_socket_still_exits_nonzero() {
 // -- issue #76: layout export/apply --------------------------------------
 
 /// Helper: the parsed `--json list-workspaces` payload.
-fn list_workspaces_json(server: &HeadlessServer) -> serde_json::Value {
-    let listed = cli(server, &["--json", "list-workspaces"]);
-    assert_success(&listed);
-    serde_json::from_slice(&listed.stdout).unwrap()
-}
-
 #[test]
 fn layout_export_writes_versioned_workspace_json() {
     let server = HeadlessServer::start("layout-export");
@@ -3001,3 +3538,196 @@ fn layout_export_refuses_symlinked_output() {
         "the symlink target must be untouched"
     );
 }
+
+/// Fixture for the install-skill symlink-refusal test.
+///
+/// Owns a temp "project" dir acting as CWD for `cmux claude install-skill`
+/// (whose non-global `skill_path` is `.claude/skills/cmux-orchestration/SKILL.md`,
+/// relative to CWD — see claude_hook.rs:427-432). Inside it we place:
+///   <project>/.claude/skills/cmux-orchestration/SKILL.md -> <project>/target.txt
+///
+/// On drop we remove the symlink, the target file, and the whole project dir,
+/// even if the test panicked — mirroring HeadlessServer::drop (tests/cli.rs:45-52).
+
+
+
+
+
+
+/// `cmux attach --session-list --json` lists discovered sessions with a
+/// `socket_path` per entry (issue #63, layer L1). Same shape as
+/// `list-sessions --json` plus `socket_path`; exit 0. Modelled on
+/// `list_sessions_lists_active_headless_session` (:904).
+
+/// Stale entries (dead pidfile, unconnectable socket) appear with
+/// `status == "stale"` and a `socket_path`, alongside live entries.
+
+/// An empty runtime dir yields `{"sessions":[]}` and exit 0.
+
+
+/// Issue #27 acceptance: `kill -9` on a headless daemon leaves zero
+/// leftover `.sock`/`.pid` files within ≤5s without operator action.
+
+/// Issue #40: `cmux attach --show-local-config-resolution` is a dry run that
+/// resolves the local overlay file (theme/sidebar_rail + keys/prefix here)
+/// and prints the path plus the override count, without attaching to a
+/// server or starting the TUI. Exits 0 and needs no live session.
+
+/// Issue #40 round-2 blocker 1: a thin-client `cmux attach
+/// --apply-local-config` must layer the local overlay on top of the
+/// *server's* resolved config, not replace it with the laptop's own. We
+/// start a headless server whose `mux.json` sets a distinctive theme
+/// colour (server-side truth), then run `cmux attach --socket <sock>
+/// --apply-local-config --print-resolved-config` with a local overlay
+/// that overrides a key binding (NOT theme), and assert the merged
+/// chrome JSON carries the server's theme colour AND the local overlay's
+/// key binding — proving layering, not replacement. `--print-resolved-config`
+/// is the attach-only inspection escape added for this: it fetches the
+/// server chrome, applies the overlay, and prints the merged result as
+/// JSON without starting the TUI.
+
+/// Issue #40 blocker 1: the `get-resolved-config` protocol verb is also
+/// exposed as a standalone read-only CLI verb (`cmux get-resolved-config`)
+/// so ops scripts can inspect the server's chrome without attaching. It
+/// must return the server's published chrome verbatim (no local overlay).
+/// We start a headless server whose config sets a distinctive theme
+/// colour, then call `cmux --json get-resolved-config` against its
+/// socket and assert the colour is present in the returned object.
+
+/// Issue #42 (scoped first PR): the `cmux plugin` verb group manages
+/// `cmux-plugin.toml` manifests on disk only (no execution yet). We
+/// install a fixture manifest against a HeadlessServer-style temp env
+/// (an isolated XDG_DATA_HOME under the server's temp dir), then list
+/// it, then uninstall and confirm `list` reports empty. The server
+/// itself is idle for these verbs: the spec scopes this PR to manifest
+/// state only, no socket traffic.
+
+/// Issue #42 AC6: the shipped example plugin at
+/// `mux/spec/plugins/pifactory-fleet/` has a valid manifest that
+/// installs and lists correctly via the `cmux plugin` verb group.
+/// This guards against schema drift between the example manifest and
+/// the loader's `ManifestFile` parser.
+
+/// Issue #59: `cmux --version` / `-V` print `cmux <version>` and exit 0.
+///
+/// Issue #71: the version is the build-time constant, not
+/// `CARGO_PKG_VERSION`. Pinning this test to the manifest was why the
+/// bug survived — the assertion and the bug read the same stale
+/// `0.1.0`, so it passed while `-V` was wrong for seventeen releases.
+/// The independent checks below are the part that would have caught it.
+
+/// Issue #71: the reported version must be a real release version, not
+/// the `0.1.0` manifest placeholder the binary shipped with for
+/// seventeen tagged releases. Deliberately asserts against the literal
+/// rather than any constant: a check derived from the same source as
+/// the value under test cannot catch this class of bug.
+
+// =====================================================================
+// cmux rename-session (issue #63 L2) — full TDD acceptance suite.
+//
+// These tests are written RED (cookbook Rule 5) before the feature is
+// implemented. At this commit the `rename-session` verb does not exist
+// yet, so every end-to-end test fails because the invocation is rejected
+// (unknown verb) rather than performing the rename; the helper/unit tests
+// fail against compile-scaffolding stubs. The implementation commits turn
+// them green. The manual-spawn + `XDG_RUNTIME_DIR` harness mirrors
+// `list_sessions_lists_active_headless_session` / `kill_session_*`.
+// =====================================================================
+
+/// Spawn a headless daemon as `--session <name>` on `<dir>/<name>.sock` in
+/// an isolated `XDG_RUNTIME_DIR`, wait for `.sock`+`.pid`, return the child.
+
+/// Read the daemon pid recorded in `<dir>/<name>.pid`.
+
+/// Run a cmux CLI subcommand against `--socket <socket>` with CMUX_MUX_SOCKET
+/// unset (so resolution is deterministic) and return its output.
+
+/// Poll `read-screen` until `needle` appears on the surface (or timeout).
+
+/// AC2: after rename, the old socket is no longer connectable (exit 3)
+/// while the new path serves the same daemon; protocol version unchanged.
+
+/// AC3: after rename, the old session name is gone from discovery and the
+/// new name is listed as live.
+
+/// AC4: existing panes keep the `CMUX_MUX_SOCKET` they inherited at spawn
+/// (the old path) for their lifetime; panes spawned AFTER the rename
+/// inherit the new path. This is the lifetime guarantee (intentional, not
+/// a bug) documented in USAGE and the server.rs docstring.
+
+/// AC5: renaming onto a LIVE target session fails with exit 2
+/// ("already exists") and leaves the source untouched.
+
+/// Target policy (mirrors `serve()`'s stale-clear): a STALE target
+/// (dead pid) is cleared and the rename succeeds.
+
+/// AC6 (defence in depth): invalid `--new` names are rejected CLIENT-side
+/// (exit 2, "session name") and never reach the socket. A literal NUL
+/// cannot be carried by execve, so it is covered by the unit test T12
+/// (`validate_session_name_table`) rather than here.
+
+/// AC2/T8: after rename, `identify` reports the new session name and the
+/// protocol version is still 6 (rename is an additive command variant).
+
+/// AC1/T9: the pid FILE contents are unchanged across the rename (only the
+/// filename moves) and the daemon process is alive throughout.
+
+/// AC7/T10: after rename, the session-list / kill-session / kill-stale verbs
+/// work against the renamed session with no regressions.
+
+// T11 (`rename_session_at_renames_via_socket`) lives in `cli.rs`'s own
+// `#[cfg(test)]` module: mux-tui is a bin-only crate, so this integration
+// test file links only against the `mux-core` lib + the `cmux` binary and
+// cannot import the `pub(crate)` helper. The in-process unit test there
+// drives a `mux-core` server directly (no subprocess) and exercises the
+// exact code path the picker's `r` flow uses.
+
+/// T10 (issue #63 L3, scout plan): the session-manager overlay previews an
+/// *other* session's workspaces with a one-shot `list-workspaces` RPC over
+/// that session's control socket (the same connect→write→read path
+/// `cli::one_shot_rpc` shares with `rename_rpc`, and that `cmux
+/// list-workspaces` rides). `fetch_workspaces` is `pub(crate)` so this
+/// bin-test cannot call it directly; instead it drives the identical wire
+/// path against two named headless daemons and asserts each returns a
+/// parseable workspaces tree with the expected count. If the wire verb or
+/// its JSON shape regressed, the overlay's right column would break too.
+
+/// T11 (issue #63 L3, scout plan): focusing a workspace in an *other* session
+/// from the overlay sends a one-shot `select-workspace` RPC over that
+/// session's socket (the path `cli::select_workspace_remote` rides). Spawns
+/// two named daemons, adds workspaces to beta, issues `select-workspace
+/// --index 1` against beta's socket, and asserts beta's `list-workspaces`
+/// afterwards reports workspace index 1 active. This proves the overlay's
+/// right-column Enter on another session remotely moves that session's focus.
+
+/// T12 (issue #63 L3, scout plan): an `[unreachable]` socket row is reported
+/// by discovery and `kill-session` cleans it without crashing. The overlay
+/// drives `cli::kill_session_at` on such rows; this guards that a stale
+/// `.sock`/`.pid` pair (no live process) is listed as stale and removable,
+/// matching AC8 (unreachable rows must be killable and must not crash).
+
+/// T13 (issue #63 L3, scout plan): the overlay's rename path and the L2
+/// `rename-session` CLI verb agree — both end with the session serving at the
+/// new socket and gone from the old. This is the same wire path
+/// (`cli::rename_session_at` over `one_shot_rpc`); the L2 suite covers the
+/// helper directly, so here we just confirm a rename issued via the verb is
+/// observable through `list-sessions` the way the overlay's `r` flow expects.
+
+/// T10 (issue #69, scout plan §3c): REGRESSION -- a genuine first attach to a
+/// dead socket must STILL exit non-zero (exit 1), both before and after the
+/// swap-recovery fix. The recovery path only fires when there is a
+/// last-known-good socket to fall back to (a swap); a fresh `cmux attach`
+/// has no origin, so the connect error propagates to `main()` exactly as
+/// today. This test pins that behavior so the fix cannot accidentally make a
+/// real first-attach silently loop instead of failing.
+
+
+// -- issue #76: layout export/apply --------------------------------------
+
+/// Helper: the parsed `--json list-workspaces` payload.
+fn list_workspaces_json(server: &HeadlessServer) -> serde_json::Value {
+    let listed = cli(server, &["--json", "list-workspaces"]);
+    assert_success(&listed);
+    serde_json::from_slice(&listed.stdout).unwrap()
+}
+
