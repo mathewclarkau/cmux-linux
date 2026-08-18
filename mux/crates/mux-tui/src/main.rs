@@ -148,7 +148,8 @@ CLI VERBS
   focus-pane, select-tab, select-screen, select-workspace, move-tab,
   move-workspace, scroll-surface, subscribe, attach-surface, report-agent,
   list-agents, browser-reload, list-sessions, kill-session, kill-stale,
-  rename-session, theme list
+  rename-session, layout-export, layout-apply, layout-export-all,
+  theme list
 
 SEND
   cmux send --surface <id> --text <text> [--shell auto|fish|bash|zsh|sh|nu|raw]
@@ -160,6 +161,27 @@ SEND
       instead of being interpreted by the shell's line editor. auto
       resolves the pane's shell from /proc on Linux. Default: raw
       (verbatim passthrough, unchanged from before).
+
+LAYOUT EXPORT/APPLY (issue #76)
+  cmux layout-export --workspace <name-or-id> --output <file>.json
+      Save one workspace's tab/pane/agent-argv topology as versioned JSON
+      (schema 1, see spec/layout-schema.md). Client-side atomic write
+      (tmp + rename); symlinked outputs are refused.
+  cmux layout-export-all --output-dir <dir>
+      Save every workspace in the session as <dir>/<name>.json (mkdir -p).
+  cmux layout-apply --input <file>.json --workspace <name>
+      Replay a saved layout: the workspace is created if missing; applying
+      onto an existing name is refused (close it first or pick a new
+      name). Panes spawn with the recorded argv/env/cwd; a failure aborts
+      loudly naming the pane (index + pane-id).
+  cmux new-tab [--pane N] [--cwd P] [--env K=V,...] --exec -- <argv...>
+  cmux split --pane N --dir <right|down> [--env K=V,...] --exec -- <argv...>
+      Spawn with an explicit command (agent start): everything after the
+      literal `--` that follows --exec is the verbatim argv, so --exec
+      must be the LAST flag. --env is a comma-separated K=V list.
+      Layout-export records these argv/env pairs; for remote sessions
+      compose `layout-apply` against the remote socket with a follow-up
+      `cmux attach --apply-local-config`.
 
 RENAME-SESSION
   cmux rename-session --old <name> --new <name> [--json]

@@ -43,7 +43,7 @@
 //! handled by the next `serve()` stale-clear / `kill-stale` (an L3
 //! follow-up can respawn the watchdog for the new path).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -223,6 +223,15 @@ enum Command {
         cols: Option<u16>,
         #[serde(default)]
         rows: Option<u16>,
+        /// Issue #76: explicit child argv (agent start) — absent means
+        /// the default login shell. Recorded at spawn so `layout-export`
+        /// can replay it.
+        #[serde(default)]
+        command: Option<Vec<String>>,
+        /// Issue #76: extra env for the child, as a JSON object of
+        /// string → string.
+        #[serde(default)]
+        env: Option<BTreeMap<String, String>>,
     },
     NewBrowserTab {
         url: String,
@@ -340,6 +349,11 @@ enum Command {
         cols: Option<u16>,
         #[serde(default)]
         rows: Option<u16>,
+        /// Issue #76: explicit argv/env for the new pane's first tab.
+        #[serde(default)]
+        command: Option<Vec<String>>,
+        #[serde(default)]
+        env: Option<BTreeMap<String, String>>,
     },
     SetRatio {
         pane: PaneId,
@@ -844,6 +858,22 @@ fn sanitise_text(mode: ShellMode, text: &str) -> String {
     }
 }
 
+/// Issue #76: the socket `command`/`env` spawn fields → `SpawnOverrides`
+/// (agent start). `None` when neither is present keeps the legacy spawn.
+fn spawn_overrides(
+    command: Option<Vec<String>>,
+    env: Option<BTreeMap<String, String>>,
+) -> Option<crate::SpawnOverrides> {
+    if command.is_none() && env.is_none() {
+        return None;
+    }
+    Some(crate::SpawnOverrides {
+        command,
+        extra_env: env.map(|m| m.into_iter().collect()).unwrap_or_default(),
+        cwd: None,
+    })
+}
+
 fn get_surface(mux: &Mux, id: SurfaceId) -> anyhow::Result<Arc<crate::Surface>> {
     mux.surface(id).ok_or_else(|| anyhow::anyhow!("unknown surface {id}"))
 }
@@ -1046,8 +1076,9 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                 "data": base64::engine::general_purpose::STANDARD.encode(replay),
             }))
         }
-        Command::NewTab { pane, cwd, cols, rows } => {
-            let surface = mux.new_tab(pane, cwd, cols.zip(rows))?;
+        Command::NewTab { pane, cwd, cols, rows, command, env } => {
+            let overrides = spawn_overrides(command, env);
+            let surface = mux.new_tab_with_overrides(pane, cwd, cols.zip(rows), overrides.as_ref())?;
             Ok(json!({ "surface": surface.id }))
         }
         Command::NewBrowserTab { url, pane, cols, rows } => {
@@ -1164,13 +1195,14 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             let surface = mux.new_screen(workspace, cols.zip(rows))?;
             Ok(json!({ "surface": surface.id }))
         }
-        Command::Split { pane, dir, cols, rows } => {
+        Command::Split { pane, dir, cols, rows, command, env } => {
             let dir = match dir.as_str() {
                 "right" => SplitDir::Right,
                 "down" => SplitDir::Down,
                 other => anyhow::bail!("bad dir {other:?} (want \"right\" or \"down\")"),
             };
-            let surface = mux.split(pane, dir, cols.zip(rows))?;
+            let overrides = spawn_overrides(command, env);
+            let surface = mux.split_with_overrides(pane, dir, cols.zip(rows), overrides.as_ref())?;
             Ok(json!({ "surface": surface.id }))
         }
         Command::SetRatio { pane, dir, ratio } => {

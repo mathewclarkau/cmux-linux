@@ -29,6 +29,10 @@ pub(crate) struct GlobalArgs {
 #[derive(Default)]
 struct FlagMap {
     values: BTreeMap<String, String>,
+    /// The verbatim argv captured by `--exec -- <argv...>` (issue #76).
+    /// Kept out of `values`: it is a list, not a `--flag value` pair, and
+    /// it consumes the rest of the command line.
+    exec: Option<Vec<String>>,
 }
 
 struct VerbSpec {
@@ -89,8 +93,11 @@ const VERBS: &[VerbSpec] = &[
         stream: false,
     },
     VerbSpec {
+        // "exec"/"env" (issue #76) carry an explicit child argv/env —
+        // `cmux new-tab --exec -- <argv...>` is the agent-start primitive
+        // that `layout export` records and `layout apply` replays.
         name: "new-tab",
-        allowed: &["pane", "cwd", "cols", "rows"],
+        allowed: &["pane", "cwd", "cols", "rows", "exec", "env"],
         build: build_new_tab,
         print: print_surface,
         stream: false,
@@ -118,7 +125,7 @@ const VERBS: &[VerbSpec] = &[
     },
     VerbSpec {
         name: "split",
-        allowed: &["pane", "dir", "cols", "rows"],
+        allowed: &["pane", "dir", "cols", "rows", "exec", "env"],
         build: build_split,
         print: print_surface,
         stream: false,
@@ -347,6 +354,31 @@ const VERBS: &[VerbSpec] = &[
         print: print_empty,
         stream: false,
     },
+    // Issue #76: the layout export/apply verbs are special-cased in
+    // `run_command` (they do local file I/O around the socket round-trip,
+    // like list/kill/rename-session). The VerbSpecs exist so `parse`
+    // recognises the verbs and their flags.
+    VerbSpec {
+        name: "layout-export",
+        allowed: &["workspace", "output"],
+        build: build_layout_export,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
+        name: "layout-apply",
+        allowed: &["input", "workspace"],
+        build: build_layout_apply,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
+        name: "layout-export-all",
+        allowed: &["output-dir"],
+        build: build_layout_export_all,
+        print: print_empty,
+        stream: false,
+    },
 ];
 
 pub fn is_cli_invocation(args: &[String]) -> bool {
@@ -423,6 +455,30 @@ fn parse(args: &[String]) -> Result<Parsed, UsageError> {
                 verb = verb_by_name(arg);
                 i += 1;
             }
+            // Issue #76: `--exec -- <argv...>` — everything after the
+            // literal `--` is the child's verbatim argv (no quoting
+            // loss). Must be the verb's LAST flag: it eats the rest of
+            // the command line.
+            _ if arg == "--exec" && verb.is_some() => {
+                let spec = verb.unwrap();
+                if !spec.allowed.contains(&"exec") {
+                    return Err(UsageError(format!("unknown flag --exec for {}", spec.name)));
+                }
+                if flags.exec.is_some() {
+                    return Err(UsageError("duplicate --exec".to_string()));
+                }
+                if args.get(i + 1).map(|s| s.as_str()) != Some("--") {
+                    return Err(UsageError(
+                        "--exec must be followed by \"--\" and the command argv".to_string(),
+                    ));
+                }
+                let argv: Vec<String> = args[i + 2..].to_vec();
+                if argv.is_empty() {
+                    return Err(UsageError("--exec needs a command after \"--\"".to_string()));
+                }
+                flags.exec = Some(argv);
+                i = args.len();
+            }
             _ if arg.starts_with("--") => {
                 let Some(spec) = verb else {
                     return Err(UsageError(format!("unknown global flag {arg:?}")));
@@ -462,6 +518,9 @@ fn run_command(args: CliArgs) -> i32 {
         "kill-session" => return run_kill_session(&args.global, &args.flags),
         "kill-stale" => return run_kill_stale(&args.global, &args.flags),
         "rename-session" => return run_rename_session(&args.global, &args.flags),
+        "layout-export" => return run_layout_export(&args.global, &args.flags),
+        "layout-apply" => return run_layout_apply(&args.global, &args.flags),
+        "layout-export-all" => return run_layout_export_all(&args.global, &args.flags),
         _ => {}
     }
     let request = match (args.verb.build)(&args.flags) {
@@ -700,7 +759,31 @@ fn build_new_tab(flags: &FlagMap) -> Result<Value, UsageError> {
     flags.insert_optional_u64(&mut value, "pane")?;
     flags.insert_optional_string(&mut value, "cwd");
     flags.insert_optional_size(&mut value)?;
+    insert_exec_env(flags, &mut value)?;
     Ok(value)
+}
+
+/// Issue #76: `--exec -- <argv...>` (verbatim argv passthrough) and
+/// `--env K=V,K2=V2` (comma-separated pairs) → the socket command's
+/// `command` / `env` fields.
+fn insert_exec_env(flags: &FlagMap, value: &mut Value) -> Result<(), UsageError> {
+    if let Some(argv) = &flags.exec {
+        value["command"] = json!(argv);
+    }
+    if let Some(env) = flags.optional("env") {
+        let mut map = serde_json::Map::new();
+        for pair in env.split(',') {
+            let Some((key, val)) = pair.split_once('=') else {
+                return Err(UsageError(format!("--env entries must be K=V (got {pair:?})")));
+            };
+            if key.is_empty() {
+                return Err(UsageError("--env keys cannot be empty".to_string()));
+            }
+            map.insert(key.to_string(), json!(val));
+        }
+        value["env"] = Value::Object(map);
+    }
+    Ok(())
 }
 
 fn build_new_browser_tab(flags: &FlagMap) -> Result<Value, UsageError> {
@@ -727,6 +810,7 @@ fn build_new_screen(flags: &FlagMap) -> Result<Value, UsageError> {
 fn build_split(flags: &FlagMap) -> Result<Value, UsageError> {
     let mut value = json!({ "pane": flags.required_u64("pane")?, "dir": flags.required_dir()? });
     flags.insert_optional_size(&mut value)?;
+    insert_exec_env(flags, &mut value)?;
     Ok(value)
 }
 
@@ -857,6 +941,29 @@ fn build_list_agents(flags: &FlagMap) -> Result<Value, UsageError> {
 fn build_kill_session(flags: &FlagMap) -> Result<Value, UsageError> {
     let mut value = json!({});
     flags.insert_optional_string(&mut value, "session");
+    Ok(value)
+}
+
+/// Layout-verb parsers carry their flags; the runners below do the
+/// required-flag checks, the file I/O, and their own exit-code maps
+/// (issue #76).
+fn build_layout_export(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({});
+    flags.insert_optional_string(&mut value, "workspace");
+    flags.insert_optional_string(&mut value, "output");
+    Ok(value)
+}
+
+fn build_layout_apply(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({});
+    flags.insert_optional_string(&mut value, "input");
+    flags.insert_optional_string(&mut value, "workspace");
+    Ok(value)
+}
+
+fn build_layout_export_all(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({});
+    flags.insert_optional_string(&mut value, "output-dir");
     Ok(value)
 }
 
@@ -1311,6 +1418,218 @@ fn run_rename_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
             eprintln!("{err}");
             3
         }
+    }
+}
+
+// -- issue #76: layout export/apply runners ------------------------------
+
+/// `cmux layout-export --workspace <name-or-id> --output <path>.json`.
+/// The server produces the document; the CLIENT writes the file (tmp +
+/// rename, refusing symlinked targets) so no daemon ever touches the
+/// invoker's filesystem. Exit codes: 0 ok · 1 server/file error · 2 bad
+/// flags · 3 transport.
+fn run_layout_export(global: &GlobalArgs, flags: &FlagMap) -> i32 {
+    let (workspace, output) = match (flags.required("workspace"), flags.required("output")) {
+        (Ok(w), Ok(o)) => (w, o),
+        (Err(e), _) | (_, Err(e)) => {
+            eprintln!("cmux: {}", e.0);
+            return 2;
+        }
+    };
+    let output = PathBuf::from(output);
+    if let Err(e) = refuse_symlink(&output) {
+        eprintln!("cmux: {e}");
+        return 1;
+    }
+    let request = json!({ "cmd": "layout-export", "workspace": workspace, "id": REQUEST_ID });
+    match one_shot_rpc(&resolve_socket(global), request) {
+        OneShotOutcome::Ok(value) => {
+            let doc = value.get("data").cloned().unwrap_or(Value::Null);
+            let pretty = match serde_json::to_string_pretty(&doc) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("cmux: encoding layout document: {e}");
+                    return 1;
+                }
+            };
+            if let Err(e) = write_json_atomic(&output, &pretty) {
+                eprintln!("cmux: writing {}: {e}", output.display());
+                return 1;
+            }
+            if global.json {
+                println!("{}", json!({ "output": output.display().to_string() }));
+            } else {
+                println!("{}", output.display());
+            }
+            0
+        }
+        OneShotOutcome::ServerErr(e) => {
+            eprintln!("cmux: {e}");
+            1
+        }
+        OneShotOutcome::ConnectErr(e) => {
+            eprintln!("{e}");
+            3
+        }
+    }
+}
+
+/// `cmux layout-apply --input <path>.json --workspace <name>` (issue #76
+/// AC2): replay a saved layout, creating the workspace if missing. The
+/// file is parsed structurally here (parse errors propagate, exit 2);
+/// the schema gate lives server-side so a version mismatch surfaces as
+/// the daemon's loud error (exit 1).
+fn run_layout_apply(global: &GlobalArgs, flags: &FlagMap) -> i32 {
+    let (input, workspace) = match (flags.required("input"), flags.required("workspace")) {
+        (Ok(i), Ok(w)) => (i, w),
+        (Err(e), _) | (_, Err(e)) => {
+            eprintln!("cmux: {}", e.0);
+            return 2;
+        }
+    };
+    let contents = match std::fs::read_to_string(&input) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("cmux: reading layout {input:?}: {e}");
+            return 2;
+        }
+    };
+    let document: mux_core::LayoutDocument = match serde_json::from_str(&contents) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("cmux: parsing layout {input:?}: {e}");
+            return 2;
+        }
+    };
+    let request =
+        json!({ "cmd": "layout-apply", "workspace": workspace, "document": document, "id": REQUEST_ID });
+    match one_shot_rpc(&resolve_socket(global), request) {
+        OneShotOutcome::Ok(value) => {
+            if global.json {
+                if let Some(data) = value.get("data") {
+                    println!("{data}");
+                }
+            }
+            0
+        }
+        OneShotOutcome::ServerErr(e) => {
+            eprintln!("cmux: {e}");
+            1
+        }
+        OneShotOutcome::ConnectErr(e) => {
+            eprintln!("{e}");
+            3
+        }
+    }
+}
+
+/// `cmux layout-export-all --output-dir <dir>` (issue #76 AC3): fetch one
+/// document per workspace and fan them out as `<dir>/<sanitized>.json`.
+fn run_layout_export_all(global: &GlobalArgs, flags: &FlagMap) -> i32 {
+    let dir = match flags.required("output-dir") {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("cmux: {}", e.0);
+            return 2;
+        }
+    };
+    let dir = PathBuf::from(dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("cmux: creating {}: {e}", dir.display());
+        return 2;
+    }
+    let request = json!({ "cmd": "layout-export-all", "id": REQUEST_ID });
+    match one_shot_rpc(&resolve_socket(global), request) {
+        OneShotOutcome::Ok(value) => {
+            let files = value
+                .get("data")
+                .and_then(|d| d.get("files"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if files.is_empty() {
+                eprintln!("cmux: no workspaces to export");
+                return 1;
+            }
+            let mut written = Vec::new();
+            for file in &files {
+                let Some(name) = file.get("filename").and_then(Value::as_str) else {
+                    eprintln!("cmux: export-all response entry missing filename");
+                    return 1;
+                };
+                // The server sanitizes, but never trust a path component
+                // off the wire: refuse anything that could escape --output-dir.
+                if name.is_empty()
+                    || name == "."
+                    || name == ".."
+                    || name.contains('/')
+                    || name.contains('\\')
+                {
+                    eprintln!("cmux: refusing unsafe export filename {name:?}");
+                    return 1;
+                }
+                let path = dir.join(name);
+                if let Err(e) = refuse_symlink(&path) {
+                    eprintln!("cmux: {e}");
+                    return 1;
+                }
+                let pretty = match serde_json::to_string_pretty(file.get("document").unwrap_or(&Value::Null)) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("cmux: encoding layout document: {e}");
+                        return 1;
+                    }
+                };
+                if let Err(e) = write_json_atomic(&path, &pretty) {
+                    eprintln!("cmux: writing {}: {e}", path.display());
+                    return 1;
+                }
+                written.push(path.display().to_string());
+            }
+            if global.json {
+                println!("{}", json!({ "files": written }));
+            } else {
+                for path in &written {
+                    println!("{path}");
+                }
+            }
+            0
+        }
+        OneShotOutcome::ServerErr(e) => {
+            eprintln!("cmux: {e}");
+            1
+        }
+        OneShotOutcome::ConnectErr(e) => {
+            eprintln!("{e}");
+            3
+        }
+    }
+}
+
+/// Atomic pretty-JSON write (write-to-temp then rename — the
+/// `persist::SessionSnapshot::save` pattern) so a crash or a concurrent
+/// reader never observes a truncated file.
+fn write_json_atomic(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    // A leftover tmp from a crashed run could itself be a symlink; the
+    // rename must never write through one.
+    let _ = std::fs::remove_file(&tmp);
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// `fs::write` on a symlink path overwrites the TARGET, not the link —
+/// refuse symlinked output paths outright (AGENTS.md review checklist).
+fn refuse_symlink(path: &std::path::Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            Err(format!("refusing to write through symlink {}", path.display()))
+        }
+        Ok(_) => Ok(()),
+        Err(_) => Ok(()), // nothing there yet — fine
     }
 }
 
