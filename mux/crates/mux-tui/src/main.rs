@@ -805,6 +805,9 @@ fn run_server(args: Args) -> anyhow::Result<()> {
         enabled: config.agent_detection.enabled,
         min_confidence: config.agent_detection.min_confidence,
     });
+    // Issue #77 AC6: the operator's [[worktree_pattern]] override, or
+    // None for the default `<repo>/../<repo>.<branch>/`.
+    mux.set_worktree_pattern(config.worktree_pattern.clone());
     mux.restore_session();
     for workspace in &config.workspaces {
         let id = mux.with_state(|state| {

@@ -1342,6 +1342,54 @@ fn pane_worktree_create_failure_returns_exit_1_and_cwd_unchanged() {
 }
 
 #[test]
+fn worktree_pattern_config_overrides_default() {
+    // AC6: `[[worktree_pattern]]` in mux.toml redirects where worktrees
+    // are created. (The issue text says `cmux.toml`; cmux reads
+    // mux.toml/mux.json — see the scout plan's config-path correction.)
+    let server = HeadlessServer::start_with_config(
+        "pane-worktree-config",
+        "[[worktree_pattern]]\npattern = \"../cmux-wt-<repo>-<branch>\"\n",
+    );
+    let repo = git_repo_fixture("pane-worktree-config-repo");
+    let workspace = cli(&server, &["new-workspace", "--name", "wt-config"]);
+    assert_success(&workspace);
+    let surface: u64 =
+        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let parked = cli(&server, &["new-tab", "--cwd", repo.to_str().unwrap()]);
+    assert_success(&parked);
+    let pane = pane_of_surface(&server, surface);
+
+    let created = cli(
+        &server,
+        &[
+            "--json",
+            "pane-worktree-create",
+            "--pane",
+            &pane.to_string(),
+            "--branch",
+            "feat-pattern",
+        ],
+    );
+    assert_success(&created);
+    let value: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    let path = value["path"].as_str().expect("worktree path").to_string();
+    // ../cmux-wt-<repo>-<branch> resolved against the repo root; the
+    // <repo> placeholder keeps the path unique per run (the repo fixture
+    // dir is unique), so leftovers never collide across runs.
+    assert!(
+        path.ends_with(&format!(
+            "cmux-wt-{}-feat-pattern",
+            repo.file_name().unwrap().to_str().unwrap()
+        )),
+        "configured pattern should win over the default, got {path}"
+    );
+    assert!(PathBuf::from(&path).is_dir());
+
+    let _ = fs::remove_dir_all(&path);
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
 fn pane_worktree_three_word_alias_matches_flat_verb() {
     let server = HeadlessServer::start("pane-worktree-alias");
     let repo = git_repo_fixture("pane-worktree-alias-repo");

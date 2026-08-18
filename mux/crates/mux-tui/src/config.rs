@@ -108,6 +108,12 @@ struct RawConfig {
     /// apply in order; the last value for each key wins.
     #[serde(default)]
     agent_detection: Vec<RawAgentDetection>,
+    /// Worktree path pattern override (issue #77 AC6): array table so
+    /// `mux.toml` writes `[[worktree_pattern]]` with a single `pattern`
+    /// key. Multiple entries are accepted; the first wins (resolved in
+    /// `apply_worktree_pattern`).
+    #[serde(default)]
+    worktree_pattern: Vec<WorktreePatternConfig>,
     /// Key bindings: `"prefix"` plus one entry per action. Values may be
     /// a chord string, an array of chord strings, `"none"`, or
     /// `"alt_shortcuts": false`.
@@ -184,6 +190,13 @@ pub struct WorkspaceConfig {
     pub name: String,
     pub color: Option<String>,
     pub icon: Option<String>,
+}
+
+/// One `[[worktree_pattern]]` entry (issue #77 AC6).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorktreePatternConfig {
+    pub pattern: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -898,6 +911,10 @@ pub struct Config {
     pub keys: Keys,
     pub workspaces: Vec<WorkspaceConfig>,
     pub agent_detection: AgentDetectionConfig,
+    /// Resolved worktree path pattern (issue #77 AC6): the first
+    /// `[[worktree_pattern]]` entry's `pattern`, or `None` for the
+    /// default `<repo>/../<repo>.<branch>/`.
+    pub worktree_pattern: Option<String>,
 }
 
 /// Resolved `[[agent_detection]]` settings (issue #78 AC7). Detection is
@@ -1119,6 +1136,7 @@ pub fn load() -> Config {
         config.scrollbar.position = position;
     }
     config.keys.apply(&raw.keys);
+    apply_worktree_pattern(&mut config, &raw.worktree_pattern);
     config.workspaces = raw.workspaces;
     // Issue #78 AC7: `[[agent_detection]]` entries apply in order; the
     // last value for each key wins. An unknown min_confidence warns and
@@ -1137,6 +1155,12 @@ pub fn load() -> Config {
         }
     }
     config
+}
+
+/// Resolve `[[worktree_pattern]]` onto the config: the FIRST entry wins
+/// (array tables can repeat; a single entry is the intended use).
+fn apply_worktree_pattern(config: &mut Config, raw: &[WorktreePatternConfig]) {
+    config.worktree_pattern = raw.first().map(|entry| entry.pattern.clone());
 }
 
 // --- Local config overlay (issue #40) ---
@@ -1519,6 +1543,56 @@ min_confidence = "high"
         )
         .unwrap();
         assert_eq!(good_json.agent_detection[0].enabled, Some(false));
+    }
+
+    #[test]
+    fn worktree_pattern_parses_toml_table_array() {
+        // `[[worktree_pattern]]` mirrors the `[[workspaces]]` array-table
+        // shape (issue #77 AC6). Multiple entries are allowed; the first
+        // wins when resolved (`load`).
+        let toml: RawConfig = toml::from_str(
+            r##"[[worktree_pattern]]
+pattern = "../wt/<branch>"
+
+[[worktree_pattern]]
+pattern = "../other/<branch>"
+"##,
+        )
+        .unwrap();
+        assert_eq!(toml.worktree_pattern[0].pattern, "../wt/<branch>");
+        assert_eq!(toml.worktree_pattern.len(), 2);
+
+        let json: RawConfig =
+            serde_json::from_str(r##"{"worktree_pattern":[{"pattern":"../j/<branch>"}]}"##)
+                .unwrap();
+        assert_eq!(json.worktree_pattern[0].pattern, "../j/<branch>");
+
+        // Unknown keys in the table are rejected (deny_unknown_fields),
+        // consistent with every other config table.
+        assert!(toml::from_str::<RawConfig>(
+            r##"[[worktree_pattern]]
+pattern = "../wt/<branch>"
+bogus = true
+"##
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn worktree_pattern_defaults_when_absent() {
+        let mut config = Config::default();
+        apply_worktree_pattern(&mut config, &[]);
+        assert_eq!(config.worktree_pattern, None, "no [[worktree_pattern]] keeps the default");
+
+        let mut raw = RawConfig::default();
+        raw.worktree_pattern = vec![WorktreePatternConfig { pattern: "../wt/<branch>".into() }];
+        apply_worktree_pattern(&mut config, &raw.worktree_pattern);
+        assert_eq!(config.worktree_pattern.as_deref(), Some("../wt/<branch>"));
+
+        // First entry wins when several are present.
+        raw.worktree_pattern.push(WorktreePatternConfig { pattern: "../z/<branch>".into() });
+        apply_worktree_pattern(&mut config, &raw.worktree_pattern);
+        assert_eq!(config.worktree_pattern.as_deref(), Some("../wt/<branch>"));
     }
 
     #[test]
