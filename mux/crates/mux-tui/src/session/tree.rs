@@ -50,6 +50,18 @@ pub struct PaneView {
     pub name: Option<String>,
     pub tabs: Vec<TabView>,
     pub active_tab: usize,
+    /// Git worktrees attached to the pane over its lifetime, in
+    /// creation order (issue #77). Mirrors `mux_core::WorktreeRecord`
+    /// as JSON (`list-workspaces` / `pane-worktree-list`).
+    pub worktrees: Vec<PaneWorktreeView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaneWorktreeView {
+    pub branch: String,
+    pub path: String,
+    pub label: Option<String>,
+    pub created_at_ms: u64,
 }
 
 #[derive(Clone)]
@@ -178,6 +190,12 @@ impl PaneView {
     pub fn active_agent_name(&self) -> Option<&str> {
         self.tabs.get(self.active_tab)?.agent_name.as_deref()
     }
+
+    /// The pane's most recently created worktree record (issue #77):
+    /// the one the sidebar badge shows (`feat-auth: abc1234`).
+    pub fn active_worktree(&self) -> Option<&PaneWorktreeView> {
+        self.worktrees.last()
+    }
 }
 
 /// Snapshot a local mux state into a TreeView.
@@ -201,6 +219,16 @@ pub fn tree_from_state(state: &State) -> TreeView {
             short_id: short_ids.get(&pane.id).cloned().unwrap_or_default(),
             name: pane.name.clone(),
             active_tab: pane.active_tab,
+            worktrees: pane
+                .worktrees
+                .iter()
+                .map(|record| PaneWorktreeView {
+                    branch: record.branch.clone(),
+                    path: record.path.clone(),
+                    label: record.label.clone(),
+                    created_at_ms: record.created_at_ms,
+                })
+                .collect(),
             tabs: pane
                 .tabs
                 .iter()
@@ -298,6 +326,29 @@ fn parse_pane(value: &Value) -> Option<PaneView> {
         short_id: value.get("short_id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
         name: value.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()),
         active_tab: value.get("active_tab").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+        worktrees: value
+            .get("worktrees")
+            .and_then(|v| v.as_array())
+            .map(|worktrees| {
+                worktrees
+                    .iter()
+                    .filter_map(|worktree| {
+                        Some(PaneWorktreeView {
+                            branch: worktree.get("branch")?.as_str()?.to_string(),
+                            path: worktree.get("path")?.as_str()?.to_string(),
+                            label: worktree
+                                .get("label")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            created_at_ms: worktree
+                                .get("created_at_ms")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         tabs: value
             .get("tabs")
             .and_then(|v| v.as_array())
@@ -438,6 +489,54 @@ mod tests {
         });
         let tree = parse_tree(&data);
         assert_eq!(tree.workspaces[0].color, None);
+    }
+
+    #[test]
+    fn parse_tree_reads_pane_worktrees() {
+        // The server's `pane_json` serialises `worktrees` per pane
+        // (issue #77); a remote-attach client must read them back so
+        // the sidebar badge survives a thin attach. The last record is
+        // the "active" one the badge shows.
+        let tree = parse_tree(&json!({
+            "workspaces": [{
+                "id": 1, "name": "wt", "active": true,
+                "screens": [{
+                    "id": 2, "name": null, "active": true,
+                    "layout": {"type": "leaf", "pane": 3},
+                    "active_pane": 3,
+                    "panes": [{
+                        "id": 3, "short_id": "3", "name": null, "active_tab": 0,
+                        "tabs": [],
+                        "worktrees": [
+                            {"branch": "feat-auth", "path": "/tmp/proj.feat-auth", "label": "auth", "created_at_ms": 42},
+                            {"branch": "feat-docs", "path": "/tmp/proj.feat-docs", "label": null, "created_at_ms": 43},
+                        ]
+                    }]
+                }]
+            }]
+        }));
+        let pane = &tree.workspaces[0].screens[0].panes[0];
+        assert_eq!(pane.worktrees.len(), 2);
+        assert_eq!(pane.worktrees[0].branch, "feat-auth");
+        assert_eq!(pane.worktrees[0].label.as_deref(), Some("auth"));
+        assert_eq!(pane.worktrees[1].created_at_ms, 43);
+        let active = pane.active_worktree().unwrap();
+        assert_eq!(active.branch, "feat-docs", "the latest record is the active worktree");
+
+        // Absent key (older server) reads as an empty list, not an error.
+        let tree = parse_tree(&json!({
+            "workspaces": [{
+                "id": 1, "name": "old", "active": true,
+                "screens": [{
+                    "id": 2, "name": null, "active": true,
+                    "layout": {"type": "leaf", "pane": 3},
+                    "active_pane": 3,
+                    "panes": [{"id": 3, "short_id": "3", "name": null, "active_tab": 0, "tabs": []}]
+                }]
+            }]
+        }));
+        assert!(tree.workspaces[0].screens[0].panes[0].worktrees.is_empty());
+        assert!(tree.workspaces[0].screens[0].panes[0].active_worktree().is_none());
     }
 
     #[test]

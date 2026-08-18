@@ -1244,6 +1244,24 @@ fn pane_worktree_create_list_remove_round_trip() {
     assert_eq!(worktrees[0]["label"].as_str(), Some("auth"));
     assert!(worktrees[0]["created_at_ms"].as_u64().unwrap() > 0);
 
+    // The record also reaches attach clients via list-workspaces JSON
+    // (pane.worktrees), so a thin attach renders the sidebar badge.
+    let tree = cli(&server, &["--json", "list-workspaces"]);
+    assert_success(&tree);
+    let tree_value: serde_json::Value = serde_json::from_slice(&tree.stdout).unwrap();
+    let pane_json = tree_value["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
+        .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
+        .find(|entry| entry["id"].as_u64() == Some(pane))
+        .expect("pane in list-workspaces");
+    let wt_json = &pane_json["worktrees"].as_array().unwrap()[0];
+    assert_eq!(wt_json["branch"].as_str(), Some("feat-auth"));
+    assert_eq!(wt_json["path"].as_str(), Some(path.as_str()));
+    assert_eq!(wt_json["label"].as_str(), Some("auth"));
+
     let plain = cli(&server, &["pane-worktree-list", "--pane", &pane.to_string()]);
     assert_success(&plain);
     let text = String::from_utf8(plain.stdout).unwrap();

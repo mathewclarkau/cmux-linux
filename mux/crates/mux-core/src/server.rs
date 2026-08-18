@@ -713,6 +713,7 @@ fn pane_json(state: &State, id: PaneId, short_ids: &HashMap<u64, String>) -> Val
         "short_id": short_ids.get(&id).cloned().unwrap_or_default(),
         "name": pane.name,
         "active_tab": pane.active_tab,
+        "worktrees": pane.worktrees.iter().map(worktree_record_json).collect::<Vec<_>>(),
         "tabs": pane.tabs.iter().map(|sid| {
             let surface = state.surfaces.get(sid);
             json!({
