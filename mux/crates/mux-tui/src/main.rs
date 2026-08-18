@@ -184,7 +184,7 @@ AGENT DETECTION
   cmux detect-agents
       Detection on every pane in one call: `<surface> <agent>` rows
       (the issue's `agent detect-batch`; --json prints
-      {"agents":{"<surface>":"<agent>"}} — keys are surface ids).
+      {\"agents\":{\"<surface>\":\"<agent>\"}} — keys are surface ids).
   cmux agent-pattern <add|list|remove>
       Manage the live detection registry. add: `cmux agent-pattern add
       <name> --pattern <marker> [--kind process|screen] [--confidence
@@ -194,9 +194,9 @@ AGENT DETECTION
       kind defaults to screen; confidence defaults to medium. Bundled
       patterns for the top-6 agents ship in agents.json and cannot be
       removed. Custom patterns live for the daemon's session (v1).
-  Config: [[agent_detection]] in mux.toml (or "agent_detection" in
+  Config: [[agent_detection]] in mux.toml (or \"agent_detection\" in
       mux.json) — `enabled = true|false` (default true) and
-      `min_confidence = "high"|"medium"|"low"` (default "low"). With
+      `min_confidence = \"high\"|\"medium\"|\"low\"` (default \"low\"). With
       detection disabled, the detect verbs error with
       `agent detection disabled by configuration`.
 
