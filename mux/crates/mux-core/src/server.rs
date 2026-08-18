@@ -43,7 +43,7 @@
 //! handled by the next `serve()` stale-clear / `kill-stale` (an L3
 //! follow-up can respawn the watchdog for the new path).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -223,6 +223,15 @@ enum Command {
         cols: Option<u16>,
         #[serde(default)]
         rows: Option<u16>,
+        /// Issue #76: explicit child argv (agent start) — absent means
+        /// the default login shell. Recorded at spawn so `layout-export`
+        /// can replay it.
+        #[serde(default)]
+        command: Option<Vec<String>>,
+        /// Issue #76: extra env for the child, as a JSON object of
+        /// string → string.
+        #[serde(default)]
+        env: Option<BTreeMap<String, String>>,
     },
     NewBrowserTab {
         url: String,
@@ -340,6 +349,11 @@ enum Command {
         cols: Option<u16>,
         #[serde(default)]
         rows: Option<u16>,
+        /// Issue #76: explicit argv/env for the new pane's first tab.
+        #[serde(default)]
+        command: Option<Vec<String>>,
+        #[serde(default)]
+        env: Option<BTreeMap<String, String>>,
     },
     SetRatio {
         pane: PaneId,
@@ -493,6 +507,26 @@ enum Command {
     /// `{"session":"bar","socket_path":"...","pid":<daemon-pid>}`.
     RenameSession {
         new_name: String,
+    },
+    /// Issue #76: export one workspace's tab/pane/agent-argv topology as
+    /// a versioned `LayoutDocument` (the response `data` IS the document).
+    /// `workspace` resolves name-first, then numeric workspace id; an
+    /// omitted field means the active workspace.
+    LayoutExport {
+        #[serde(default)]
+        workspace: Option<String>,
+    },
+    /// Issue #76: export every workspace in the session, as
+    /// `{"files":[{"filename":"<sanitized>.json","document":{...}}]}`
+    /// for the CLI's `--output-dir` fan-out.
+    LayoutExportAll,
+    /// Issue #76: replay a layout document under `workspace` (created if
+    /// missing, AC2). The document is structurally parsed by serde (parse
+    /// errors propagate as `bad request`); `validate()` then hard-fails
+    /// any schema/geometry drift (AC7) before a single pane is spawned.
+    LayoutApply {
+        workspace: String,
+        document: crate::layout_doc::LayoutDocument,
     },
 }
 
@@ -824,6 +858,22 @@ fn sanitise_text(mode: ShellMode, text: &str) -> String {
     }
 }
 
+/// Issue #76: the socket `command`/`env` spawn fields → `SpawnOverrides`
+/// (agent start). `None` when neither is present keeps the legacy spawn.
+fn spawn_overrides(
+    command: Option<Vec<String>>,
+    env: Option<BTreeMap<String, String>>,
+) -> Option<crate::SpawnOverrides> {
+    if command.is_none() && env.is_none() {
+        return None;
+    }
+    Some(crate::SpawnOverrides {
+        command,
+        extra_env: env.map(|m| m.into_iter().collect()).unwrap_or_default(),
+        cwd: None,
+    })
+}
+
 fn get_surface(mux: &Mux, id: SurfaceId) -> anyhow::Result<Arc<crate::Surface>> {
     mux.surface(id).ok_or_else(|| anyhow::anyhow!("unknown surface {id}"))
 }
@@ -945,6 +995,35 @@ fn browser_state_json(
     value
 }
 
+/// Resolve a `layout-export` workspace selector: exact name first, then
+/// numeric workspace id (ids are session-local; names are the stable
+/// fleet identity — issue #76 builder decision D2). `None` selects the
+/// active workspace.
+fn resolve_workspace_index(mux: &Mux, selector: Option<&str>) -> anyhow::Result<usize> {
+    mux.with_state(|s| {
+        if s.workspaces.is_empty() {
+            anyhow::bail!("no workspaces in this session");
+        }
+        match selector {
+            None => Ok(s.active_workspace),
+            Some(sel) => s
+                .workspaces
+                .iter()
+                .position(|ws| ws.name == sel)
+                .or_else(|| {
+                    sel.parse::<u64>()
+                        .ok()
+                        .and_then(|id| s.workspaces.iter().position(|ws| ws.id == id))
+                })
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unknown workspace {sel:?} (matched neither a name nor a numeric id)"
+                    )
+                }),
+        }
+    })
+}
+
 fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::Result<Value> {
     match cmd {
         Command::Identify => Ok(json!({
@@ -997,8 +1076,9 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                 "data": base64::engine::general_purpose::STANDARD.encode(replay),
             }))
         }
-        Command::NewTab { pane, cwd, cols, rows } => {
-            let surface = mux.new_tab(pane, cwd, cols.zip(rows))?;
+        Command::NewTab { pane, cwd, cols, rows, command, env } => {
+            let overrides = spawn_overrides(command, env);
+            let surface = mux.new_tab_with_overrides(pane, cwd, cols.zip(rows), overrides.as_ref())?;
             Ok(json!({ "surface": surface.id }))
         }
         Command::NewBrowserTab { url, pane, cols, rows } => {
@@ -1115,13 +1195,14 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             let surface = mux.new_screen(workspace, cols.zip(rows))?;
             Ok(json!({ "surface": surface.id }))
         }
-        Command::Split { pane, dir, cols, rows } => {
+        Command::Split { pane, dir, cols, rows, command, env } => {
             let dir = match dir.as_str() {
                 "right" => SplitDir::Right,
                 "down" => SplitDir::Down,
                 other => anyhow::bail!("bad dir {other:?} (want \"right\" or \"down\")"),
             };
-            let surface = mux.split(pane, dir, cols.zip(rows))?;
+            let overrides = spawn_overrides(command, env);
+            let surface = mux.split_with_overrides(pane, dir, cols.zip(rows), overrides.as_ref())?;
             Ok(json!({ "surface": surface.id }))
         }
         Command::SetRatio { pane, dir, ratio } => {
@@ -1382,6 +1463,36 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                 "session": new_name,
                 "socket_path": new_sock,
                 "pid": std::process::id(),
+            }))
+        }
+        Command::LayoutExport { workspace } => {
+            let index = resolve_workspace_index(mux, workspace.as_deref())?;
+            let doc = mux.with_state(|s| crate::layout_doc::capture_workspace(s, index))?;
+            Ok(serde_json::to_value(&doc)?)
+        }
+        Command::LayoutExportAll => {
+            let files = mux.with_state(|s| -> anyhow::Result<Vec<Value>> {
+                (0..s.workspaces.len())
+                    .map(|i| {
+                        let doc = crate::layout_doc::capture_workspace(s, i)?;
+                        let filename = format!(
+                            "{}.json",
+                            crate::layout_doc::sanitize_filename(&s.workspaces[i].name)
+                        );
+                        Ok(json!({ "filename": filename, "document": doc }))
+                    })
+                    .collect()
+            })?;
+            Ok(json!({ "files": files }))
+        }
+        Command::LayoutApply { workspace, document } => {
+            document.validate()?;
+            let summary = mux.apply_layout(&workspace, &document)?;
+            Ok(json!({
+                "workspace": workspace,
+                "workspace_id": summary.workspace_id,
+                "panes": summary.panes,
+                "surfaces": summary.surfaces,
             }))
         }
         Command::Subscribe => {

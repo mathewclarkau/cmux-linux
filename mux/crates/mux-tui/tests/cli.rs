@@ -2503,3 +2503,286 @@ fn first_attach_to_dead_socket_still_exits_nonzero() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+
+// -- issue #76: layout export/apply --------------------------------------
+
+/// Helper: the parsed `--json list-workspaces` payload.
+fn list_workspaces_json(server: &HeadlessServer) -> serde_json::Value {
+    let listed = cli(server, &["--json", "list-workspaces"]);
+    assert_success(&listed);
+    serde_json::from_slice(&listed.stdout).unwrap()
+}
+
+#[test]
+fn layout_export_writes_versioned_workspace_json() {
+    let server = HeadlessServer::start("layout-export");
+    let ws = cli(&server, &["new-workspace", "--name", "fleet"]);
+    assert_success(&ws);
+
+    let value = list_workspaces_json(&server);
+    let pane = value["workspaces"][0]["screens"][0]["panes"][0]["id"].as_u64().unwrap();
+    let split = cli(&server, &["split", "--pane", &pane.to_string(), "--dir", "right"]);
+    assert_success(&split);
+    let ratio = cli(&server, &[
+        "set-ratio",
+        "--pane",
+        &pane.to_string(),
+        "--dir",
+        "right",
+        "--ratio",
+        "0.6",
+    ]);
+    assert_success(&ratio);
+
+    let out = server.dir.join("fleet.json");
+    let export = cli(&server, &[
+        "layout-export",
+        "--workspace",
+        "fleet",
+        "--output",
+        out.to_str().unwrap(),
+    ]);
+    assert_success(&export);
+    assert_eq!(
+        String::from_utf8_lossy(&export.stdout).trim(),
+        out.display().to_string(),
+        "plain mode prints the written path"
+    );
+
+    let doc: serde_json::Value = serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
+    assert_eq!(doc["schema_version"].as_u64(), Some(1), "doc was {doc}");
+    assert_eq!(doc["cmux_version"].as_str(), Some(mux_core::VERSION));
+    assert_eq!(doc["workspace"]["name"].as_str(), Some("fleet"));
+    let layout = &doc["workspace"]["screens"][0]["layout"];
+    assert_eq!(layout["type"].as_str(), Some("split"));
+    assert_eq!(layout["dir"].as_str(), Some("right"));
+    assert!((layout["ratio"].as_f64().unwrap() - 0.6).abs() < 1e-5);
+    assert_eq!(layout["a"]["type"].as_str(), Some("leaf"));
+    assert_eq!(layout["a"]["pane"].as_u64(), Some(0));
+    assert_eq!(
+        doc["workspace"]["screens"][0]["panes"].as_array().unwrap().len(),
+        2,
+        "both split panes should be recorded"
+    );
+}
+
+#[test]
+fn layout_apply_round_trips_topology_and_argv() {
+    let server = HeadlessServer::start("layout-apply");
+    let ws = cli(&server, &["new-workspace", "--name", "fleet"]);
+    assert_success(&ws);
+
+    let value = list_workspaces_json(&server);
+    let pane = value["workspaces"][0]["screens"][0]["panes"][0]["id"].as_u64().unwrap();
+    let ws_id = value["workspaces"][0]["id"].as_u64().unwrap();
+
+    // An agent tab with explicit argv + env (the `--exec` spawn path).
+    let marker = format!("FLEETMARKER_{}", std::process::id());
+    let exec = cli(
+        &server,
+        &[
+            "new-tab",
+            "--pane",
+            &pane.to_string(),
+            "--env",
+            "FLEET_TIER=A",
+            "--exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            &format!("printf '{marker}'; sleep 60"),
+        ],
+    );
+    assert_success(&exec);
+    let split = cli(&server, &["split", "--pane", &pane.to_string(), "--dir", "down"]);
+    assert_success(&split);
+
+    let out = server.dir.join("fleet.json");
+    let export = cli(&server, &[
+        "layout-export",
+        "--workspace",
+        "fleet",
+        "--output",
+        out.to_str().unwrap(),
+    ]);
+    assert_success(&export);
+    let doc: serde_json::Value = serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
+    let tabs = &doc["workspace"]["screens"][0]["panes"][0]["tabs"];
+    assert_eq!(tabs.as_array().unwrap().len(), 2);
+    assert_eq!(
+        tabs[1]["command"].as_array().map(|a| a.len()),
+        Some(3),
+        "recorded argv should round-trip into the file: {tabs}"
+    );
+    assert_eq!(tabs[1]["env"]["FLEET_TIER"].as_str(), Some("A"));
+
+    let close = cli(&server, &["close-workspace", "--workspace", &ws_id.to_string()]);
+    assert_success(&close);
+
+    let apply = cli(&server, &[
+        "layout-apply",
+        "--input",
+        out.to_str().unwrap(),
+        "--workspace",
+        "fleet",
+    ]);
+    assert_success(&apply);
+
+    // Topology is back: one workspace, two panes, the exec tab re-spawned.
+    let value = list_workspaces_json(&server);
+    let workspaces = value["workspaces"].as_array().unwrap();
+    assert_eq!(workspaces.len(), 1);
+    assert_eq!(workspaces[0]["name"].as_str(), Some("fleet"));
+    let layout = &workspaces[0]["screens"][0]["layout"];
+    assert_eq!(layout["type"].as_str(), Some("split"), "split geometry restored");
+    assert_eq!(layout["dir"].as_str(), Some("down"));
+    let panes = workspaces[0]["screens"][0]["panes"].as_array().unwrap();
+    assert_eq!(panes.len(), 2);
+    assert_eq!(panes[0]["tabs"].as_array().unwrap().len(), 2);
+
+    // The re-spawned argv actually ran: poll every surface for the marker.
+    let surfaces: Vec<u64> = panes
+        .iter()
+        .flat_map(|p| p["tabs"].as_array().unwrap().iter())
+        .map(|t| t["surface"].as_u64().unwrap())
+        .collect();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut saw = false;
+    while Instant::now() < deadline && !saw {
+        for &sid in &surfaces {
+            let read = cli(&server, &["read-screen", "--surface", &sid.to_string()]);
+            if read.status.success()
+                && String::from_utf8_lossy(&read.stdout).contains(&marker)
+            {
+                saw = true;
+                break;
+            }
+        }
+        if !saw {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    assert!(saw, "apply should re-spawn the recorded argv and print {marker}");
+}
+
+#[test]
+fn layout_export_all_writes_one_file_per_workspace() {
+    let server = HeadlessServer::start("layout-export-all");
+    for name in ["alpha", "beta"] {
+        let ws = cli(&server, &["new-workspace", "--name", name]);
+        assert_success(&ws);
+    }
+
+    let dir = server.dir.join("fleet");
+    let export = cli(&server, &["layout-export-all", "--output-dir", dir.to_str().unwrap()]);
+    assert_success(&export);
+    for name in ["alpha", "beta"] {
+        let path = dir.join(format!("{name}.json"));
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(doc["schema_version"].as_u64(), Some(1), "{name} doc: {doc}");
+        assert_eq!(doc["workspace"]["name"].as_str(), Some(name));
+    }
+}
+
+#[test]
+fn layout_apply_rejects_unknown_schema_version_loudly() {
+    let server = HeadlessServer::start("layout-apply-v2");
+    let bad = server.dir.join("v2.json");
+    fs::write(
+        &bad,
+        r#"{"schema_version":2,"cmux_version":"x","workspace":{"name":"w","active_screen":0,"screens":[{"active_pane":0,"layout":{"type":"leaf","pane":0},"panes":[{"tabs":[{"kind":"pty"}]}]}]}}"#,
+    )
+    .unwrap();
+
+    let apply = cli(&server, &[
+        "layout-apply",
+        "--input",
+        bad.to_str().unwrap(),
+        "--workspace",
+        "w",
+    ]);
+    assert_eq!(
+        apply.status.code(),
+        Some(1),
+        "schema mismatch is a server-reported error (exit 1), got {:?}\nstderr: {}",
+        apply.status.code(),
+        String::from_utf8_lossy(&apply.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&apply.stderr);
+    assert!(stderr.contains("schema_version"), "stderr was: {stderr}");
+    assert!(stderr.contains('2'), "stderr should name the file's version: {stderr}");
+}
+
+#[test]
+fn layout_apply_creates_missing_workspace() {
+    let server = HeadlessServer::start("layout-apply-create");
+    let ws = cli(&server, &["new-workspace", "--name", "solo"]);
+    assert_success(&ws);
+    let out = server.dir.join("solo.json");
+    let export = cli(&server, &[
+        "layout-export",
+        "--workspace",
+        "solo",
+        "--output",
+        out.to_str().unwrap(),
+    ]);
+    assert_success(&export);
+
+    // Applying under a NEW name creates that workspace (AC2).
+    let apply = cli(&server, &[
+        "layout-apply",
+        "--input",
+        out.to_str().unwrap(),
+        "--workspace",
+        "solo2",
+    ]);
+    assert_success(&apply);
+    let value = list_workspaces_json(&server);
+    let names: Vec<&str> =
+        value["workspaces"].as_array().unwrap().iter().map(|w| w["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["solo", "solo2"], "both the original and the applied copy exist");
+
+    // Applying onto an existing name is refused, loudly and non-destructively.
+    let again = cli(&server, &[
+        "layout-apply",
+        "--input",
+        out.to_str().unwrap(),
+        "--workspace",
+        "solo",
+    ]);
+    assert_eq!(again.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&again.stderr).contains("already exists"));
+}
+
+#[test]
+fn layout_export_refuses_symlinked_output() {
+    let server = HeadlessServer::start("layout-export-symlink");
+    let ws = cli(&server, &["new-workspace", "--name", "sec"]);
+    assert_success(&ws);
+
+    let target = server.dir.join("real-target.json");
+    fs::write(&target, "").unwrap();
+    let link = server.dir.join("link.json");
+    symlink(&target, &link).unwrap();
+
+    let export = cli(&server, &[
+        "layout-export",
+        "--workspace",
+        "sec",
+        "--output",
+        link.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        export.status.code(),
+        Some(1),
+        "symlinked output must be refused, got {:?}",
+        export.status.code()
+    );
+    assert!(String::from_utf8_lossy(&export.stderr).contains("symlink"));
+    assert_eq!(
+        fs::read_to_string(&target).unwrap(),
+        "",
+        "the symlink target must be untouched"
+    );
+}
