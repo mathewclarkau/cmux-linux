@@ -16,15 +16,17 @@ use ratatui::Frame;
 use super::truncate;
 use crate::app::{flash_active, App, Hit};
 
-/// Color for the sidebar's agent-state dot. `Working`/`Blocked` are the
-/// two states worth a glance (busy vs. needs you); `Idle`/`Done`/`Unknown`
-/// share a quiet color since none of them need attention.
+/// Color for the sidebar's agent-state chip, per issue #75's Herdr-parity
+/// mapping: green=idle (free for work), amber=working, red=blocked (needs
+/// you), blue=done, gray=unknown. A surface with no report at all shows
+/// no chip; a reported `unknown` state shows the gray one.
 fn agent_glyph_color(state: AgentState) -> Color {
     match state {
+        AgentState::Idle => Color::Green,
         AgentState::Working => Color::Yellow,
         AgentState::Blocked => Color::Red,
-        AgentState::Done => Color::Green,
-        AgentState::Idle | AgentState::Unknown => Color::Indexed(242),
+        AgentState::Done => Color::Blue,
+        AgentState::Unknown => Color::Indexed(242),
     }
 }
 
@@ -235,5 +237,17 @@ mod tests {
         assert_eq!(agent_badge(Some("pi")), " [pi]");
         // Longer than 8 chars truncates with the shared ellipsis helper.
         assert_eq!(agent_badge(Some("cursor-agent")), " [cursor-…]");
+    }
+
+    #[test]
+    fn agent_glyph_color_matches_issue_75_mapping() {
+        // Issue #75 AC7: green=idle, amber(=yellow)=working, red=blocked,
+        // blue=done, gray=unknown. (Idle was gray and Done green before;
+        // the Herdr-parity mapping swaps them.)
+        assert_eq!(agent_glyph_color(AgentState::Idle), Color::Green);
+        assert_eq!(agent_glyph_color(AgentState::Working), Color::Yellow);
+        assert_eq!(agent_glyph_color(AgentState::Blocked), Color::Red);
+        assert_eq!(agent_glyph_color(AgentState::Done), Color::Blue);
+        assert_eq!(agent_glyph_color(AgentState::Unknown), Color::Indexed(242));
     }
 }
