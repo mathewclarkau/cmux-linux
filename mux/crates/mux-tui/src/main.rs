@@ -780,6 +780,12 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     // server config with the laptop's own. Browser and scrollbar stay
     // server-side truth and are not published here.
     mux.set_resolved_chrome(config.resolved_chrome_value());
+    // Issue #78 AC7: push the resolved [[agent_detection]] settings into
+    // the daemon so the detect verbs honour them.
+    mux.set_agent_detection(mux_core::agent_detect::DetectionSettings {
+        enabled: config.agent_detection.enabled,
+        min_confidence: config.agent_detection.min_confidence,
+    });
     mux.restore_session();
     for workspace in &config.workspaces {
         let id = mux.with_state(|state| {

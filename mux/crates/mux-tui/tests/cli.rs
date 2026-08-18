@@ -532,6 +532,32 @@ fn list_workspaces_json_exposes_agent_name_per_tab() {
     assert_eq!(other_tab["agent_confidence"], serde_json::Value::Null);
 }
 
+/// Issue #78 AC7: `[[agent_detection]] enabled = false` in cmux.toml
+/// turns detection off — both detect verbs error with a clear message
+/// instead of detecting.
+#[test]
+fn detect_agent_respects_agent_detection_config_disabled() {
+    let server = HeadlessServer::start_with_config(
+        "detect-disabled",
+        "[[agent_detection]]\nenabled = false\n",
+    );
+    let workspace = cli(&server, &["new-workspace", "--name", "off"]);
+    assert_success(&workspace);
+    let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+
+    let out = cli(&server, &["detect-agent", "--surface", &surface.to_string()]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("agent detection disabled"),
+        "stderr was {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let batch = cli(&server, &["detect-agents"]);
+    assert_eq!(batch.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&batch.stderr).contains("agent detection disabled"));
+}
+
 #[test]
 fn set_workspace_color_sets_and_clears() {
     let server = HeadlessServer::start("workspace-color");
