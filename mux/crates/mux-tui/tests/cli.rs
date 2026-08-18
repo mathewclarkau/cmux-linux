@@ -730,6 +730,58 @@ fn agent_read_rejects_unknown_source() {
 }
 
 #[test]
+fn agent_send_types_text_without_enter() {
+    // Issue #75 AC4: agent-send types literal text into the named pane
+    // WITHOUT submitting it — the command must sit on the prompt
+    // unexecuted until the caller sends Enter separately.
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let marker_file =
+        std::path::PathBuf::from(format!("/tmp/cmux-agent-send-{stamp}-{}", std::process::id()));
+    let marker_file = marker_file.to_str().unwrap().to_string();
+    let typed = format!("touch {marker_file}");
+
+    let server = HeadlessServer::start("agent-send");
+    let workspace = cli(&server, &["new-workspace", "--name", "sender"]);
+    assert_success(&workspace);
+    let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
+
+    let report = cli(
+        &server,
+        &["report-agent", "--surface", &surface.to_string(), "--state", "working", "--agent", "sender-1"],
+    );
+    assert_success(&report);
+
+    let sent = cli(&server, &["agent-send", "--target", "sender-1", "--text", &typed]);
+    assert_success(&sent);
+
+    // The text is echoed on the pane (typed) ...
+    let screen = wait_for_screen(&server, surface, &typed);
+    assert!(screen.contains(&typed), "typed text must appear on the pane; got {screen:?}");
+    // ... but NOT executed: no Enter was sent, so the file must not exist.
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        !std::path::Path::new(&marker_file).exists(),
+        "agent-send must not submit the text (no Enter)"
+    );
+
+    // Submitting separately (plain `send` + CR) runs it — proving the
+    // no-Enter assertion above was about the missing CR, not the text.
+    let submit = cli(&server, &["send", "--surface", &surface.to_string(), "--text", "", "--send-cr", "1"]);
+    assert_success(&submit);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !std::path::Path::new(&marker_file).exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(std::path::Path::new(&marker_file).exists(), "CR submit should execute the typed command");
+    let _ = std::fs::remove_file(&marker_file);
+
+    // Unknown target: exit 1.
+    let unknown = cli(&server, &["agent-send", "--target", "ghost-agent", "--text", "hi"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown agent"));
+}
+
+#[test]
 fn list_agents_plain_output_includes_name_and_message() {
     // Issue #75 AC2: the plain `list-agents` line carries the agent name
     // and last message (`-` when absent), alongside state/source/session.

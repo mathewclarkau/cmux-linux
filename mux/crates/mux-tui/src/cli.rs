@@ -395,6 +395,15 @@ const VERBS: &[VerbSpec] = &[
         stream: false,
     },
     VerbSpec {
+        // Issue #75 AC4: type literal text into an agent's pane by name
+        // (or surface id) WITHOUT Enter — submit separately.
+        name: "agent-send",
+        allowed: &["target", "text", "shell"],
+        build: build_agent_send,
+        print: print_empty,
+        stream: false,
+    },
+    VerbSpec {
         name: "browser-reload",
         allowed: &["surface"],
         build: build_surface,
@@ -1199,6 +1208,22 @@ fn build_agent_read(flags: &FlagMap) -> Result<Value, UsageError> {
 
 fn build_agent_pattern_remove(flags: &FlagMap) -> Result<Value, UsageError> {
     Ok(json!({ "name": flags.required("name")? }))
+}
+
+fn build_agent_send(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({
+        "target": flags.required("target")?,
+        "text": flags.required("text")?,
+    });
+    if let Some(shell) = flags.optional("shell") {
+        if !matches!(shell.as_str(), "auto" | "fish" | "bash" | "zsh" | "sh" | "nu" | "raw") {
+            return Err(UsageError(format!(
+                "--shell must be one of auto, fish, bash, zsh, sh, nu, raw (got {shell:?})"
+            )));
+        }
+        value["shell"] = json!(shell);
+    }
+    Ok(value)
 }
 
 fn build_kill_session(flags: &FlagMap) -> Result<Value, UsageError> {
