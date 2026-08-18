@@ -2,7 +2,7 @@
 //! and broadcasts [`MuxEvent`]s to subscribed frontends.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -103,6 +103,10 @@ pub struct Mux {
     /// (issue #78 AC4). Session-lifetime only in v1 — not persisted
     /// across daemon restarts.
     custom_agent_patterns: Mutex<Vec<AgentPattern>>,
+    /// Operator-configured worktree path pattern (issue #77 AC6), set
+    /// from `mux-tui`'s `run_server` after `config::load()`.
+    /// `None` means the default `<repo>/../<repo>.<branch>/`.
+    worktree_pattern: Mutex<Option<String>>,
 }
 
 impl Mux {
@@ -130,6 +134,7 @@ impl Mux {
             socket_path: Mutex::new(None),
             agent_detection: Mutex::new(DetectionSettings::default()),
             custom_agent_patterns: Mutex::new(Vec::new()),
+            worktree_pattern: Mutex::new(None),
         })
     }
 
@@ -315,6 +320,7 @@ impl Mux {
                 tabs: vec![surface],
                 active_tab: 0,
                 active_at: self.next_active_at(),
+                worktrees: Vec::new(),
             },
         )
     }
@@ -1270,6 +1276,7 @@ reattaching to remote session {session_id} on {host} \
                         tabs: vec![surface.id],
                         active_tab: 0,
                         active_at,
+                        worktrees: Vec::new(),
                     },
                 );
             } else {
@@ -1591,6 +1598,151 @@ reattaching to remote session {session_id} on {host} \
                 "remote surface: process tree not local; no screen marker matched".to_string();
         }
         Ok(detection)
+    /// Set the operator-configured worktree path pattern (issue #77
+    /// AC6). `None` (or never called) keeps the default
+    /// `<repo>/../<repo>.<branch>/`. Called from `mux-tui`'s `run_server`
+    /// after `config::load()`, mirroring `set_resolved_chrome`.
+    pub fn set_worktree_pattern(&self, pattern: Option<String>) {
+        *self.worktree_pattern.lock().unwrap() = pattern;
+    }
+
+    fn worktree_pattern(&self) -> String {
+        self.worktree_pattern
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| crate::worktree::DEFAULT_PATTERN.to_string())
+    }
+
+    /// Create the git worktree for `branch` rooted at the repository
+    /// containing `start_cwd`. Runs git OUTSIDE the state lock; on any
+    /// failure nothing is recorded and the caller's cwd is untouched
+    /// (issue #77 AC7).
+    fn create_worktree(
+        &self,
+        start_cwd: &str,
+        branch: &str,
+        label: Option<String>,
+    ) -> anyhow::Result<crate::worktree::WorktreeRecord> {
+        use crate::worktree;
+
+        let repo_root = worktree::find_repo_root(Path::new(start_cwd)).ok_or_else(|| {
+            anyhow::anyhow!("{start_cwd:?} is not inside a git repository")
+        })?;
+        let path = worktree::resolve_worktree_path(&repo_root, &self.worktree_pattern(), branch)?;
+        worktree::git_worktree_add(&repo_root, branch, &path)?;
+        Ok(crate::worktree::WorktreeRecord {
+            branch: branch.to_string(),
+            path: path.to_string_lossy().into_owned(),
+            label,
+            created_at_ms: crate::surface::now_ms(),
+        })
+    }
+
+    /// `pane worktree create` (issue #77 AC1): create the worktree for
+    /// `branch`, record it on the pane, and `cd` the pane's active tab
+    /// into it. On failure (dirty tree, bad branch, no repository) the
+    /// error propagates and the pane is left untouched (AC7).
+    pub fn pane_worktree_create(
+        self: &Arc<Self>,
+        pane: PaneId,
+        branch: &str,
+        label: Option<String>,
+    ) -> anyhow::Result<crate::worktree::WorktreeRecord> {
+        let surface = {
+            let state = self.state.lock().unwrap();
+            let Some(p) = state.panes.get(&pane) else {
+                anyhow::bail!("unknown pane {pane}")
+            };
+            let active = p
+                .active_surface()
+                .ok_or_else(|| anyhow::anyhow!("pane {pane} has no active tab"))?;
+            state.surfaces.get(&active).cloned()
+        };
+        let Some(surface) = surface else {
+            anyhow::bail!("pane {pane} has no active surface")
+        };
+        if surface.kind() != crate::SurfaceKind::Pty {
+            anyhow::bail!("pane {pane}'s active tab is not a pty surface");
+        }
+        let cwd = surface
+            .cwd()
+            .ok_or_else(|| anyhow::anyhow!("pane {pane} has no working directory yet"))?;
+        let record = self.create_worktree(&cwd, branch, label)?;
+        {
+            let mut state = self.state.lock().unwrap();
+            let Some(p) = state.panes.get_mut(&pane) else {
+                anyhow::bail!("unknown pane {pane}")
+            };
+            p.worktrees.push(record.clone());
+        }
+        // Same live `cd` the persist path uses (restore_tab): the pane
+        // keeps its shell, it just moves into the worktree. Best-effort:
+        // a dead pty keeps the record, which list/remove still manage.
+        let _ = surface.write_bytes(
+            format!("cd {} && clear\n", crate::persist::shell_quote(&record.path)).as_bytes(),
+        );
+        self.emit(MuxEvent::TreeChanged);
+        Ok(record)
+    }
+
+    /// `pane worktree list` (issue #77 AC2): every worktree attached to
+    /// the pane over its lifetime, in creation order.
+    pub fn pane_worktree_list(
+        &self,
+        pane: PaneId,
+    ) -> anyhow::Result<Vec<crate::worktree::WorktreeRecord>> {
+        let state = self.state.lock().unwrap();
+        let Some(p) = state.panes.get(&pane) else {
+            anyhow::bail!("unknown pane {pane}")
+        };
+        Ok(p.worktrees.clone())
+    }
+
+    /// `pane worktree remove` (issue #77 AC3): `git worktree remove` +
+    /// `prune`, then drop the record. Refuses (error, no force flag)
+    /// while the pane's working directory sits inside the target
+    /// worktree; a dirty worktree fails via git's own error.
+    pub fn pane_worktree_remove(self: &Arc<Self>, pane: PaneId, branch: &str) -> anyhow::Result<()> {
+        use crate::worktree;
+
+        let (record, cwd) = {
+            let state = self.state.lock().unwrap();
+            let Some(p) = state.panes.get(&pane) else {
+                anyhow::bail!("unknown pane {pane}")
+            };
+            let Some(record) = p.worktrees.iter().find(|w| w.branch == branch) else {
+                anyhow::bail!("no worktree for branch {branch:?} on pane {pane}")
+            };
+            let record = record.clone();
+            let cwd = p
+                .active_surface()
+                .and_then(|s| state.surfaces.get(&s))
+                .and_then(|s| s.cwd());
+            (record, cwd)
+        };
+        if cwd.as_deref().is_some_and(|cwd| Path::new(cwd).starts_with(record.path.as_str())) {
+            anyhow::bail!(
+                "pane {pane} is inside {}; cd elsewhere before removing it",
+                record.path
+            );
+        }
+        // Resolve the MAIN repository through the worktree's own `.git`
+        // pointer so remove/prune run from a stable repo context even if
+        // the pane has since cd'd away.
+        let root = worktree::main_repo_root(Path::new(&record.path)).ok_or_else(|| {
+            anyhow::anyhow!("could not resolve the main repository for worktree {}", record.path)
+        })?;
+        worktree::git_worktree_remove(&root, Path::new(&record.path))?;
+        worktree::git_worktree_prune(&root)?;
+        {
+            let mut state = self.state.lock().unwrap();
+            if let Some(p) = state.panes.get_mut(&pane) {
+                p.worktrees.retain(|w| w.branch != branch);
+            }
+        }
+        self.emit(MuxEvent::TreeChanged);
+        Ok(())
     }
 
     /// Set a screen's user-visible name. An empty name clears it (the
@@ -2056,9 +2208,9 @@ mod tests {
             }],
             active_workspace: 0,
             panes: HashMap::from([
-                (p1, Pane { id: p1, name: None, tabs: vec![1], active_tab: 0, active_at: 1 }),
-                (p2, Pane { id: p2, name: None, tabs: vec![2], active_tab: 0, active_at: 2 }),
-                (p3, Pane { id: p3, name: None, tabs: vec![3], active_tab: 0, active_at: 3 }),
+                (p1, Pane { id: p1, name: None, tabs: vec![1], active_tab: 0, active_at: 1, worktrees: Vec::new() }),
+                (p2, Pane { id: p2, name: None, tabs: vec![2], active_tab: 0, active_at: 2, worktrees: Vec::new() }),
+                (p3, Pane { id: p3, name: None, tabs: vec![3], active_tab: 0, active_at: 3, worktrees: Vec::new() }),
             ]),
             surfaces: HashMap::new(),
         };
@@ -2688,5 +2840,138 @@ mod tests {
             );
             assert_eq!(s.active_workspace, 0);
         });
+    }
+
+    // --- Per-pane git worktrees (issue #77) ---
+
+    /// A temp git repo with one commit, for worktree tests. `git` is
+    /// part of the pinned dev environment (AGENTS.md; CI images).
+    fn temp_git_repo(name: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let dir = std::env::temp_dir().join(format!(
+            "cmux-mux-wt-{name}-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = std::process::Command::new("git").arg("init").arg(&dir).output().unwrap();
+        assert!(
+            out.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.email=cmux@test", "-c", "user.name=cmux"])
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git commit failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        dir
+    }
+
+    /// A workspace whose pane's active tab is parked inside `repo`, so
+    /// worktree ops can resolve the repository from the pane's cwd.
+    fn pane_parked_in_repo(mux: &Arc<Mux>, repo: &std::path::Path) -> PaneId {
+        let s1 = mux.new_workspace(None, None).unwrap();
+        let pane = mux.with_state(|s| s.pane_of(s1.id).unwrap());
+        mux.new_tab(Some(pane), Some(repo.to_string_lossy().into_owned()), None).unwrap();
+        pane
+    }
+
+    #[test]
+    fn pane_worktree_create_records_and_lists_history() {
+        let mux = test_mux();
+        let repo = temp_git_repo("create-list");
+        let pane = pane_parked_in_repo(&mux, &repo);
+
+        let r1 = mux.pane_worktree_create(pane, "feat-auth", Some("auth".into())).unwrap();
+        assert_eq!(r1.branch, "feat-auth");
+        assert_eq!(r1.label.as_deref(), Some("auth"));
+        // Default pattern: <repo>/../<repo>.<branch>/ (issue #77 AC1/AC6).
+        assert!(
+            r1.path.ends_with(".feat-auth"),
+            "default pattern should be <repo>.<branch>, got {}",
+            r1.path
+        );
+        let wt1 = std::path::PathBuf::from(&r1.path);
+        assert!(wt1.is_dir(), "worktree {} should exist on disk", r1.path);
+        assert!(wt1.join(".git").is_file(), "linked worktree carries a .git file");
+        assert!(r1.created_at_ms > 0);
+
+        // A pane accumulates worktrees over its lifetime (AC2).
+        let r2 = mux.pane_worktree_create(pane, "feat-docs", None).unwrap();
+        let list = mux.pane_worktree_list(pane).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].branch, "feat-auth");
+        assert_eq!(list[1].branch, "feat-docs");
+        assert_eq!(list[1].label, None);
+        assert!(mux.pane_worktree_list(9999).is_err(), "unknown pane should error");
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&r1.path);
+        let _ = std::fs::remove_dir_all(&r2.path);
+    }
+
+    #[test]
+    fn pane_worktree_remove_prunes_and_drops_record() {
+        let mux = test_mux();
+        let repo = temp_git_repo("remove");
+        let pane = pane_parked_in_repo(&mux, &repo);
+        let record = mux.pane_worktree_create(pane, "feat-auth", None).unwrap();
+        // The pane's active tab is parked in the REPO (not the
+        // worktree), so remove is allowed.
+
+        mux.pane_worktree_remove(pane, "feat-auth").unwrap();
+        assert!(mux.pane_worktree_list(pane).unwrap().is_empty());
+        assert!(!std::path::PathBuf::from(&record.path).exists(), "worktree dir should be gone");
+        // git's own registry no longer knows the branch (remove + prune).
+        let out = std::process::Command::new("git")
+            .args(["worktree", "list"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let listing = String::from_utf8_lossy(&out.stdout);
+        assert!(!listing.contains("feat-auth"), "git worktree list should drop feat-auth: {listing}");
+
+        // Removing again finds no record.
+        assert!(mux.pane_worktree_remove(pane, "feat-auth").is_err());
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn pane_worktree_create_failure_leaves_no_record() {
+        let mux = test_mux();
+        let repo = temp_git_repo("create-failure");
+        let pane = pane_parked_in_repo(&mux, &repo);
+
+        let err = mux.pane_worktree_create(pane, "bad..name", None).unwrap_err();
+        assert!(
+            err.to_string().contains("not a valid branch name"),
+            "git's error should propagate (AC7), got: {err}"
+        );
+        assert!(mux.pane_worktree_list(pane).unwrap().is_empty(), "no record on failure (AC7)");
+        // The pane's working directory is unchanged.
+        let cwd = mux.with_state(|s| {
+            let active = s.panes[&pane].active_surface().unwrap();
+            s.surfaces[&active].cwd()
+        });
+        assert_eq!(cwd.as_deref(), Some(repo.to_string_lossy().as_ref()), "pane cwd unchanged (AC7)");
+
+        // Not-in-a-repo also propagates cleanly.
+        let bare = std::env::temp_dir().join(format!("cmux-mux-wt-bare-{}", std::process::id()));
+        std::fs::create_dir_all(&bare).unwrap();
+        mux.new_tab(Some(pane), Some(bare.to_string_lossy().into_owned()), None).unwrap();
+        let err = mux.pane_worktree_create(pane, "feat-x", None).unwrap_err();
+        assert!(err.to_string().contains("not inside a git repository"), "got: {err}");
+        assert!(mux.pane_worktree_list(pane).unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&bare);
     }
 }

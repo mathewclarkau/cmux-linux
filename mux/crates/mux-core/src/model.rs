@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::worktree::WorktreeRecord;
 use crate::{PaneId, Rgb, ScreenId, SplitDir, Surface, SurfaceId, WorkspaceId};
 
 /// Validated workspace status icon, stored as its display glyph.
@@ -126,6 +127,11 @@ pub struct Pane {
     pub tabs: Vec<SurfaceId>,
     pub active_tab: usize,
     pub active_at: u64,
+    /// Git worktrees attached to this pane over its lifetime, in
+    /// creation order (issue #77). Session-scoped: the on-disk
+    /// worktrees outlive the registry and stay visible to
+    /// `git worktree list` after a daemon restart.
+    pub worktrees: Vec<WorktreeRecord>,
 }
 
 impl Pane {
