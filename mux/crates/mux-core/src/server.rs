@@ -523,6 +523,26 @@ enum Command {
     AgentPatternRemove {
         name: String,
     },
+    /// Create a git worktree for `branch` and `cd` the pane's active
+    /// tab into it (issue #77 AC1). On failure the error propagates as
+    /// `ok:false` and the pane is untouched (AC7).
+    PaneWorktreeCreate {
+        pane: PaneId,
+        branch: String,
+        #[serde(default)]
+        label: Option<String>,
+    },
+    /// Every worktree attached to a pane over its lifetime (issue #77
+    /// AC2), in creation order.
+    PaneWorktreeList {
+        pane: PaneId,
+    },
+    /// Tear down one of a pane's worktrees: `git worktree remove` +
+    /// `prune`, then drop the record (issue #77 AC3).
+    PaneWorktreeRemove {
+        pane: PaneId,
+        branch: String,
+    },
     /// Rename THIS daemon's session (issue #63): atomically move its
     /// `.sock`/`.pid` to the new name, update the logical session name,
     /// and best-effort reparent the persisted snapshot file. The listener
@@ -950,6 +970,16 @@ fn agent_pattern_json(pattern: &crate::agent_detect::AgentPattern) -> Value {
         "pattern": pattern.pattern,
         "confidence": pattern.confidence.as_str(),
         "case_insensitive": pattern.case_insensitive,
+    })
+}
+
+/// One pane worktree record in wire/`list-workspaces` JSON (issue #77).
+fn worktree_record_json(record: &crate::worktree::WorktreeRecord) -> Value {
+    json!({
+        "branch": record.branch,
+        "path": record.path,
+        "label": record.label,
+        "created_at_ms": record.created_at_ms,
     })
 }
 
@@ -1503,6 +1533,22 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             mux.agent_pattern_remove(&name)?;
             Ok(json!({}))
         }
+        Command::PaneWorktreeCreate { pane, branch, label } => {
+            let record = mux.pane_worktree_create(pane, &branch, label)?;
+            Ok(json!({ "pane": pane, "branch": record.branch, "path": record.path }))
+        }
+        Command::PaneWorktreeList { pane } => {
+            let worktrees = mux
+                .pane_worktree_list(pane)?
+                .iter()
+                .map(worktree_record_json)
+                .collect::<Vec<_>>();
+            Ok(json!({ "worktrees": worktrees }))
+        }
+        Command::PaneWorktreeRemove { pane, branch } => {
+            mux.pane_worktree_remove(pane, &branch)?;
+            Ok(json!({}))
+        }
         Command::RenameSession { new_name } => {
             // Issue #63. Scout-plan Q4 ordering: the socket rename is the
             // commit point (only it changes reachability), so the pid moves
@@ -1876,5 +1922,144 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("unknown workspace icon"));
+    }
+
+    // --- Per-pane git worktrees over the wire (issue #77) ---
+
+    /// One request → one response over a fresh connection, skipping
+    /// any pushed events (the shape `cmux` CLI verbs speak).
+    fn rpc(socket: &Path, request: Value) -> Value {
+        let mut stream = transport::connect(socket).unwrap();
+        let mut line = serde_json::to_string(&request).unwrap();
+        line.push('\n');
+        stream.write_all(line.as_bytes()).unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut buf = String::new();
+        loop {
+            buf.clear();
+            reader.read_line(&mut buf).unwrap();
+            let value: Value = serde_json::from_str(&buf).unwrap();
+            if value.get("event").is_some() {
+                continue;
+            }
+            return value;
+        }
+    }
+
+    /// A temp git repo with one commit (worktree ops need a HEAD).
+    fn temp_git_repo(name: &str) -> PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let dir = std::env::temp_dir().join(format!(
+            "cmux-srv-wt-{name}-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = std::process::Command::new("git").arg("init").arg(&dir).output().unwrap();
+        assert!(out.status.success(), "git init failed");
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.email=cmux@test", "-c", "user.name=cmux"])
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git commit failed");
+        dir
+    }
+
+    #[test]
+    fn pane_worktree_commands_round_trip_over_socket() {
+        use crate::{Mux, SurfaceOptions};
+        use std::sync::OnceLock;
+
+        // One shared daemon: SurfaceOptions spawns /bin/cat panes so no
+        // user shell is involved; OSC 7 never fires, so the pane cwd is
+        // the spawn cwd — exactly what the worktree resolution uses.
+        static MUX: OnceLock<Arc<Mux>> = OnceLock::new();
+        let mux = MUX.get_or_init(|| {
+            Mux::new(
+                "wt-wire",
+                SurfaceOptions { command: Some(vec!["/bin/cat".to_string()]), ..Default::default() },
+            )
+        });
+        let dir = temp_git_repo("wire");
+        let sock = dir.join("wt.sock");
+        serve(mux.clone(), Some(sock.clone())).unwrap();
+
+        // Workspace + a tab parked in the repo so the pane has a cwd.
+        let ws = rpc(&sock, json!({"cmd": "new-workspace", "id": 1}));
+        assert_eq!(ws["ok"], json!(true), "new-workspace failed: {ws}");
+        let surface = ws["data"]["surface"].as_u64().unwrap();
+        let tree = rpc(&sock, json!({"cmd": "list-workspaces", "id": 2}));
+        let pane = tree["data"]["workspaces"][0]["screens"][0]["panes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| {
+                p["tabs"].as_array().is_some_and(|tabs| {
+                    tabs.iter().any(|t| t["surface"].as_u64() == Some(surface))
+                })
+            })
+            .expect("pane holding the workspace surface")
+            .get("id")
+            .and_then(Value::as_u64)
+            .unwrap();
+        let parked = rpc(
+            &sock,
+            json!({"cmd": "new-tab", "id": 3, "pane": pane, "cwd": dir.to_string_lossy()}),
+        );
+        assert_eq!(parked["ok"], json!(true), "new-tab failed: {parked}");
+
+        // Create: AC1 — the worktree path comes back on JSON stdout.
+        let created = rpc(
+            &sock,
+            json!({"cmd": "pane-worktree-create", "id": 4, "pane": pane, "branch": "feat-auth", "label": "auth"}),
+        );
+        assert_eq!(created["ok"], json!(true), "create failed: {created}");
+        assert_eq!(created["data"]["pane"], json!(pane));
+        assert_eq!(created["data"]["branch"], json!("feat-auth"));
+        let path = created["data"]["path"].as_str().unwrap().to_string();
+        assert!(Path::new(&path).is_dir(), "worktree {path} should exist");
+
+        // List: AC2 — the record shape round-trips.
+        let listed = rpc(&sock, json!({"cmd": "pane-worktree-list", "id": 5, "pane": pane}));
+        assert_eq!(listed["ok"], json!(true), "list failed: {listed}");
+        let worktrees = listed["data"]["worktrees"].as_array().unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0]["branch"], json!("feat-auth"));
+        assert_eq!(worktrees[0]["path"], json!(path));
+        assert_eq!(worktrees[0]["label"], json!("auth"));
+        assert!(worktrees[0]["created_at_ms"].as_u64().unwrap() > 0);
+
+        // A create failure maps to ok:false with git's message (AC7).
+        let failed = rpc(
+            &sock,
+            json!({"cmd": "pane-worktree-create", "id": 6, "pane": pane, "branch": "bad..name"}),
+        );
+        assert_eq!(failed["ok"], json!(false), "expected ok:false, got {failed}");
+        assert!(
+            failed["error"].as_str().unwrap().contains("not a valid branch name"),
+            "git error should propagate: {failed}"
+        );
+
+        // Remove: AC3 — teardown drops the dir and the record.
+        let removed = rpc(
+            &sock,
+            json!({"cmd": "pane-worktree-remove", "id": 7, "pane": pane, "branch": "feat-auth"}),
+        );
+        assert_eq!(removed["ok"], json!(true), "remove failed: {removed}");
+        assert!(!Path::new(&path).exists(), "worktree dir should be gone");
+        let listed = rpc(&sock, json!({"cmd": "pane-worktree-list", "id": 8, "pane": pane}));
+        assert_eq!(listed["data"]["worktrees"].as_array().unwrap().len(), 0);
+
+        // Unknown pane is ok:false, not a silent empty list.
+        let unknown =
+            rpc(&sock, json!({"cmd": "pane-worktree-list", "id": 9, "pane": 9999}));
+        assert_eq!(unknown["ok"], json!(false));
+        assert!(unknown["error"].as_str().unwrap().contains("unknown pane"));
+
+        let _ = std::fs::remove_file(&sock);
+        let _ = std::fs::remove_file(pid_path(&sock));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
