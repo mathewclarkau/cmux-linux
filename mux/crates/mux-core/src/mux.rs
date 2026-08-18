@@ -521,6 +521,241 @@ impl Mux {
         }
     }
 
+    /// Replay a validated layout document into this session under
+    /// workspace name `name`, creating the workspace if it doesn't exist
+    /// (issue #76 AC2). `name` — not the document's embedded name — is
+    /// the workspace identity, so one fleet file can be booted under many
+    /// names.
+    ///
+    /// Fails loudly (AC7): a pane whose tabs can't be recreated aborts
+    /// the apply with `pane <index> (pane-id <id>): <error>`; a pane that
+    /// couldn't even be created names its index. Already-created panes
+    /// are left in place — fail-loud, not transactional (a `--replace`
+    /// rollback is follow-up scope).
+    pub fn apply_layout(
+        self: &Arc<Self>,
+        name: &str,
+        doc: &crate::layout_doc::LayoutDocument,
+    ) -> anyhow::Result<crate::layout_doc::ApplySummary> {
+        doc.validate()?;
+        if let Some(existing) =
+            self.with_state(|s| s.workspaces.iter().find(|ws| ws.name == name).map(|ws| ws.id))
+        {
+            anyhow::bail!(
+                "workspace {name:?} already exists (id {existing}); \
+close it first or apply under a new name"
+            );
+        }
+        let ws = &doc.workspace;
+        // The workspace's very first tab is the only one apply can
+        // recreate as a genuine remote reattach (via new_remote_workspace)
+        // — the same inherited limitation as restore_session; every other
+        // remote tab downgrades to a local shell with a loud Status.
+        let first_tab = &ws.screens[0].panes[0].tabs[0];
+        let first_surface = match first_tab {
+            crate::layout_doc::LayoutTab::Remote {
+                host, slot, session_id, local_binary_path, ..
+            } => {
+                let spec = crate::remote_pty::RemoteSpec {
+                    host: host.clone(),
+                    slot: slot.clone(),
+                    session_id: session_id.clone(),
+                    local_binary_path: local_binary_path.clone().into(),
+                };
+                self.new_remote_workspace(spec, Some(name.to_string()), None)?
+            }
+            tab => {
+                let overrides = layout_tab_overrides(tab);
+                self.new_workspace_with_overrides(
+                    Some(name.to_string()),
+                    None,
+                    overrides.as_ref(),
+                )?
+            }
+        };
+        let ws_id = self.with_state(|s| s.workspaces.last().unwrap().id);
+        if let Some(color) = &ws.color {
+            let rgb = crate::server::parse_workspace_color(color)
+                .map_err(|e| anyhow::anyhow!("workspace {name:?}: {e}"))?;
+            self.set_workspace_color(ws_id, Some(rgb));
+        }
+        if let Some(icon) = &ws.icon {
+            let icon = crate::server::parse_workspace_icon(icon)
+                .map_err(|e| anyhow::anyhow!("workspace {name:?}: {e}"))?;
+            self.set_workspace_icon(ws_id, Some(icon));
+        }
+
+        // Screen 0 already exists around `first_surface`.
+        let bootstrap_pane = self.with_state(|s| s.pane_of(first_surface.id).unwrap());
+        let screen0_id =
+            self.with_state(|s| s.screen_of(bootstrap_pane).map(|(wi, si)| s.workspaces[wi].screens[si].id).unwrap());
+        self.apply_layout_screen(&ws.screens[0], screen0_id, bootstrap_pane, Some(bootstrap_pane))?;
+
+        for screen in &ws.screens[1..] {
+            // The new screen's first pane auto-spawns its tab 0: replay
+            // the recorded argv/env when that tab is a pty.
+            let first = &screen.panes[leftmost_layout_index(&screen.layout)].tabs[0];
+            let overrides = layout_tab_overrides(first);
+            let surface =
+                self.new_screen_with_overrides(Some(ws_id), None, overrides.as_ref())?;
+            let (screen_id, pane_id) = self.with_state(|s| {
+                let pane_id = s.pane_of(surface.id).unwrap();
+                let (wi, si) = s.screen_of(pane_id).unwrap();
+                (s.workspaces[wi].screens[si].id, pane_id)
+            });
+            self.apply_layout_screen(screen, screen_id, pane_id, None)?;
+        }
+        self.select_screen(Some(ws.active_screen.min(ws.screens.len() - 1)), None);
+
+        let (panes, surfaces) = self.with_state(|s| {
+            let ws = s.workspaces.iter().find(|w| w.id == ws_id).unwrap();
+            let panes: usize = ws
+                .screens
+                .iter()
+                .map(|sc| {
+                    let mut ids = Vec::new();
+                    sc.root.pane_ids(&mut ids);
+                    ids.len()
+                })
+                .sum();
+            let surfaces = ws.screens.iter().map(|sc| screen_tabs(s, sc).len()).sum();
+            (panes, surfaces)
+        });
+        Ok(crate::layout_doc::ApplySummary { workspace_id: ws_id, panes, surfaces })
+    }
+
+    /// Replay one screen of a layout document. `initial_pane` is the
+    /// pane the screen is built around (the workspace bootstrap pane for
+    /// screen 0, the new screen's first pane otherwise); `bootstrap_pane`
+    /// marks the one pane whose tab 0 was created by `apply_layout`'s
+    /// remote-first-tab handling.
+    fn apply_layout_screen(
+        self: &Arc<Self>,
+        screen: &crate::layout_doc::LayoutScreen,
+        screen_id: ScreenId,
+        initial_pane: PaneId,
+        bootstrap_pane: Option<PaneId>,
+    ) -> anyhow::Result<()> {
+        let pane_ids = self.replay_layout_doc(&screen.layout, screen, initial_pane)?;
+        for (index, pane) in screen.panes.iter().enumerate() {
+            let pane_id = pane_ids[&index];
+            if let Some(name) = &pane.name {
+                self.rename_pane(pane_id, name.clone());
+            }
+            // Tab 0 was auto-spawned while the tree structure was built:
+            // pty tabs already run the recorded argv/env/cwd; a browser
+            // tab replaces its placeholder shell; remote tabs downgrade
+            // loudly everywhere except the workspace bootstrap pane.
+            match &pane.tabs[0] {
+                crate::layout_doc::LayoutTab::Pty { name, .. } => {
+                    let tab0 = self.with_state(|s| s.panes[&pane_id].tabs[0]);
+                    if let Some(surface) = self.surface(tab0) {
+                        if let Some(name) = name {
+                            self.rename_surface(surface.id, name.clone());
+                        }
+                    }
+                }
+                crate::layout_doc::LayoutTab::Browser { name, url } => {
+                    let shell = self.with_state(|s| s.panes[&pane_id].tabs[0]);
+                    let surface = self
+                        .new_browser_tab(url.clone(), Some(pane_id), None)
+                        .map_err(|e| anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}"))?;
+                    if let Some(name) = name {
+                        self.rename_surface(surface.id, name.clone());
+                    }
+                    self.close_surface(shell);
+                }
+                crate::layout_doc::LayoutTab::Remote { host, session_id, name, .. } => {
+                    if Some(pane_id) != bootstrap_pane {
+                        self.emit(MuxEvent::Status(format!(
+                            "layout apply restored a local shell instead of \
+reattaching to remote session {session_id} on {host} \
+(only a workspace's first pane can do that)"
+                        )));
+                    }
+                    let tab0 = self.with_state(|s| s.panes[&pane_id].tabs[0]);
+                    if let Some(surface) = self.surface(tab0) {
+                        if let Some(name) = name {
+                            self.rename_surface(surface.id, name.clone());
+                        }
+                    }
+                }
+            }
+            for tab in &pane.tabs[1..] {
+                match tab {
+                    tab @ crate::layout_doc::LayoutTab::Pty { name, .. } => {
+                        let overrides = layout_tab_overrides(tab)
+                            .expect("a pty layout tab always maps to spawn overrides");
+                        let surface = self
+                            .new_tab_with_overrides(Some(pane_id), None, None, Some(&overrides))
+                            .map_err(|e| anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}"))?;
+                        if let Some(name) = name {
+                            self.rename_surface(surface.id, name.clone());
+                        }
+                    }
+                    crate::layout_doc::LayoutTab::Browser { name, url } => {
+                        let surface = self
+                            .new_browser_tab(url.clone(), Some(pane_id), None)
+                            .map_err(|e| anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}"))?;
+                        if let Some(name) = name {
+                            self.rename_surface(surface.id, name.clone());
+                        }
+                    }
+                    crate::layout_doc::LayoutTab::Remote { host, session_id, name, .. } => {
+                        self.emit(MuxEvent::Status(format!(
+                            "layout apply restored a local shell instead of \
+reattaching to remote session {session_id} on {host} \
+(only a workspace's first pane can do that)"
+                        )));
+                        let surface = self
+                            .new_tab(Some(pane_id), None, None)
+                            .map_err(|e| anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}"))?;
+                        if let Some(name) = name {
+                            self.rename_surface(surface.id, name.clone());
+                        }
+                    }
+                }
+            }
+            self.select_tab(Some(pane_id), Some(pane.active_tab), None);
+        }
+        if let Some(name) = &screen.name {
+            self.rename_screen(screen_id, name.clone());
+        }
+        self.focus_pane(pane_ids[&screen.active_pane]);
+        Ok(())
+    }
+
+    /// The layout-doc counterpart of [`Self::replay_layout`]: replays the
+    /// pane-index BSP as `split()` calls, spawning each new pane's tab 0
+    /// with the recorded argv/env/cwd when it's a pty tab. Returns every
+    /// leaf's pane id keyed by its document index.
+    fn replay_layout_doc(
+        self: &Arc<Self>,
+        node: &crate::layout_doc::LayoutNode,
+        screen: &crate::layout_doc::LayoutScreen,
+        root: PaneId,
+    ) -> anyhow::Result<HashMap<usize, PaneId>> {
+        match node {
+            crate::layout_doc::LayoutNode::Leaf { pane } => Ok(HashMap::from([(*pane, root)])),
+            crate::layout_doc::LayoutNode::Split { dir, ratio, a, b } => {
+                // `split()` keeps `root` on the "a" side and auto-spawns
+                // the new pane's tab 0 (the agent-start primitive when
+                // the recorded tab is a pty).
+                let new_index = leftmost_layout_index(b);
+                let tab0 = &screen.panes[new_index].tabs[0];
+                let overrides = layout_tab_overrides(tab0);
+                let new_surface = self
+                    .split_with_overrides(root, (*dir).into(), None, overrides.as_ref())
+                    .map_err(|e| anyhow::anyhow!("pane {new_index}: {e} (pane not created)"))?;
+                let new_pane = self.with_state(|s| s.pane_of(new_surface.id).unwrap());
+                self.set_ratio(root, (*dir).into(), *ratio);
+                let mut map = self.replay_layout_doc(a, screen, root)?;
+                map.extend(self.replay_layout_doc(b, screen, new_pane)?);
+                Ok(map)
+            }
+        }
+    }
+
     /// Applies a restored tab's name and cwd to an already-spawned
     /// surface (see the module doc on why this is a live `cd`, not a
     /// spawn-time option).
@@ -1462,6 +1697,29 @@ impl Mux {
     }
 }
 
+/// Spawn overrides for a layout tab's recorded argv/env/cwd. Browser and
+/// remote tabs have no pty overrides — structure spawns a default shell
+/// and `apply_layout_screen` fixes the tab up (or downgrades it loudly).
+fn layout_tab_overrides(tab: &crate::layout_doc::LayoutTab) -> Option<SpawnOverrides> {
+    match tab {
+        crate::layout_doc::LayoutTab::Pty { command, env, cwd, .. } => Some(SpawnOverrides {
+            command: command.clone(),
+            extra_env: env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            cwd: cwd.clone(),
+        }),
+        _ => None,
+    }
+}
+
+/// The pane index `split()` auto-creates for a subtree: its leftmost
+/// leaf (replay only ever recurses down the "a" side of its root).
+fn leftmost_layout_index(node: &crate::layout_doc::LayoutNode) -> usize {
+    match node {
+        crate::layout_doc::LayoutNode::Leaf { pane } => *pane,
+        crate::layout_doc::LayoutNode::Split { a, .. } => leftmost_layout_index(a),
+    }
+}
+
 /// Every surface in a screen (all panes, all tabs).
 fn screen_tabs(state: &State, screen: &Screen) -> Vec<SurfaceId> {
     let mut pane_ids = Vec::new();
@@ -2041,6 +2299,207 @@ mod tests {
             matches!(e, MuxEvent::AgentStateChanged { report, .. } if report.state == AgentState::Done)
         });
         assert!(fired, "an applied report must emit agent-state-changed");
+    }
+
+    // -- issue #76: layout apply ------------------------------------------
+
+    use crate::layout_doc::{
+        LayoutDir, LayoutDocument, LayoutNode, LayoutPane, LayoutScreen, LayoutTab,
+        LayoutWorkspace,
+    };
+    use crate::LAYOUT_SCHEMA_VERSION;
+    use std::collections::BTreeMap;
+
+    fn layout_cat_tab() -> LayoutTab {
+        LayoutTab::Pty {
+            name: None,
+            cwd: None,
+            command: Some(vec!["/bin/cat".to_string()]),
+            env: BTreeMap::new(),
+        }
+    }
+
+    fn layout_doc_with(name: &str, layout: LayoutNode, panes: Vec<LayoutPane>) -> LayoutDocument {
+        LayoutDocument {
+            schema_version: LAYOUT_SCHEMA_VERSION,
+            cmux_version: crate::VERSION.to_string(),
+            workspace: LayoutWorkspace {
+                name: name.to_string(),
+                color: Some("#ff0000".into()),
+                icon: Some("robot".into()),
+                active_screen: 0,
+                screens: vec![LayoutScreen {
+                    name: Some("main".into()),
+                    active_pane: 0,
+                    layout,
+                    panes,
+                }],
+            },
+        }
+    }
+
+    #[test]
+    fn apply_layout_creates_missing_workspace_by_name() {
+        let mux = test_mux();
+        let doc = layout_doc_with(
+            "resurrected",
+            LayoutNode::Leaf { pane: 0 },
+            vec![LayoutPane {
+                name: Some("build".into()),
+                active_tab: 0,
+                tabs: vec![layout_cat_tab()],
+            }],
+        );
+        let summary = mux.apply_layout("resurrected", &doc).unwrap();
+        mux.with_state(|s| {
+            assert_eq!(s.workspaces.len(), 1);
+            let ws = &s.workspaces[0];
+            assert_eq!(ws.name, "resurrected");
+            assert_eq!(Some(ws.id), Some(summary.workspace_id));
+            assert_eq!(ws.color, Some(Rgb { r: 255, g: 0, b: 0 }));
+            assert_eq!(ws.icon.as_ref().map(|i| i.as_str()), Some("\u{1f916}"));
+            assert_eq!(ws.screens[0].name.as_deref(), Some("main"));
+            let pane = s.panes[&ws.screens[0].active_pane].name.clone();
+            assert_eq!(pane.as_deref(), Some("build"));
+        });
+        assert_eq!(summary.panes, 1);
+        assert_eq!(summary.surfaces, 1);
+
+        // Applying onto an existing name is refused (non-destructive, v1).
+        let err = mux.apply_layout("resurrected", &doc).unwrap_err().to_string();
+        assert!(err.contains("already exists"), "error was: {err}");
+    }
+
+    #[test]
+    fn apply_layout_recreates_split_tree_ratios_and_selections() {
+        let mux = test_mux();
+        let mut doc = layout_doc_with(
+            "splitdoc",
+            LayoutNode::Split {
+                dir: LayoutDir::Right,
+                ratio: 0.3,
+                a: Box::new(LayoutNode::Leaf { pane: 0 }),
+                b: Box::new(LayoutNode::Split {
+                    dir: LayoutDir::Down,
+                    ratio: 0.4,
+                    a: Box::new(LayoutNode::Leaf { pane: 1 }),
+                    b: Box::new(LayoutNode::Leaf { pane: 2 }),
+                }),
+            },
+            vec![
+                LayoutPane { name: None, active_tab: 0, tabs: vec![layout_cat_tab()] },
+                LayoutPane {
+                    name: Some("logs".into()),
+                    active_tab: 0,
+                    tabs: vec![layout_cat_tab()],
+                },
+                LayoutPane { name: None, active_tab: 0, tabs: vec![layout_cat_tab()] },
+            ],
+        );
+        doc.workspace.screens[0].active_pane = 2;
+        mux.apply_layout("splitdoc", &doc).unwrap();
+
+        mux.with_state(|s| {
+            let ws = &s.workspaces[0];
+            assert_eq!(ws.name, "splitdoc");
+            let mut ids = Vec::new();
+            ws.screens[0].root.pane_ids(&mut ids);
+            assert_eq!(ids.len(), 3, "all three panes should exist");
+            let Node::Split { dir, ratio, a: _, b } = &ws.screens[0].root else {
+                panic!("expected split root");
+            };
+            assert!(matches!(dir, SplitDir::Right));
+            assert!((ratio - 0.3).abs() < 1e-6, "root ratio was {ratio}");
+            let Node::Split { dir: inner_dir, ratio: inner_ratio, a: inner_a, b: inner_b } =
+                b.as_ref()
+            else {
+                panic!("expected inner split on the b side");
+            };
+            assert!(matches!(inner_dir, SplitDir::Down));
+            assert!((inner_ratio - 0.4).abs() < 1e-6, "inner ratio was {inner_ratio}");
+            assert!(matches!(**inner_a, Node::Leaf(id) if id == ids[1]));
+            assert!(matches!(**inner_b, Node::Leaf(id) if id == ids[2]));
+            assert_eq!(ws.screens[0].active_pane, ids[2], "recorded selection should be focused");
+            assert_eq!(s.panes[&ids[1]].name.as_deref(), Some("logs"));
+        });
+    }
+
+    #[test]
+    fn apply_layout_spawns_recorded_argv_and_env() {
+        let mux = test_mux();
+        let tab = LayoutTab::Pty {
+            name: Some("worker-9".into()),
+            cwd: None,
+            command: Some(vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "test \"$CMUX_LAYOUT_FLAG\" = yes && printf CMUX_LAYOUT_ARGV_OK; sleep 30"
+                    .to_string(),
+            ]),
+            env: BTreeMap::from([("CMUX_LAYOUT_FLAG".to_string(), "yes".to_string())]),
+        };
+        let doc = layout_doc_with(
+            "argv",
+            LayoutNode::Leaf { pane: 0 },
+            vec![LayoutPane { name: None, active_tab: 0, tabs: vec![tab] }],
+        );
+        mux.apply_layout("argv", &doc).unwrap();
+
+        let sid = mux.with_state(|s| {
+            let ws = &s.workspaces[0];
+            s.panes[&ws.screens[0].active_pane].tabs[0]
+        });
+        let surface = mux.surface(sid).unwrap();
+        assert_eq!(surface.name().as_deref(), Some("worker-9"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut saw = false;
+        while std::time::Instant::now() < deadline {
+            if let Ok(Ok(text)) = surface.try_with_terminal(|t| t.plain_text()) {
+                if text.contains("CMUX_LAYOUT_ARGV_OK") {
+                    saw = true;
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(saw, "recorded argv + env should have produced the marker");
+    }
+
+    #[test]
+    fn apply_layout_failure_names_pane_index_and_id() {
+        let mux = test_mux();
+        let bad_tab = LayoutTab::Pty {
+            name: None,
+            cwd: None,
+            command: Some(vec!["/nonexistent/cmux-layout-fail".to_string()]),
+            env: BTreeMap::new(),
+        };
+        let doc = layout_doc_with(
+            "faildoc",
+            LayoutNode::Split {
+                dir: LayoutDir::Right,
+                ratio: 0.5,
+                a: Box::new(LayoutNode::Leaf { pane: 0 }),
+                b: Box::new(LayoutNode::Leaf { pane: 1 }),
+            },
+            vec![
+                LayoutPane { name: None, active_tab: 0, tabs: vec![layout_cat_tab()] },
+                LayoutPane {
+                    name: None,
+                    active_tab: 0,
+                    tabs: vec![layout_cat_tab(), bad_tab],
+                },
+            ],
+        );
+        let err = mux.apply_layout("faildoc", &doc).unwrap_err().to_string();
+        assert!(err.contains("pane 1"), "error should name pane index 1: {err}");
+        // The already-created pane id is named too (AC7).
+        let pane_id = mux.with_state(|s| {
+            let mut ids = Vec::new();
+            s.workspaces[0].screens[0].root.pane_ids(&mut ids);
+            ids[1]
+        });
+        assert!(err.contains(&format!("pane-id {pane_id}")), "error was: {err}");
     }
 
     #[test]
