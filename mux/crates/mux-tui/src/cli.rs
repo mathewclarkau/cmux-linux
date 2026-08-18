@@ -315,6 +315,31 @@ const VERBS: &[VerbSpec] = &[
         print: print_agents,
         stream: false,
     },
+    // Per-pane git worktrees (issue #77). The issue documents these as
+    // the three-word form `pane worktree create`; the CLI accepts that
+    // verbatim via `rewrite_pane_worktree_alias` (main.rs rewrites the
+    // argv triple to the flat form before verb dispatch).
+    VerbSpec {
+        name: "pane-worktree-create",
+        allowed: &["pane", "branch", "label"],
+        build: build_pane_worktree_create,
+        print: print_worktree_created,
+        stream: false,
+    },
+    VerbSpec {
+        name: "pane-worktree-list",
+        allowed: &["pane"],
+        build: build_pane_worktree_list,
+        print: print_worktrees,
+        stream: false,
+    },
+    VerbSpec {
+        name: "pane-worktree-remove",
+        allowed: &["pane", "branch"],
+        build: build_pane_worktree_remove,
+        print: print_empty,
+        stream: false,
+    },
     VerbSpec {
         // Issue #78 AC1: ambient detection on one surface (the repo's
         // flat-verb spelling of the issue's `pane detect-agent --pane`;
@@ -884,6 +909,55 @@ fn build_rename_screen(flags: &FlagMap) -> Result<Value, UsageError> {
 
 fn build_rename_workspace(flags: &FlagMap) -> Result<Value, UsageError> {
     Ok(json!({ "workspace": flags.required_u64("workspace")?, "name": flags.required("name")? }))
+}
+
+/// `pane-worktree-create` (issue #77): `--branch` names the branch to
+/// create via `git worktree add -b`; `--label` is a display badge.
+fn build_pane_worktree_create(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value =
+        json!({ "pane": flags.required_u64("pane")?, "branch": flags.required("branch")? });
+    flags.insert_optional_string(&mut value, "label");
+    Ok(value)
+}
+
+fn build_pane_worktree_list(flags: &FlagMap) -> Result<Value, UsageError> {
+    Ok(json!({ "pane": flags.required_u64("pane")? }))
+}
+
+fn build_pane_worktree_remove(flags: &FlagMap) -> Result<Value, UsageError> {
+    Ok(json!({
+        "pane": flags.required_u64("pane")?,
+        "branch": flags.required("branch")?,
+    }))
+}
+
+/// Rewrite the issue-#77 three-word verb form (`cmux pane worktree
+/// create ...`) into the canonical flat verb (`pane-worktree-create`)
+/// at the first-command position, so the issue's documented invocation
+/// works verbatim while the wire protocol keeps the flat kebab-case
+/// shape every other verb uses (scout plan §2.8). Called from `main`
+/// BEFORE `is_cli_invocation`, which otherwise would not recognise the
+/// triple as a CLI invocation at all.
+pub(crate) fn rewrite_pane_worktree_alias(args: &mut Vec<String>) {
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--socket" | "--session" => i += 2,
+            "--json" => i += 1,
+            "pane"
+                if args.get(i + 1).map(String::as_str) == Some("worktree")
+                    && matches!(
+                        args.get(i + 2).map(String::as_str),
+                        Some("create" | "list" | "remove")
+                    ) =>
+            {
+                let flat = format!("pane-worktree-{}", args[i + 2]);
+                args.splice(i..i + 3, [flat]);
+                return;
+            }
+            _ => return,
+        }
+    }
 }
 
 /// A colour value is required so an omitted flag never silently clears
@@ -1864,6 +1938,32 @@ fn print_agent_patterns(data: &Value, out: &mut dyn Write) -> io::Result<()> {
             pattern.get("kind").and_then(Value::as_str).unwrap_or("?"),
             pattern.get("confidence").and_then(Value::as_str).unwrap_or("?"),
             pattern.get("pattern").and_then(Value::as_str).unwrap_or(""),
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Human stdout for `pane-worktree-create` (issue #77): just the
+/// worktree path — the thing a caller pipes into something else.
+/// `--json` prints the full `{pane,branch,path}` object.
+fn print_worktree_created(data: &Value, out: &mut dyn Write) -> io::Result<()> {
+    writeln!(out, "{}", data.get("path").and_then(Value::as_str).unwrap_or(""))
+}
+
+/// Human stdout for `pane-worktree-list` (issue #77): one line per
+/// worktree, `branch path label`, in creation order.
+fn print_worktrees(data: &Value, out: &mut dyn Write) -> io::Result<()> {
+    let Some(worktrees) = data.get("worktrees").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for worktree in worktrees {
+        writeln!(
+            out,
+            "{} {} {}",
+            worktree.get("branch").and_then(Value::as_str).unwrap_or("unknown"),
+            worktree.get("path").and_then(Value::as_str).unwrap_or("-"),
+            worktree.get("label").and_then(Value::as_str).unwrap_or("-"),
         )?;
     }
     Ok(())

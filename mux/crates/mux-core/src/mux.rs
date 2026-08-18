@@ -1598,6 +1598,8 @@ reattaching to remote session {session_id} on {host} \
                 "remote surface: process tree not local; no screen marker matched".to_string();
         }
         Ok(detection)
+    }
+
     /// Set the operator-configured worktree path pattern (issue #77
     /// AC6). `None` (or never called) keeps the default
     /// `<repo>/../<repo>.<branch>/`. Called from `mux-tui`'s `run_server`
