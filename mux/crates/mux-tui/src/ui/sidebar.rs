@@ -212,7 +212,7 @@ mod tests {
     }
 
     /// Issue #78 AC6: the badge is a short, bracketed suffix on the pane
-    // subtitle — never long enough to starve the title.
+    /// subtitle — never long enough to starve the title.
     #[test]
     fn agent_badge_text_is_short_and_bracketed() {
         assert_eq!(agent_badge(None), "");
