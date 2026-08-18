@@ -339,13 +339,20 @@ fn read_cmdline(pid: u32) -> Option<String> {
 }
 
 /// starttime is field 22 of `/proc/<pid>/stat`. `comm` (field 2) is
-/// parenthesised and may itself contain spaces/parens, so parse after
-/// the LAST `')'`; field 22 is then the 20th whitespace-separated token
-/// (fields 3..=22).
+/// parenthesised and may itself contain spaces/parens, so parse from
+/// AFTER the LAST `')'` — the `)` itself must not count as a token or
+/// every field index shifts by one and field 21 (itrealvalue, always 0
+/// on modern kernels) is read instead (review fix F1). Field 22 is then
+/// the 20th whitespace-separated token (fields 3..=22).
 #[cfg(target_os = "linux")]
 fn read_starttime(pid: u32) -> Option<u64> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let after = &stat[stat.rfind(')')?..];
+    parse_starttime(&stat)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_starttime(stat: &str) -> Option<u64> {
+    let after = &stat[stat.rfind(')')? + 1..];
     after.split_whitespace().nth(19)?.parse().ok()
 }
 
@@ -577,5 +584,61 @@ mod tests {
         assert!(screen_pat("my agent", "MYMARKER>").validate().is_err());
         assert!(screen_pat("unknown", "x").validate().is_err(), "name 'unknown' is reserved");
         assert!(proc_pat("ok", "claude").validate().is_ok());
+    }
+
+    /// Review fix F1: `parse_starttime` must read field 22 (starttime),
+    /// not field 21 (itrealvalue — obsolete, hardcoded 0 on modern
+    /// kernels). The off-by-one came from slicing from the `)` itself,
+    /// which keeps `)` as token 0 and shifts every field index by one.
+    /// Synthetic `/proc/<pid>/stat` lines pin the parse, including the
+    /// classic trap: a parenthesised comm containing spaces AND nested
+    /// parens (only the LAST `)` ends the comm).
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn parse_starttime_reads_field_22_with_parenthesised_comm() {
+        // Fields after the final ')': 3=state ... 21=itrealvalue,
+        // 22=starttime. Here: itrealvalue=3, starttime=8888, vsize=999999.
+        let stat = "1234 (python (child)) S 1 1234 1234 0 -1 4194560 100 0 0 0 7 5 0 0 20 0 7 3 8888 999999 200 140737488355312 1 0 0 0 0 0 0 0";
+        assert_eq!(parse_starttime(stat), Some(8888), "nested-paren comm");
+
+        // A comm with spaces but no nested parens, and a zero starttime
+        // (a process spawned before the kernel booted is impossible, but
+        // 0 is a legal field value to round-trip).
+        let stat = "42 (cmux agent d) S 1 42 42 0 -1 4194560 1 0 0 0 1 1 0 0 20 0 1 0 0 4096 200 0 0 0 0 0 0 0";
+        assert_eq!(parse_starttime(stat), Some(0), "space-containing comm");
+
+        // A plain comm: itrealvalue=0 must NOT be mistaken for starttime.
+        let stat = "7 (sleep) S 1 7 7 0 -1 4194560 1 0 0 0 1 1 0 0 20 0 1 0 72660241 2228224 200 0 0 0 0 0 0";
+        assert_eq!(parse_starttime(stat), Some(72660241), "plain comm");
+
+        // Degenerate shapes: no closing paren / too few fields.
+        assert_eq!(parse_starttime("7 (slee"), None);
+        assert_eq!(parse_starttime("7 (sleep) S 1"), None);
+    }
+
+    /// Review fix F1, end-to-end half: a LIVE child's starttime must
+    /// parse nonzero. With the off-by-one this read itrealvalue, which
+    /// is 0 for every process on modern kernels — flattening AC5's
+    /// most-recent-process tie-break into an all-way tie in production
+    /// (the pure-parse test above couldn't catch that alone).
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn read_starttime_returns_nonzero_for_live_process() {
+        use std::process::Command;
+        let mut child = Command::new("/bin/sleep").arg("30").spawn().expect("spawn sleep");
+        let pid = child.id();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut starttime = None;
+        while std::time::Instant::now() < deadline {
+            if let Some(value) = read_starttime(pid) {
+                starttime = Some(value);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let value = starttime.expect("starttime should parse for a live child");
+        assert!(value > 0, "starttime must be nonzero (field 22, not itrealvalue=0); got {value}");
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
