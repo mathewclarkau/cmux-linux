@@ -591,6 +591,16 @@ enum Command {
         #[serde(default)]
         shell: Option<String>,
     },
+    /// Issue #75 AC5: block until the target agent's reported state
+    /// reaches `state`, or `timeout_ms` elapses (exit-1 timeout error).
+    /// `timeout_ms: 0` is a single immediate check. Capped server-side
+    /// at [`MAX_AGENT_WAIT_MS`] so a leaked waiter can't park on its
+    /// connection thread forever.
+    WaitAgentStatus {
+        target: String,
+        state: String,
+        timeout_ms: u64,
+    },
     /// Rename THIS daemon's session (issue #63): atomically move its
     /// `.sock`/`.pid` to the new name, update the logical session name,
     /// and best-effort reparent the persisted snapshot file. The listener
@@ -1014,6 +1024,46 @@ fn tail_lines(text: &str, n: usize) -> String {
         lines.drain(..lines.len() - n);
     }
     lines.join("\n")
+}
+
+/// Upper bound for `wait-agent-status` timeouts (10 minutes): the
+/// server parks one connection thread per waiter, so an unbounded
+/// timeout would let leaked waiters accumulate forever (plan §5.4).
+const MAX_AGENT_WAIT_MS: u64 = 600_000;
+
+/// Shared validation for `wait-agent-status` (issue #75): the state
+/// string and the timeout cap. Extracted from the handler so the table
+/// test can pin both rejections.
+fn validate_wait_request(state: &str, timeout_ms: u64) -> anyhow::Result<crate::AgentState> {
+    let wanted = crate::AgentState::parse(state).ok_or_else(|| {
+        anyhow::anyhow!("bad state {state:?} (want idle, working, blocked, done, or unknown)")
+    })?;
+    if timeout_ms > MAX_AGENT_WAIT_MS {
+        anyhow::bail!("timeout {timeout_ms}ms exceeds the {MAX_AGENT_WAIT_MS}ms cap");
+    }
+    Ok(wanted)
+}
+
+/// Success payload for `wait-agent-status`: the matched report plus the
+/// surface's current plain-text snapshot (the "read payload").
+fn wait_agent_status_json(
+    surface: &crate::Surface,
+    surface_id: SurfaceId,
+    report: &crate::AgentReport,
+    elapsed_ms: u64,
+) -> Value {
+    let text =
+        surface.try_with_terminal(|t| t.plain_text()).ok().and_then(|r| r.ok()).unwrap_or_default();
+    json!({
+        "matched": true,
+        "surface": surface_id,
+        "state": report.state.as_str(),
+        "agent": report.agent,
+        "message": report.message,
+        "updated_at_ms": report.updated_at_ms,
+        "elapsed_ms": elapsed_ms,
+        "text": text,
+    })
 }
 
 fn agent_report_json(surface: SurfaceId, report: &crate::AgentReport) -> Value {
@@ -1662,6 +1712,51 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             surface.write_bytes(&bytes)?;
             Ok(json!({ "surface": surface_id }))
         }
+        Command::WaitAgentStatus { target, state, timeout_ms } => {
+            let wanted = validate_wait_request(&state, timeout_ms)?;
+            let surface_id = mux.resolve_agent_target(&target)?;
+            let surface = get_surface(mux, surface_id)?;
+            require_pty(&surface)?;
+            // Subscribe BEFORE the immediate check so a report landing
+            // between the two is still observed by the loop below (the
+            // channel is unbounded, so `emit` never blocks the reporter).
+            let events = mux.subscribe();
+            let started = std::time::Instant::now();
+            if let Some(report) = surface.agent_report() {
+                if report.state == wanted {
+                    return Ok(wait_agent_status_json(
+                        &surface,
+                        surface_id,
+                        &report,
+                        started.elapsed().as_millis() as u64,
+                    ));
+                }
+            }
+            if timeout_ms == 0 {
+                anyhow::bail!("timeout waiting for agent status {state}");
+            }
+            let deadline = started + std::time::Duration::from_millis(timeout_ms);
+            loop {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    anyhow::bail!("timeout waiting for agent status {state}");
+                }
+                match events.recv_timeout(remaining) {
+                    Ok(MuxEvent::AgentStateChanged { surface: s, report, .. })
+                        if s == surface_id && report.state == wanted =>
+                    {
+                        return Ok(wait_agent_status_json(
+                            &surface,
+                            surface_id,
+                            &report,
+                            started.elapsed().as_millis() as u64,
+                        ));
+                    }
+                    Ok(_) => continue,
+                    Err(_) => anyhow::bail!("timeout waiting for agent status {state}"),
+                }
+            }
+        }
         Command::RenameSession { new_name } => {
             // Issue #63. Scout-plan Q4 ordering: the socket rename is the
             // commit point (only it changes reachability), so the pid moves
@@ -1969,6 +2064,19 @@ mod tests {
         assert_eq!(parse_workspace_color("#1234ab").unwrap(), Rgb { r: 0x12, g: 0x34, b: 0xab });
         assert_eq!(parse_workspace_color("blue").unwrap(), Rgb { r: 0, g: 0, b: 255 });
         assert!(parse_workspace_color("ultraviolet").is_err());
+    }
+
+    #[test]
+    fn wait_agent_status_validates_state_and_timeout_table() {
+        // Issue #75: bad state strings and over-cap timeouts are
+        // rejected before any blocking; 0 and the cap itself are legal.
+        for good in ["idle", "working", "blocked", "done", "unknown"] {
+            assert!(validate_wait_request(good, 1000).is_ok(), "{good} should be valid");
+        }
+        assert!(validate_wait_request("nonsense", 1000).is_err());
+        assert!(validate_wait_request("idle", MAX_AGENT_WAIT_MS + 1).is_err());
+        assert!(validate_wait_request("idle", MAX_AGENT_WAIT_MS).is_ok());
+        assert!(validate_wait_request("idle", 0).is_ok());
     }
 
     #[test]
