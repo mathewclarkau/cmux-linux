@@ -64,6 +64,10 @@ pub struct TabView {
     /// `list-agents` reports as `session`), if any. Surfaced here so the
     /// fuzzy finder can index it for type-ahead search.
     pub agent_session: Option<String>,
+    /// The agent name from the last ambient detection (issue #78),
+    /// cached by `detect-agent`. `None` when never detected or detected
+    /// as `unknown` (no badge).
+    pub agent_name: Option<String>,
     pub kind: SurfaceKind,
     pub browser_source: Option<BrowserSource>,
     pub browser_frames_stalled: bool,
@@ -169,6 +173,11 @@ impl PaneView {
     pub fn active_agent_state(&self) -> Option<AgentState> {
         self.tabs.get(self.active_tab)?.agent_state
     }
+
+    /// Detected agent name of the active tab, if any (issue #78 AC6).
+    pub fn active_agent_name(&self) -> Option<&str> {
+        self.tabs.get(self.active_tab)?.agent_name.as_deref()
+    }
 }
 
 /// Snapshot a local mux state into a TreeView.
@@ -211,6 +220,14 @@ pub fn tree_from_state(state: &State) -> TreeView {
                         .get(sid)
                         .and_then(|s| s.agent_report())
                         .and_then(|r| r.session.clone()),
+                    // Issue #78: the cached ambient detection; a cached
+                    // `unknown` reads as no badge.
+                    agent_name: state
+                        .surfaces
+                        .get(sid)
+                        .and_then(|s| s.detected_agent())
+                        .filter(|d| !d.is_unknown())
+                        .map(|d| d.agent),
                     kind: state.surfaces.get(sid).map(|s| s.kind()).unwrap_or(SurfaceKind::Pty),
                     browser_source: state.surfaces.get(sid).and_then(|s| s.browser_source()),
                     browser_frames_stalled: state
@@ -307,6 +324,10 @@ fn parse_pane(value: &Value) -> Option<PaneView> {
                                 .and_then(AgentState::parse),
                             agent_session: tab
                                 .get("agent_session")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            agent_name: tab
+                                .get("agent_name")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string()),
                             kind: match tab.get("kind").and_then(|v| v.as_str()) {
@@ -459,5 +480,42 @@ mod tests {
         // A tab with no agent session reported reads back as None.
         assert_eq!(tabs[1].agent_state, None);
         assert_eq!(tabs[1].agent_session, None);
+    }
+
+    /// Issue #78 AC6: `pane_json` carries the cached detection as
+    /// `agent_name` per tab; the tree parser must read it back so the
+    /// sidebar badge also works on a remote attach. `PaneView::
+    /// active_agent_name` surfaces the active tab's badge name.
+    #[test]
+    fn parse_tree_reads_agent_name_per_tab() {
+        let data = json!({
+            "workspaces": [{
+                "id": 1, "name": "agents", "active": true,
+                "screens": [{
+                    "id": 2, "short_id": "2", "name": null, "active": true,
+                    "layout": {"type": "leaf", "pane": 3},
+                    "active_pane": 3,
+                    "panes": [{
+                        "id": 3, "short_id": "3", "name": null, "active_tab": 0,
+                        "tabs": [{
+                            "surface": 4, "short_id": "4", "name": null,
+                            "title": "shell", "cwd": "/tmp",
+                            "agent_name": "claude",
+                            "kind": "pty", "dead": false
+                        }, {
+                            "surface": 5, "short_id": "5", "name": null,
+                            "title": "editor", "cwd": "/tmp",
+                            "kind": "pty", "dead": false
+                        }]
+                    }]
+                }]
+            }]
+        });
+        let tree = parse_tree(&data);
+        let pane = &tree.workspaces[0].screens[0].panes[0];
+        assert_eq!(pane.tabs[0].agent_name.as_deref(), Some("claude"));
+        assert_eq!(pane.active_agent_name(), Some("claude"));
+        // A tab that was never detected reads back as None (no badge).
+        assert_eq!(pane.tabs[1].agent_name, None);
     }
 }
