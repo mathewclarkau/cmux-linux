@@ -494,6 +494,26 @@ enum Command {
     RenameSession {
         new_name: String,
     },
+    /// Issue #76: export one workspace's tab/pane/agent-argv topology as
+    /// a versioned `LayoutDocument` (the response `data` IS the document).
+    /// `workspace` resolves name-first, then numeric workspace id; an
+    /// omitted field means the active workspace.
+    LayoutExport {
+        #[serde(default)]
+        workspace: Option<String>,
+    },
+    /// Issue #76: export every workspace in the session, as
+    /// `{"files":[{"filename":"<sanitized>.json","document":{...}}]}`
+    /// for the CLI's `--output-dir` fan-out.
+    LayoutExportAll,
+    /// Issue #76: replay a layout document under `workspace` (created if
+    /// missing, AC2). The document is structurally parsed by serde (parse
+    /// errors propagate as `bad request`); `validate()` then hard-fails
+    /// any schema/geometry drift (AC7) before a single pane is spawned.
+    LayoutApply {
+        workspace: String,
+        document: crate::layout_doc::LayoutDocument,
+    },
 }
 
 #[derive(Serialize)]
@@ -945,6 +965,35 @@ fn browser_state_json(
     value
 }
 
+/// Resolve a `layout-export` workspace selector: exact name first, then
+/// numeric workspace id (ids are session-local; names are the stable
+/// fleet identity — issue #76 builder decision D2). `None` selects the
+/// active workspace.
+fn resolve_workspace_index(mux: &Mux, selector: Option<&str>) -> anyhow::Result<usize> {
+    mux.with_state(|s| {
+        if s.workspaces.is_empty() {
+            anyhow::bail!("no workspaces in this session");
+        }
+        match selector {
+            None => Ok(s.active_workspace),
+            Some(sel) => s
+                .workspaces
+                .iter()
+                .position(|ws| ws.name == sel)
+                .or_else(|| {
+                    sel.parse::<u64>()
+                        .ok()
+                        .and_then(|id| s.workspaces.iter().position(|ws| ws.id == id))
+                })
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unknown workspace {sel:?} (matched neither a name nor a numeric id)"
+                    )
+                }),
+        }
+    })
+}
+
 fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::Result<Value> {
     match cmd {
         Command::Identify => Ok(json!({
@@ -1382,6 +1431,36 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
                 "session": new_name,
                 "socket_path": new_sock,
                 "pid": std::process::id(),
+            }))
+        }
+        Command::LayoutExport { workspace } => {
+            let index = resolve_workspace_index(mux, workspace.as_deref())?;
+            let doc = mux.with_state(|s| crate::layout_doc::capture_workspace(s, index))?;
+            Ok(serde_json::to_value(&doc)?)
+        }
+        Command::LayoutExportAll => {
+            let files = mux.with_state(|s| -> anyhow::Result<Vec<Value>> {
+                (0..s.workspaces.len())
+                    .map(|i| {
+                        let doc = crate::layout_doc::capture_workspace(s, i)?;
+                        let filename = format!(
+                            "{}.json",
+                            crate::layout_doc::sanitize_filename(&s.workspaces[i].name)
+                        );
+                        Ok(json!({ "filename": filename, "document": doc }))
+                    })
+                    .collect()
+            })?;
+            Ok(json!({ "files": files }))
+        }
+        Command::LayoutApply { workspace, document } => {
+            document.validate()?;
+            let summary = mux.apply_layout(&workspace, &document)?;
+            Ok(json!({
+                "workspace": workspace,
+                "workspace_id": summary.workspace_id,
+                "panes": summary.panes,
+                "surfaces": summary.surfaces,
             }))
         }
         Command::Subscribe => {
