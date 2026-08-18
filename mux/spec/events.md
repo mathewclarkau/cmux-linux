@@ -331,11 +331,13 @@ object{
   state:"working"|"blocked"|"idle"|"done"|"unknown",
   source:"detected"|"socket"|"hook",
   session:string|null,
+  agent:string|null,
+  message:string|null,
   updated_at_ms:uint64
 }
 ```
 
-Meaning: The authoritative agent state for a surface changed. Hook-authority and socket reports override detection as described in `commands.md`.
+Meaning: The authoritative agent state for a surface changed. Hook-authority and socket reports override detection as described in `commands.md`. `agent`/`message` are issue #75's report fields (the pane's agent name and the latest report's free-text message; `null` on older servers).
 
 Example:
 
@@ -347,6 +349,8 @@ Example:
   "state": "blocked",
   "source": "hook",
   "session": "abc",
+  "agent": "worker-1",
+  "message": "needs input",
   "updated_at_ms": 1710000000000
 }
 ```
