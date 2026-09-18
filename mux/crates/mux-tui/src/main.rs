@@ -51,6 +51,33 @@ extern "C" fn handle_signal(_: libc::c_int) {
     SHUTDOWN_REQUESTED.store(true, Ordering::Release);
 }
 
+/// Transition shim (rename compat): map every cmux-era `CMUX_*` env var
+/// onto its canonical `MTYX_*` spelling, but only where the `MTYX_*`
+/// counterpart is not already set, so an explicit new-name value always
+/// wins. Runs before anything else in `main` so every downstream
+/// `MTYX_*` read (socket discovery, config, plugin paths, hook
+/// installers, the env inherited by PTY children) sees the merged view.
+/// Build-time-only variables such as `MTYX_VERSION` are handled by the
+/// build scripts' own fallbacks, not here.
+fn honor_legacy_env() {
+    for (name, value) in legacy_env_pairs(std::env::vars()) {
+        if std::env::var_os(&name).is_none() {
+            std::env::set_var(&name, &value);
+        }
+    }
+}
+
+/// Pure core of [`honor_legacy_env`]: from an env var stream, the
+/// `(MTYX_*, value)` pairs implied by each `CMUX_*` entry. Split out so
+/// the mapping is unit-testable without mutating process env.
+fn legacy_env_pairs(vars: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
+    vars.filter_map(|(key, value)| {
+        let suffix = key.strip_prefix("CMUX_")?;
+        Some((format!("MTYX_{suffix}"), value))
+    })
+    .collect()
+}
+
 pub(crate) fn shutdown_requested() -> bool {
     SHUTDOWN_REQUESTED.load(Ordering::Acquire)
 }
@@ -420,6 +447,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
 }
 
 fn main() {
+    honor_legacy_env();
     install_signal_handlers();
     let mut raw_args = std::env::args().skip(1).collect::<Vec<_>>();
     if raw_args.first().map(|arg| arg.as_str()) == Some("help") {
@@ -644,8 +672,10 @@ fn run_attach(mut args: Args, fallback: Option<PathBuf>) -> anyhow::Result<()> {
     loop {
         let overlay =
             if args.apply_local_config { resolve_local_overlay(args.config.as_deref()) } else { None };
+        // Rename compat: client_socket_path falls back to a LIVE
+        // cmux-era socket when the canonical mtyx one is not up.
         let socket_path =
-            args.socket.clone().unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
+            args.socket.clone().unwrap_or_else(|| mux_core::server::client_socket_path(&args.session));
         // Issue #69: retry once on a transiently-unconnectable socket, then
         // recover in-process to last_good when this is a swap (last_good is
         // Some) instead of propagating the error to exit 1. A genuine first
@@ -927,4 +957,59 @@ fn run_headless(mux: &Arc<Mux>, socket_path: &std::path::Path) -> anyhow::Result
 fn usage_exit(msg: &str) -> ! {
     eprintln!("mtyx: {msg}\n\n{USAGE}");
     std::process::exit(2);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_env_pairs_maps_every_cmux_var() {
+        // Rename compat: every CMUX_* var, whatever its suffix (the full
+        // inventory is 60+ names and grows), implies an MTYX_* pair.
+        let vars = vec![
+            ("CMUX_MUX_SOCKET".to_string(), "/tmp/s.sock".to_string()),
+            ("CMUX_REMOTE_DAEMON_PORT".to_string(), "9001".to_string()),
+            ("CMUX_CLAUDE_TEAMS_CMUX_BIN".to_string(), "/bin/cmux".to_string()),
+        ];
+        assert_eq!(
+            legacy_env_pairs(vars.into_iter()),
+            vec![
+                ("MTYX_MUX_SOCKET".to_string(), "/tmp/s.sock".to_string()),
+                ("MTYX_REMOTE_DAEMON_PORT".to_string(), "9001".to_string()),
+                ("MTYX_CLAUDE_TEAMS_CMUX_BIN".to_string(), "/bin/cmux".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_env_pairs_ignores_non_prefixed_and_bare_names() {
+        // Only the exact CMUX_ prefix maps: unrelated vars pass through
+        // untouched, and a bare CMUX (no underscore) is left alone.
+        let vars = vec![
+            ("PATH".to_string(), "/usr/bin".to_string()),
+            ("CMUX".to_string(), "bare".to_string()),
+            ("MTYX_MUX_SOCKET".to_string(), "/already/canonical.sock".to_string()),
+            ("MY_CMUX_THING".to_string(), "not-a-prefix".to_string()),
+        ];
+        assert!(legacy_env_pairs(vars.into_iter()).is_empty());
+    }
+
+    #[test]
+    fn honor_legacy_env_does_not_override_existing_mtyx_values() {
+        // An explicit MTYX_* value always wins over the shimmed CMUX_*
+        // one; the shim only fills gaps.
+        std::env::set_var("CMUX_SHIM_TEST", "legacy");
+        std::env::set_var("MTYX_SHIM_TEST", "canonical");
+        std::env::remove_var("CMUX_SHIM_TEST_GAP");
+        std::env::remove_var("MTYX_SHIM_TEST_GAP");
+        std::env::set_var("CMUX_SHIM_TEST_GAP", "fills-gap");
+        honor_legacy_env();
+        assert_eq!(std::env::var("MTYX_SHIM_TEST").unwrap(), "canonical");
+        assert_eq!(std::env::var("MTYX_SHIM_TEST_GAP").unwrap(), "fills-gap");
+        std::env::remove_var("CMUX_SHIM_TEST");
+        std::env::remove_var("MTYX_SHIM_TEST");
+        std::env::remove_var("CMUX_SHIM_TEST_GAP");
+        std::env::remove_var("MTYX_SHIM_TEST_GAP");
+    }
 }

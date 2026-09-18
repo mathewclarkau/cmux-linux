@@ -66,9 +66,54 @@ pub(crate) enum SaveError {
 /// substrings searched for on each line (e.g. the HTML-comment markers
 /// `<!-- MTYX-START -->` / `<!-- MTYX-END -->`). Carried as a pair so a
 /// caller can never pass half a pair.
+///
+/// Rename compat: every block function in this module ALSO matches the
+/// cmux-era spelling of the same pair (each `MTYX-` token in the marker
+/// literals additionally matches `CMUX-`), so re-running any installer
+/// against a file last touched by a pre-rename build replaces the old
+/// block instead of duplicating it. Only the canonical spelling is ever
+/// written back.
 pub(crate) struct Markers {
     pub start: &'static str,
     pub end: &'static str,
+}
+
+/// The cmux-era spelling of a marker token, if it has one: `MTYX-`
+/// inside the token additionally matches `CMUX-`. Owned (not `&str`)
+/// because it is derived at runtime from the canonical literals.
+fn legacy_token(token: &str) -> Option<String> {
+    if token.contains("MTYX-") {
+        Some(token.replace("MTYX-", "CMUX-"))
+    } else {
+        None
+    }
+}
+
+/// The set of literal spellings a line is matched against: the
+/// canonical pair plus its cmux-era sibling when one exists.
+struct MarkerSet {
+    starts: Vec<String>,
+    ends: Vec<String>,
+}
+
+impl MarkerSet {
+    fn of(markers: &Markers) -> Self {
+        let mut starts = vec![markers.start.to_string()];
+        let mut ends = vec![markers.end.to_string()];
+        if let (Some(start), Some(end)) = (legacy_token(markers.start), legacy_token(markers.end)) {
+            starts.push(start);
+            ends.push(end);
+        }
+        Self { starts, ends }
+    }
+
+    fn opens(&self, line: &str) -> bool {
+        self.starts.iter().any(|s| line.contains(s))
+    }
+
+    fn closes(&self, line: &str) -> bool {
+        self.ends.iter().any(|s| line.contains(s))
+    }
 }
 
 /// The real mtyx marker tokens used by `pi_hook.rs`'s `APPEND_SYSTEM.md`
@@ -143,14 +188,15 @@ pub(crate) fn save_pretty<T: Serialize>(path: &Path, value: &T) -> Result<(), Sa
 /// neither `parse_flags` (extract) nor `replace_marked_block`
 /// (strip-then-append) provides on its own.
 pub(crate) fn strip_marked_block(content: &str, markers: &Markers) -> String {
+    let set = MarkerSet::of(markers);
     let mut out = String::new();
     let mut skipping = false;
     for line in content.lines() {
-        if line.contains(markers.start) {
+        if set.opens(line) {
             skipping = true;
             continue;
         }
-        if line.contains(markers.end) {
+        if set.closes(line) {
             skipping = false;
             continue;
         }
@@ -185,17 +231,18 @@ pub(crate) fn strip_marked_block(content: &str, markers: &Markers) -> String {
 /// `claude_hook.rs` when it migrates) can adopt it without reshape.
 #[allow(dead_code)] // API surface per issue #5; no current call site.
 pub(crate) fn parse_flags(content: &str, markers: &Markers) -> Option<String> {
+    let set = MarkerSet::of(markers);
     let mut inner = String::new();
     let mut in_block = false;
     let mut found = false;
     for line in content.lines() {
         if !in_block {
-            if line.contains(markers.start) {
+            if set.opens(line) {
                 in_block = true;
                 found = true;
             }
             // Lines before the block are not part of the inner content.
-        } else if line.contains(markers.end) {
+        } else if set.closes(line) {
             // Stop after the FIRST block.
             break;
         } else {
@@ -449,6 +496,61 @@ mod tests {
         // newline so installers don't accidentally drop it.
         let got = replace_marked_block("", &MTYX_MARKERS, "skill");
         assert_eq!(got, "\n<!-- MTYX-START -->\nskill\n<!-- MTYX-END -->\n");
+    }
+
+    // ---- rename compat: cmux-era marker spelling ----
+
+    #[test]
+    fn replace_marked_block_replaces_legacy_cmux_block_not_duplicates() {
+        // Rename compat: a file last managed by a pre-rename build holds
+        // a `<!-- CMUX-START/END -->` block. Re-running the installer must
+        // strip the OLD block and append the fresh canonical one — never
+        // leave two blocks behind.
+        let content = "preamble\n\n<!-- CMUX-START -->\nold cmux-era skill\n<!-- CMUX-END -->\n\ntail\n";
+        let got = replace_marked_block(content, &MTYX_MARKERS, "new skill");
+        assert_eq!(
+            got,
+            "preamble\n\n\ntail\n<!-- MTYX-START -->\nnew skill\n<!-- MTYX-END -->\n"
+        );
+        assert!(!got.contains("CMUX-START"));
+        assert!(!got.contains("old cmux-era skill"));
+    }
+
+    #[test]
+    fn replace_marked_block_handles_mixed_and_unclosed_legacy_blocks() {
+        // A block opened with the legacy spelling but closed with the
+        // canonical one (a rename-era install interrupted mid-write) is
+        // still one block to the strip logic; and an unclosed legacy
+        // start swallows to EOF, matching the canonical behaviour.
+        let mixed = "a\n<!-- CMUX-START -->\nstale\n<!-- MTYX-END -->\nb\n";
+        let got = replace_marked_block(mixed, &MTYX_MARKERS, "fresh");
+        assert_eq!(got, "a\nb\n<!-- MTYX-START -->\nfresh\n<!-- MTYX-END -->\n");
+
+        let unclosed = "a\n<!-- CMUX-START -->\nnever closed\nrest swallowed\n";
+        let got = replace_marked_block(unclosed, &MTYX_MARKERS, "fresh");
+        assert_eq!(got, "a\n<!-- MTYX-START -->\nfresh\n<!-- MTYX-END -->\n");
+    }
+
+    #[test]
+    fn strip_and_parse_match_legacy_cmux_blocks() {
+        // Uninstall path (strip) and detect path (parse_flags) both need
+        // the legacy spelling: strip removes the old block; parse_flags
+        // reads its inner content.
+        let content = "keep\n<!-- CMUX-START -->\ninner line\n<!-- CMUX-END -->\nalso keep\n";
+        assert_eq!(strip_marked_block(content, &MTYX_MARKERS), "keep\nalso keep");
+        assert_eq!(parse_flags(content, &MTYX_MARKERS).as_deref(), Some("inner line"));
+    }
+
+    #[test]
+    fn bare_markers_also_match_legacy_spelling() {
+        // opencode's plugin uses the bare `MTYX-START`/`MTYX-END`
+        // spelling (no HTML comment); its cmux-era sibling `CMUX-START`
+        // must be honoured identically.
+        let bare = Markers { start: "MTYX-START", end: "MTYX-END" };
+        let content = "// header\n// CMUX-START\nold plugin body\n// CMUX-END\n";
+        assert_eq!(strip_marked_block(content, &bare), "// header");
+        let got = replace_marked_block(content, &bare, "new body");
+        assert_eq!(got, "// header\nMTYX-START\nnew body\nMTYX-END\n");
     }
 
     // ---- path_kind / is_user_path ----

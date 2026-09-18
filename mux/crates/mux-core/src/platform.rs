@@ -110,27 +110,75 @@ pub mod transport {
 }
 
 /// Runtime socket/pidfile directory for the current user.
+///
+/// Canonical since the mattyx rename. Servers built from this tree
+/// bind here only; clients additionally probe [`legacy_runtime_dir`]
+/// via [`pick_runtime_socket`] before giving up on a connect.
 pub fn runtime_dir() -> PathBuf {
     runtime_base_dir().join(format!("mtyx-{}", user_id_component()))
+}
+
+/// cmux-era runtime socket/pidfile directory (`cmux-<uid>`).
+///
+/// Never bound by this build's server. Exists purely so a client can
+/// fall back to a LIVE legacy socket (probe only, never create) while
+/// a pre-rename `cmux` server is still running — the intended
+/// transition story is "talk to the old daemon until you restart it
+/// under the new name", not a destructive migration.
+pub fn legacy_runtime_dir() -> PathBuf {
+    runtime_base_dir().join(format!("cmux-{}", user_id_component()))
+}
+
+/// Pure client-side socket decision (rename compat): prefer the
+/// canonical `mtyx-<uid>` socket; fall back to the legacy `cmux-<uid>`
+/// socket only when the canonical one is not live and the legacy one
+/// is. When neither is live the canonical path is returned so the
+/// resulting connect error names the canonical location.
+///
+/// `canonical_live` / `legacy_live` are supplied by the caller
+/// (connect-probe results, see `server::client_socket_path`) so this
+/// decision is unit-testable without touching the filesystem.
+pub fn pick_runtime_socket(
+    canonical: PathBuf,
+    legacy: PathBuf,
+    canonical_live: bool,
+    legacy_live: bool,
+) -> PathBuf {
+    if !canonical_live && legacy_live {
+        legacy
+    } else {
+        canonical
+    }
 }
 
 /// Where a session's persisted tree snapshot lives, honoring the XDG
 /// override order. Not a runtime dir (`$XDG_RUNTIME_DIR` is wiped on
 /// logout/reboot — exactly when this needs to survive).
+///
+/// Rename compat: a cmux-era `cmux` state dir is honoured (used as-is)
+/// while the canonical `mattyx` dir is absent; no migration is
+/// performed. See [`honor_cmux_era_dir`].
 pub fn session_snapshot_path(session: &str) -> PathBuf {
     let base = env_path("XDG_STATE_HOME")
         .or_else(|| home_dir().map(|home| home.join(".local").join("state")))
         .unwrap_or_else(std::env::temp_dir);
-    base.join("mattyx").join("sessions").join(format!("{session}.json"))
+    let dir = honor_cmux_era_dir(base.join("mattyx"));
+    dir.join("sessions").join(format!("{session}.json"))
 }
 
 /// User config directory, honoring the XDG override order. The config
 /// file itself is `mux.json` or `mux.toml` inside this directory.
+///
+/// Rename compat: a cmux-era `cmux` config dir is honoured while the
+/// canonical `mattyx` dir is absent; no migration. See
+/// [`honor_cmux_era_dir`].
 pub fn config_dir() -> Option<PathBuf> {
-    if let Some(config_home) = env_path("XDG_CONFIG_HOME") {
-        return Some(config_home.join("mattyx"));
-    }
-    platform_config_dir()
+    let canonical = if let Some(config_home) = env_path("XDG_CONFIG_HOME") {
+        config_home.join("mattyx")
+    } else {
+        platform_config_dir()?
+    };
+    Some(honor_cmux_era_dir(canonical))
 }
 
 /// User config file path, honoring the XDG override order. The legacy
@@ -290,39 +338,73 @@ pub fn ghostty_config_paths() -> Vec<PathBuf> {
 }
 
 /// Persistent profile directory for launched Chrome/Chromium sessions.
+///
+/// Rename compat: the `mattyx` data dir is honoured-without-migrating
+/// against its cmux-era `cmux` sibling (see [`honor_cmux_era_dir`]);
+/// the chrome-profile leaf rides on whichever base wins.
 pub fn chrome_user_data_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        home_dir().map(|home| {
-            home.join("Library").join("Application Support").join("mattyx").join("chrome-profile")
-        })
+        let dir = home_dir().map(|home| {
+            home.join("Library").join("Application Support").join("mattyx")
+        });
+        dir.map(honor_cmux_era_dir).map(|d| d.join("chrome-profile"))
     }
 
     #[cfg(target_os = "linux")]
     {
-        env_path("XDG_DATA_HOME")
-            .map(|data_home| data_home.join("mattyx").join("chrome-profile"))
-            .or_else(|| {
-                home_dir().map(|home| {
-                    home.join(".local").join("share").join("mattyx").join("chrome-profile")
-                })
-            })
+        let dir = env_path("XDG_DATA_HOME")
+            .map(|data_home| data_home.join("mattyx"))
+            .or_else(|| home_dir().map(|home| home.join(".local").join("share").join("mattyx")));
+        dir.map(honor_cmux_era_dir).map(|d| d.join("chrome-profile"))
     }
 
     #[cfg(windows)]
     {
-        env_path("LOCALAPPDATA").map(|dir| dir.join("mattyx").join("chrome-profile"))
+        let dir = env_path("LOCALAPPDATA").map(|d| d.join("mattyx"));
+        dir.map(honor_cmux_era_dir).map(|d| d.join("chrome-profile"))
     }
 
     #[cfg(all(not(target_os = "macos"), not(target_os = "linux"), not(windows)))]
     {
-        env_path("XDG_DATA_HOME").map(|dir| dir.join("mattyx").join("chrome-profile")).or_else(
-            || {
-                home_dir().map(|home| {
-                    home.join(".local").join("share").join("mattyx").join("chrome-profile")
-                })
-            },
-        )
+        let dir = env_path("XDG_DATA_HOME")
+            .map(|d| d.join("mattyx"))
+            .or_else(|| home_dir().map(|home| home.join(".local").join("share").join("mattyx")));
+        dir.map(honor_cmux_era_dir).map(|d| d.join("chrome-profile"))
+    }
+}
+
+/// The cmux-era sibling of a canonical mattyx path: the same path with
+/// the last `mattyx` component renamed `cmux`. `None` when the path
+/// holds no such component (nothing to fall back to).
+fn cmux_era_sibling(canonical: &Path) -> Option<PathBuf> {
+    let components: Vec<_> = canonical.components().collect();
+    let idx = components
+        .iter()
+        .rposition(|c| c.as_os_str() == std::ffi::OsStr::new("mattyx"))?;
+    let mut out = PathBuf::new();
+    for component in &components[..idx] {
+        out.push(component.as_os_str());
+    }
+    out.push("cmux");
+    for component in &components[idx + 1..] {
+        out.push(component.as_os_str());
+    }
+    Some(out)
+}
+
+/// Honour-without-migrating (rename compat): use the canonical `mattyx`
+/// dir; if it does not exist yet but a cmux-era `cmux` dir does, keep
+/// using the old one so the rename never orphans a user's existing
+/// config/state/profile. Once the canonical dir appears (any write
+/// under the new name creates it), it wins and the old dir is left
+/// untouched on disk. Never copies, moves, or deletes anything.
+///
+/// Public so mux-tui can apply the same policy to its plugin data dir.
+pub fn honor_cmux_era_dir(canonical: PathBuf) -> PathBuf {
+    match cmux_era_sibling(&canonical) {
+        Some(legacy) if !canonical.exists() && legacy.is_dir() => legacy,
+        _ => canonical,
     }
 }
 
@@ -435,4 +517,129 @@ fn restrict_permissions(path: &Path, mode: u32) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn restrict_permissions(_path: &Path, _mode: u32) -> std::io::Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    // No tempfile dev-dep in mux-core; per-process counters keep
+    // parallel runs from colliding, same technique as mux-tui's tests.
+    static DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn scratch_dir(label: &str) -> PathBuf {
+        let n = DIR_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "mtyx_platform_test_{}_{}_{}",
+            std::process::id(),
+            n,
+            label
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    #[test]
+    fn pick_runtime_socket_prefers_canonical_when_live() {
+        let canonical = PathBuf::from("/run/user/1000/mtyx-1000/main.sock");
+        let legacy = PathBuf::from("/run/user/1000/cmux-1000/main.sock");
+        assert_eq!(
+            pick_runtime_socket(canonical.clone(), legacy.clone(), true, true),
+            canonical
+        );
+    }
+
+    #[test]
+    fn pick_runtime_socket_falls_back_to_live_legacy() {
+        // The transition case: no mtyx server yet, a cmux-era server is
+        // still running. The client must talk to the old daemon.
+        let canonical = PathBuf::from("/run/user/1000/mtyx-1000/main.sock");
+        let legacy = PathBuf::from("/run/user/1000/cmux-1000/main.sock");
+        assert_eq!(
+            pick_runtime_socket(canonical.clone(), legacy.clone(), false, true),
+            legacy
+        );
+    }
+
+    #[test]
+    fn pick_runtime_socket_returns_canonical_when_neither_live() {
+        // Nothing anywhere: return the canonical path so the connect
+        // error names where a NEW server is expected to appear, not the
+        // legacy location.
+        let canonical = PathBuf::from("/run/user/1000/mtyx-1000/main.sock");
+        let legacy = PathBuf::from("/run/user/1000/cmux-1000/main.sock");
+        assert_eq!(
+            pick_runtime_socket(canonical.clone(), legacy.clone(), false, false),
+            canonical
+        );
+    }
+
+    #[test]
+    fn pick_runtime_socket_ignores_dead_legacy_when_canonical_live() {
+        let canonical = PathBuf::from("/run/user/1000/mtyx-1000/main.sock");
+        let legacy = PathBuf::from("/run/user/1000/cmux-1000/main.sock");
+        assert_eq!(
+            pick_runtime_socket(canonical.clone(), legacy.clone(), true, false),
+            canonical
+        );
+    }
+
+    #[test]
+    fn cmux_era_sibling_renames_last_mattyx_component() {
+        assert_eq!(
+            cmux_era_sibling(Path::new("/home/u/.config/mattyx")).as_deref(),
+            Some(Path::new("/home/u/.config/cmux"))
+        );
+        // Mid-path component: the chrome-profile base maps too.
+        assert_eq!(
+            cmux_era_sibling(Path::new("/data/mattyx/chrome-profile")).as_deref(),
+            Some(Path::new("/data/cmux/chrome-profile"))
+        );
+        // No mattyx component: nothing to fall back to.
+        assert_eq!(cmux_era_sibling(Path::new("/etc/other")), None);
+    }
+
+    #[test]
+    fn honor_cmux_era_dir_uses_legacy_only_while_canonical_absent() {
+        let dir = scratch_dir("honor_dir");
+        let base = dir.join("xdg");
+        std::fs::create_dir_all(base.join("cmux")).unwrap();
+
+        // Canonical absent, legacy present -> honour the old dir.
+        assert_eq!(
+            honor_cmux_era_dir(base.join("mattyx")),
+            base.join("cmux")
+        );
+
+        // Canonical appears -> it wins from then on; the legacy dir is
+        // left untouched (no deletion, no merge).
+        std::fs::create_dir_all(base.join("mattyx")).unwrap();
+        assert_eq!(
+            honor_cmux_era_dir(base.join("mattyx")),
+            base.join("mattyx")
+        );
+        assert!(base.join("cmux").is_dir());
+    }
+
+    #[test]
+    fn honor_cmux_era_dir_ignores_legacy_files_and_missing_both() {
+        let dir = scratch_dir("honor_edge");
+        // A legacy FILE at the sibling path is not a directory to adopt.
+        let base = dir.join("xdg2");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("cmux"), b"not a dir").unwrap();
+        assert_eq!(
+            honor_cmux_era_dir(base.join("mattyx")),
+            base.join("mattyx")
+        );
+        // Neither exists: canonical (a fresh install has no legacy dir).
+        let base2 = dir.join("xdg3");
+        std::fs::create_dir_all(&base2).unwrap();
+        assert_eq!(
+            honor_cmux_era_dir(base2.join("mattyx")),
+            base2.join("mattyx")
+        );
+    }
 }

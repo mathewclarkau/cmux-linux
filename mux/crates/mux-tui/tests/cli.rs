@@ -167,6 +167,7 @@ fn cli_verbs_cover_command_output_errors_and_streams() {
         .arg(server.dir.join("missing.sock"))
         .arg("identify")
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_eq!(bogus.status.code(), Some(3));
@@ -791,6 +792,7 @@ fn wait_agent_status_blocks_until_report() {
             .arg(&socket)
             .args(["report-agent", "--surface", &surface_str, "--state", "idle", "--source", "hook"])
             .env_remove("MTYX_MUX_SOCKET")
+            .env_remove("CMUX_MUX_SOCKET")
             .output()
             .unwrap();
     });
@@ -1034,6 +1036,7 @@ fn wait_agent_status_errors_when_surface_exits() {
                 "10000",
             ])
             .env_remove("MTYX_MUX_SOCKET")
+            .env_remove("CMUX_MUX_SOCKET")
             .output()
             .unwrap()
     });
@@ -1220,6 +1223,7 @@ fn report_agent_defaults_surface_from_env_and_source_to_socket() {
         .arg(&server.socket)
         .args(["report-agent", "--state", "idle", "--message", "waiting for work"])
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .env("MTYX_MUX_SURFACE", surface.to_string())
         .output()
         .unwrap();
@@ -1242,7 +1246,9 @@ fn report_agent_defaults_surface_from_env_and_source_to_socket() {
         .arg(&server.socket)
         .args(["report-agent", "--state", "idle"])
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .env_remove("MTYX_MUX_SURFACE")
+        .env_remove("CMUX_MUX_SURFACE")
         .output()
         .unwrap();
     assert_eq!(missing.status.code(), Some(2));
@@ -1358,6 +1364,7 @@ fn workspace_color_shorthand_creates_named_workspace() {
         .arg(&server.socket)
         .args(["workspace-color", "Build Team", "green"])
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -1409,6 +1416,7 @@ fn install_skill_refuses_symlinks() {
         .args(["claude", "install-skill"])
         .current_dir(&guard.project_dir)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .expect("failed to spawn mtyx claude install-skill");
 
@@ -1461,6 +1469,7 @@ fn grok_install_hooks_writes_native_schema() {
         .args(["grok", "install-hooks"])
         .current_dir(&project)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&install);
@@ -1514,6 +1523,7 @@ fn grok_install_hooks_cleans_legacy_file() {
         .args(["grok", "install-hooks"])
         .current_dir(&project)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&install);
@@ -1538,6 +1548,7 @@ fn grok_install_hooks_refuses_symlinks() {
         .args(["grok", "install-hooks"])
         .current_dir(&project)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert!(
@@ -1583,6 +1594,7 @@ fn install_skill_refuses_symlinks_grok() {
         .args(["grok", "install-skill"])
         .current_dir(&guard.project_dir)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .expect("failed to spawn mtyx grok install-skill");
 
@@ -1709,6 +1721,7 @@ fn assert_subscribe_reports_tree_changed(server: &HeadlessServer) {
         .arg(&server.socket)
         .arg("subscribe")
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1774,6 +1787,7 @@ fn stream_preserves_partial_line_across_read_timeout() {
         .arg(&socket)
         .arg("subscribe")
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     server.join().unwrap();
@@ -2348,6 +2362,7 @@ fn cli(server: &HeadlessServer, args: &[&str]) -> Output {
         .arg(&server.socket)
         .args(args)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap()
 }
@@ -2481,6 +2496,7 @@ fn list_sessions_lists_active_headless_session() {
         .arg("list-sessions")
         .env("XDG_RUNTIME_DIR", &dir)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2494,6 +2510,7 @@ fn list_sessions_lists_active_headless_session() {
         .args(["--json", "list-sessions"])
         .env("XDG_RUNTIME_DIR", &dir)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&json_output);
@@ -2540,6 +2557,7 @@ fn kill_session_terminates_daemon_and_cleans_files() {
         .args(["kill-session", "--session", "target-sess"])
         .env("XDG_RUNTIME_DIR", &dir)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2560,6 +2578,7 @@ fn kill_session_terminates_daemon_and_cleans_files() {
         .args(["kill-session", "--session", "nonexistent"])
         .env("XDG_RUNTIME_DIR", &dir)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_eq!(missing.status.code(), Some(1));
@@ -2601,6 +2620,7 @@ fn kill_stale_removes_stale_pair_and_leaves_live_untouched() {
         .args(["kill-stale"])
         .env("XDG_RUNTIME_DIR", &dir)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2617,6 +2637,7 @@ fn kill_stale_removes_stale_pair_and_leaves_live_untouched() {
         .args(["kill-stale"])
         .env("XDG_RUNTIME_DIR", &dir)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output2);
@@ -2660,6 +2681,7 @@ fn attach_session_list_json_includes_socket_path() {
         .arg(&socket)
         .env("XDG_RUNTIME_DIR", &dir)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2719,6 +2741,7 @@ fn attach_session_list_json_marks_stale() {
         .arg(&live_socket)
         .env("XDG_RUNTIME_DIR", &dir)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2755,6 +2778,7 @@ fn attach_session_list_json_empty() {
         .arg(&socket)
         .env("XDG_RUNTIME_DIR", &dir)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2879,8 +2903,11 @@ fn show_local_config_resolution_prints_path_without_attaching() {
         .args(["attach", "--show-local-config-resolution"])
         .env("XDG_CONFIG_HOME", &dir)
         .env_remove("MTYX_LOCAL_CONFIG")
+        .env_remove("CMUX_LOCAL_CONFIG")
         .env_remove("MTYX_MUX_CONFIG")
+        .env_remove("CMUX_MUX_CONFIG")
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
 
@@ -2937,6 +2964,7 @@ fn attach_overlay_layers_over_server_config() {
         .arg(&socket)
         .env("XDG_CONFIG_HOME", &server_cfg_root)
         .env_remove("MTYX_MUX_CONFIG")
+        .env_remove("CMUX_MUX_CONFIG")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -2970,7 +2998,9 @@ fn attach_overlay_layers_over_server_config() {
         .args(["--apply-local-config", "--print-resolved-config"])
         .env("XDG_CONFIG_HOME", &local_cfg_root)
         .env_remove("MTYX_LOCAL_CONFIG")
+        .env_remove("CMUX_LOCAL_CONFIG")
         .env_remove("MTYX_MUX_CONFIG")
+        .env_remove("CMUX_MUX_CONFIG")
         .output()
         .unwrap();
 
@@ -3027,6 +3057,7 @@ fn get_resolved_config_cli_verb_returns_server_chrome() {
         .arg(&socket)
         .env("XDG_CONFIG_HOME", &server_cfg_root)
         .env_remove("MTYX_MUX_CONFIG")
+        .env_remove("CMUX_MUX_CONFIG")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -3052,6 +3083,7 @@ fn get_resolved_config_cli_verb_returns_server_chrome() {
         .arg(&socket)
         .args(["--json", "get-resolved-config"])
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .unwrap();
 
@@ -3101,6 +3133,7 @@ fn plugin_install_list_uninstall_round_trip() {
             .args(args)
             .env("XDG_DATA_HOME", &data_home)
             .env_remove("MTYX_MUX_SOCKET")
+            .env_remove("CMUX_MUX_SOCKET")
             .output()
             .unwrap()
     };
@@ -3168,6 +3201,7 @@ fn plugin_shipped_example_manifest_installs() {
             .args(args)
             .env("XDG_DATA_HOME", &data_home)
             .env_remove("MTYX_MUX_SOCKET")
+            .env_remove("CMUX_MUX_SOCKET")
             .output()
             .unwrap()
     };
@@ -3206,7 +3240,8 @@ fn version_flag_prints_build_version_and_exits_zero() {
     let expected = format!("mtyx {}", mux_core::VERSION);
 
     let run = |args: &[&str]| {
-        Command::new(bin()).args(args).env_remove("MTYX_MUX_SOCKET").output().unwrap()
+        Command::new(bin()).args(args).env_remove("MTYX_MUX_SOCKET")
+.env_remove("CMUX_MUX_SOCKET").output().unwrap()
     };
 
     for args in [&["--version"][..], &["-V"][..], &["--headless", "--version"][..]] {
@@ -3305,7 +3340,8 @@ fn read_pid_file(path: &std::path::Path) -> u32 {
 fn run_against(socket: &std::path::Path, xdg: &std::path::Path, args: &[&str]) -> Output {
     let mut cmd = Command::new(bin());
     cmd.args(["--socket"]).arg(socket).args(args);
-    cmd.env("XDG_RUNTIME_DIR", xdg).env_remove("MTYX_MUX_SOCKET");
+    cmd.env("XDG_RUNTIME_DIR", xdg).env_remove("MTYX_MUX_SOCKET")
+.env_remove("CMUX_MUX_SOCKET");
     cmd.output().unwrap()
 }
 
@@ -3930,6 +3966,7 @@ fn first_attach_to_dead_socket_still_exits_nonzero() {
         .args(["attach", "--socket"])
         .arg(&socket)
         .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("CMUX_MUX_SOCKET")
         .output()
         .expect("failed to spawn mtyx attach");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -4419,3 +4456,88 @@ fn list_workspaces_json(server: &HeadlessServer) -> serde_json::Value {
     serde_json::from_slice(&listed.stdout).unwrap()
 }
 
+
+#[cfg(unix)]
+mod legacy_socket_fallback {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    fn uid() -> u32 {
+        fs::metadata("/proc/self").expect("stat /proc/self").uid()
+    }
+
+    /// Rename compat: with no live `mtyx-<uid>` socket, a client must
+    /// fall back to a LIVE cmux-era `cmux-<uid>` socket (probe only) —
+    /// and cleanly fail with exit 3 when neither is live. The runtime
+    /// base is scoped to a temp dir so the real /run/user/<uid> (which
+    /// may hold a live production session) is never probed, and BOTH
+    /// socket env spellings are cleared so the startup shim cannot
+    /// short-circuit resolution.
+    #[test]
+    fn client_verbs_fall_back_to_live_cmux_era_socket() {
+        let base = unique_temp_dir("legacy-fb");
+        let legacy_dir = base.join(format!("cmux-{}", uid()));
+        fs::create_dir_all(&legacy_dir).unwrap();
+        let legacy_socket = legacy_dir.join("main.sock");
+
+        // Server bound at the cmux-era path (as a pre-rename build
+        // would have left it), explicit --socket so the bind does not
+        // itself exercise the fallback.
+        let mut server = Command::new(bin())
+            .args(["--headless", "--socket"])
+            .arg(&legacy_socket)
+            .env("XDG_RUNTIME_DIR", &base)
+            .env("XDG_STATE_HOME", &base)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
+            if legacy_socket.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(legacy_socket.exists(), "legacy-era server socket must appear");
+
+        // Client with NO --socket: canonical mtyx-<uid> is not live, so
+        // the fallback must find and use the live cmux-era socket.
+        let output = Command::new(bin())
+            .args(["--session", "main", "identify"])
+            .env("XDG_RUNTIME_DIR", &base)
+            .env_remove("MTYX_MUX_SOCKET")
+            .env_remove("CMUX_MUX_SOCKET")
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("session=main") && stdout.contains("protocol="),
+            "identify should succeed over the legacy socket, got: {stdout}"
+        );
+
+        let _ = server.kill();
+        let _ = server.wait();
+
+        // Neither socket live anymore: the client must fail (exit 3)
+        // naming the canonical path, never creating anything under
+        // cmux-<uid>.
+        let dead = Command::new(bin())
+            .args(["--session", "main", "identify"])
+            .env("XDG_RUNTIME_DIR", &base)
+            .env_remove("MTYX_MUX_SOCKET")
+            .env_remove("CMUX_MUX_SOCKET")
+            .output()
+            .unwrap();
+        assert_eq!(dead.status.code(), Some(3));
+        let stderr = String::from_utf8_lossy(&dead.stderr);
+        assert!(
+            stderr.contains("mtyx-") && !stderr.contains(format!("cmux-{}", uid()).as_str()),
+            "connect error should name the canonical mtyx-<uid> dir, got: {stderr}"
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+}

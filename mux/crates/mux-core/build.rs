@@ -39,6 +39,10 @@ fn main() {
     // rebuild after tagging would happily reuse the stale string, which
     // is the same class of silent drift issue #71 is about.
     println!("cargo:rerun-if-env-changed=MTYX_VERSION");
+    // cmux-era spelling still honoured (rename compat): a build that
+    // exports the old name must keep resolving the same way, and a
+    // change to either spelling must re-run this script.
+    println!("cargo:rerun-if-env-changed=CMUX_VERSION");
     println!("cargo:rerun-if-changed=build.rs");
     if let Some(git_dir) = git_dir() {
         // A commit, a checkout, or a new tag lands in one of these three.
@@ -56,7 +60,9 @@ fn main() {
 }
 
 fn resolve_version() -> String {
-    if let Some(explicit) = env("MTYX_VERSION") {
+    // Rename compat: $MTYX_VERSION wins, but a cmux-era $CMUX_VERSION
+    // still resolves the version when the new name is absent.
+    if let Some(explicit) = env("MTYX_VERSION").or_else(|| env("CMUX_VERSION")) {
         return normalise(&explicit);
     }
     let fallback = || env("CARGO_PKG_VERSION").unwrap_or_else(|| "unknown".to_string());

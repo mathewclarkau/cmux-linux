@@ -213,6 +213,23 @@ mod tests {
     }
 
     #[test]
+    fn uninstall_strips_cmux_era_marker_block() {
+        // Rename compat: a plugin file last written by a pre-rename
+        // build carries a bare `// CMUX-START`..`// CMUX-END` block.
+        // The uninstall path's strip must remove that block exactly
+        // like a canonical one, so re-running the installer never
+        // duplicates blocks (dual-parse lives in hook_merge::MarkerSet).
+        let legacy = "// unrelated header\n// CMUX-START\nexec(\"mtyx report-agent …\")\n// CMUX-END\n";
+        let markers = hook_merge::Markers { start: "MTYX-START", end: "MTYX-END" };
+        assert_eq!(
+            hook_merge::strip_marked_block(legacy, &markers),
+            "// unrelated header"
+        );
+        let replaced = hook_merge::replace_marked_block(legacy, &markers, "fresh body");
+        assert_eq!(replaced, "// unrelated header\nMTYX-START\nfresh body\nMTYX-END\n");
+    }
+
+    #[test]
     fn plugin_content_reports_agent_state() {
         assert!(MTYX_PLUGIN.contains("report-agent"));
         assert!(MTYX_PLUGIN.contains("working"));

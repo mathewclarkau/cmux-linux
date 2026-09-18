@@ -197,7 +197,9 @@ fn resolve_socket(explicit: Option<&Path>, session: Option<&str>) -> PathBuf {
             return PathBuf::from(path);
         }
     }
-    mux_core::server::default_socket_path(session.unwrap_or("main"))
+    // Rename compat: fall back to a LIVE cmux-era socket when the
+    // canonical mtyx one is not up (probe only; never creates).
+    mux_core::server::client_socket_path(session.unwrap_or("main"))
 }
 
 fn send_request(socket_path: &Path, cmd: &str, mut params: Value) -> anyhow::Result<Value> {

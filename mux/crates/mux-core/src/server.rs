@@ -134,6 +134,24 @@ pub fn is_session_socket_live(socket_path: &Path) -> bool {
     true
 }
 
+/// Client-side socket resolution for a session (rename compat).
+///
+/// Probes the canonical `mtyx-<uid>/<session>.sock` first; if it is not
+/// live, probes a LIVE cmux-era `cmux-<uid>/<session>.sock` (probe
+/// only — nothing is ever created) so a client keeps talking to a
+/// pre-rename server until it is restarted under the new name. When
+/// neither is live the canonical path is returned, so the connect
+/// error names where a new server is expected. The server bind path
+/// (`serve`) deliberately keeps [`default_socket_path`] — new sockets
+/// are only ever created under the canonical dir.
+pub fn client_socket_path(session: &str) -> PathBuf {
+    let canonical = default_socket_path(session);
+    let canonical_live = is_session_socket_live(&canonical);
+    let legacy = platform::legacy_runtime_dir().join(format!("{session}.sock"));
+    let legacy_live = is_session_socket_live(&legacy);
+    platform::pick_runtime_socket(canonical, legacy, canonical_live, legacy_live)
+}
+
 /// Reject session names that are unsafe as filesystem path components.
 /// The name becomes `<name>.sock` / `<name>.pid` /
 /// `$XDG_STATE_HOME/mattyx/sessions/<name>.json`, so a `/` or `\0` is a

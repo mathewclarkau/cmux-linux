@@ -125,16 +125,45 @@ fn dispatch(base: &Path, sub: &str, positional: &[&str], json: bool) -> i32 {
 /// `<base>/plugins.json` live under this). Honours `XDG_DATA_HOME` and
 /// falls back to `~/.local/share/mattyx`, mirroring the chrome profile
 /// resolution in `mux_core::platform`. Pure: no IO.
+///
+/// Rename compat: a cmux-era `cmux` data dir (with its `plugins.json`
+/// and installed plugins) is honoured while the canonical `mattyx` dir
+/// is absent — the same honour-without-migrate policy as config/state
+/// dirs, so a pre-rename install keeps its plugins.
 fn base_dir() -> Result<PathBuf, String> {
-    if let Some(raw) = std::env::var_os("XDG_DATA_HOME") {
+    let canonical = if let Some(raw) = std::env::var_os("XDG_DATA_HOME") {
         if !raw.is_empty() {
-            return Ok(PathBuf::from(raw).join("mattyx"));
+            PathBuf::from(raw).join("mattyx")
+        } else {
+            data_dir_without_xdg()?
         }
-    }
+    } else {
+        data_dir_without_xdg()?
+    };
+    Ok(mux_core::platform::honor_cmux_era_dir(canonical))
+}
+
+fn data_dir_without_xdg() -> Result<PathBuf, String> {
     std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(|h| PathBuf::from(h).join(".local").join("share").join("mattyx"))
         .ok_or_else(|| "could not resolve mtyx data dir (set XDG_DATA_HOME or HOME)".to_string())
+}
+
+/// Manifest path inside an installed plugin dir: canonical
+/// `mtyx-plugin.toml`, with the cmux-era `cmux-plugin.toml` honoured as
+/// a read-only fallback so plugins installed before the rename keep
+/// loading (install always writes the canonical name).
+fn manifest_path_in(plugin_dir: &Path) -> PathBuf {
+    let canonical = plugin_dir.join("mtyx-plugin.toml");
+    if canonical.exists() {
+        return canonical;
+    }
+    let legacy = plugin_dir.join("cmux-plugin.toml");
+    if legacy.exists() {
+        return legacy;
+    }
+    canonical
 }
 
 fn plugins_dir(base: &Path) -> PathBuf {
@@ -470,8 +499,9 @@ pub fn cmd_call(
         }
     };
     // Read the manifest from disk (not just the registry copy) so
-    // capabilities travel with the install.
-    let manifest_path = plugin_dir.join("mtyx-plugin.toml");
+    // capabilities travel with the install. Rename compat: a plugin
+    // installed pre-rename may still hold `cmux-plugin.toml`.
+    let manifest_path = manifest_path_in(&plugin_dir);
     let manifest_text = match std::fs::read_to_string(&manifest_path) {
         Ok(s) => s,
         Err(err) => {
@@ -1393,5 +1423,53 @@ mod tests {
                 "{rel} must be executable (mode & 0o111 should be nonzero)"
             );
         }
+    }
+
+    #[test]
+    fn manifest_path_in_falls_back_to_cmux_era_name() {
+        // Rename compat: an installed plugin dir may hold the cmux-era
+        // `cmux-plugin.toml`; it must be read when no canonical
+        // `mtyx-plugin.toml` is present, and shadowed once the canonical
+        // name exists.
+        let base = tmp_base("manifest-fallback");
+        let plugin_dir = base.join("plugins").join("fleet");
+        fs::create_dir_all(&plugin_dir).unwrap();
+
+        // Neither file: canonical name is returned (callers surface the
+        // read error against the canonical path).
+        assert_eq!(
+            manifest_path_in(&plugin_dir),
+            plugin_dir.join("mtyx-plugin.toml")
+        );
+
+        // Legacy only: honoured.
+        fs::write(plugin_dir.join("cmux-plugin.toml"), manifest("fleet", "a.wasm", &["v"]))
+            .unwrap();
+        assert_eq!(
+            manifest_path_in(&plugin_dir),
+            plugin_dir.join("cmux-plugin.toml")
+        );
+
+        // Both: canonical wins.
+        fs::write(plugin_dir.join("mtyx-plugin.toml"), manifest("fleet", "a.wasm", &["v"]))
+            .unwrap();
+        assert_eq!(
+            manifest_path_in(&plugin_dir),
+            plugin_dir.join("mtyx-plugin.toml")
+        );
+    }
+
+    #[test]
+    fn base_dir_honours_cmux_era_data_dir() {
+        // Rename compat: with XDG_DATA_HOME pointing at a scratch base
+        // that has a cmux dir but no mattyx dir, base_dir() resolves to
+        // the old dir; once mattyx exists it wins.
+        let base = tmp_base("base-dir-honor");
+        fs::create_dir_all(base.join("cmux")).unwrap();
+        std::env::set_var("XDG_DATA_HOME", &base);
+        assert_eq!(base_dir().unwrap(), base.join("cmux"));
+        fs::create_dir_all(base.join("mattyx")).unwrap();
+        assert_eq!(base_dir().unwrap(), base.join("mattyx"));
+        std::env::remove_var("XDG_DATA_HOME");
     }
 }

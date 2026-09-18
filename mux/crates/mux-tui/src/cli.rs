@@ -687,7 +687,9 @@ fn resolve_socket(global: &GlobalArgs) -> PathBuf {
         }
     }
     let session = global.session.as_deref().unwrap_or("main");
-    mux_core::server::default_socket_path(session)
+    // Rename compat: falls back to a LIVE cmux-era socket when the
+    // canonical mtyx one is not up (probe only; never creates).
+    mux_core::server::client_socket_path(session)
 }
 
 fn run_one_response(
