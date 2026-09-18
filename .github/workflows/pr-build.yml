@@ -39,7 +39,22 @@ jobs:
             arch: aarch64
             zig_os: macos
             exe_suffix: ""
+          # Windows leg: MSVC target. bindgen's libclang comes from the
+          # preinstalled LLVM (pointed at via LIBCLANG_PATH in the
+          # Windows-only step below); zig's .zip handling and the .exe
+          # suffix are in bootstrap.sh's OS table and matrix math.
+          - os: windows-latest
+            arch: x86_64
+            zig_os: windows
+            exe_suffix: ".exe"
     runs-on: ${{ matrix.os }}
+    # bash exists on every runner image (Git Bash on Windows), and the
+    # build steps are written in bash (bootstrap.sh, perl -pi, set -euo
+    # pipefail); without this the Windows default (pwsh) cannot run any
+    # of them.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,6 +97,20 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.97.0
+
+      - name: Point bindgen at LLVM (Windows)
+        # windows-latest ships LLVM at C:\Program Files\LLVM with clang
+        # on PATH but not always discoverable by libclang-sys's probing;
+        # LIBCLANG_PATH is the documented override. ghostty-vt-sys/build.rs
+        # separately probes `clang` on PATH for the resource-dir headers,
+        # which the same install provides.
+        if: runner.os == 'Windows'
+        run: |
+          if [ -d "/c/Program Files/LLVM/bin" ]; then
+            echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
+          else
+            echo "::warning::C:\\Program Files\\LLVM\\bin not found; relying on libclang-sys PATH probing"
+          fi
 
       - name: Bootstrap (fetch zig 0.15.2)
         # MTYX_GHOSTTY_VT_ZIG_CPU=baseline matches the release build —
