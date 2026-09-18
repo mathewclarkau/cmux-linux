@@ -34,9 +34,11 @@
 #![cfg(windows)]
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
-use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, INVALID_HANDLE_VALUE, STILL_ACTIVE, WAIT_OBJECT_0,
+};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
@@ -47,11 +49,16 @@ use windows_sys::Win32::System::JobObjects::{
 };
 use windows_sys::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, TerminateProcess, WaitForSingleObject,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, STILL_ACTIVE,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
 };
 
 /// pid -> kill-on-close job handle, one job per spawned surface child.
-static SURFACE_JOBS: Mutex<HashMap<u32, isize>> = Mutex::new(HashMap::new());
+/// LazyLock because `HashMap::new` is not a const fn (E0015 in a plain
+/// static); `SURFACE_JOBS.lock()` still works unchanged through Deref.
+/// The Vec-backed registry below stays a const `Mutex::new` — `Vec::new`
+/// IS const.
+static SURFACE_JOBS: LazyLock<Mutex<HashMap<u32, isize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Open handles of directly-spawned children awaiting reaping
 /// (`waitpid` analogue). HANDLE is pointer-sized; storing it as `isize`

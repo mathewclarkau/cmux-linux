@@ -259,11 +259,21 @@ pub fn kill_process_tree(root: u32) {
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    // Final hard kill of anything still around in the tree.
+    // Final hard kill of anything still around in the tree. Unix:
+    // SIGKILL. Windows: route through the job-object teardown —
+    // `TerminateJobObject` on the per-surface job, falling back to
+    // `TerminateProcess` for pids outside any tracked job (see win.rs) —
+    // because libc on windows has no SIGKILL constant at all, and the
+    // job path is the kill(-pgid) analogue per win.rs's mapping table.
     let mut survivors = all_descendants(root);
     survivors.push(root);
     survivors.retain(|&p| p != self_pid && is_alive(p));
+    #[cfg(unix)]
     signal_all(&survivors, libc::SIGKILL);
+    #[cfg(windows)]
+    for &pid in &survivors {
+        crate::win::terminate_pid_tree(pid);
+    }
     // Brief wait for SIGKILL to take effect.
     let hard_deadline = Instant::now() + Duration::from_millis(500);
     while Instant::now() < hard_deadline {

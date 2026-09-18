@@ -329,7 +329,14 @@ pub fn collect_process_evidence(child_pid: Option<u32>) -> Vec<ProcessEvidence> 
                 pid,
                 comm: image,
                 cmdline: String::new(),
-                starttime: 0,
+                // Toolhelp32 exposes no start time, so encode "unknown"
+                // (`None`) rather than a fabricated 0 — the field's
+                // contract on unix is already "None when it couldn't be
+                // read". Every Windows row then ties on starttime and
+                // the most-recently-spawned tie-break degenerates to
+                // screen evidence / registry order, exactly as
+                // documented above.
+                starttime: None,
             })
             .collect()
     }
