@@ -153,7 +153,10 @@ pub fn is_process_alive(pid: u32) -> bool {
         let mut exit_code: u32 = 0;
         let ok = GetExitCodeProcess(process, &mut exit_code);
         CloseHandle(process);
-        ok != 0 && exit_code == STILL_ACTIVE
+        // STILL_ACTIVE (259) is an NTSTATUS (i32) in windows-sys while
+        // GetExitCodeProcess writes u32; the value fits u32 trivially,
+        // so compare as u32.
+        ok != 0 && exit_code == STILL_ACTIVE as u32
     }
 }
 
