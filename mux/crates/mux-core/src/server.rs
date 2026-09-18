@@ -85,13 +85,25 @@ pub fn is_process_alive(pid: u32) -> bool {
             std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // OpenProcess + GetExitCodeProcess probe (access-denied counts
+        // as alive, the EPERM convention); see win.rs.
+        crate::win::is_process_alive(pid)
+    }
+    #[cfg(all(not(unix), not(windows)))]
     {
         true
     }
 }
 
 /// Check if a process ID is alive AND is a mtyx process.
+///
+/// Windows: matches the process image name (mtyx/cmux) via a
+/// Toolhelp32 snapshot. Weaker than the unix cmdline check (an
+/// unrelated process named `mtyx.exe` also matches), but Windows pid
+/// reuse is aggressive enough that the check still catches the common
+/// stale-pidfile case; documented degradation.
 pub fn is_cmux_process(pid: u32) -> bool {
     if !is_process_alive(pid) {
         return false;
@@ -107,7 +119,14 @@ pub fn is_cmux_process(pid: u32) -> bool {
             false
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        match crate::win::process_image_name(pid) {
+            Some(image) => image.contains("mtyx") || image.contains("cmux"),
+            None => false,
+        }
+    }
+    #[cfg(all(not(target_os = "linux"), not(windows)))]
     {
         true
     }
@@ -931,8 +950,10 @@ fn resolve_shell_mode(shell: Option<&str>, child_pid: Option<u32>) -> anyhow::Re
 /// Detect the pane's shell from its PTY child process.
 ///
 /// Linux: reads `/proc/<pid>/cmdline` and matches the argv[0] basename
-/// (minus a leading `-` for login shells). Falls back to `raw` on any
-/// lookup failure or on non-Linux, so `--shell auto` never errors.
+/// (minus a leading `-` for login shells). Windows: matches the
+/// child's exe image name via a Toolhelp32 snapshot (no argv is
+/// visible), falling back to `$COMSPEC`. Falls back to `raw` on any
+/// lookup failure, so `--shell auto` never errors.
 fn detect_shell_from_child(child_pid: Option<u32>) -> ShellMode {
     #[cfg(target_os = "linux")]
     {
@@ -957,7 +978,35 @@ fn detect_shell_from_child(child_pid: Option<u32>) -> ShellMode {
             _ => ShellMode::Raw,
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        // No /proc: match the child's exe image name from a Toolhelp32
+        // snapshot, falling back to $COMSPEC's basename — the closest
+        // analogue to the unix "what shell did the pane spawn" probe.
+        // PowerShell maps to Raw on purpose: its quoting rules differ
+        // from every mode in the issue #35 table, so no transformation
+        // is the safe default. Anything else is Raw too, keeping the
+        // never-error contract of the linux path's fallback.
+        let Some(pid) = child_pid else { return ShellMode::Raw };
+        let name = crate::win::process_image_name(pid)
+            .or_else(|| {
+                std::env::var_os("COMSPEC").map(|c| {
+                    let c = c.to_string_lossy().into_owned();
+                    c.rsplit(['\\', '/']).next().unwrap_or("").to_lowercase()
+                })
+            })
+            .unwrap_or_default();
+        let name = name.trim_end_matches(".exe");
+        match name {
+            "fish" => ShellMode::Fish,
+            "bash" => ShellMode::Bash,
+            "zsh" => ShellMode::Zsh,
+            "sh" | "dash" => ShellMode::Sh,
+            "nu" | "nushell" => ShellMode::Nu,
+            _ => ShellMode::Raw,
+        }
+    }
+    #[cfg(all(not(target_os = "linux"), not(windows)))]
     {
         let _ = child_pid;
         ShellMode::Raw
@@ -2054,6 +2103,7 @@ mod tests {
     /// future platform or libc quirk can't silently regress the whole
     /// feature.
     #[test]
+    #[cfg(unix)] // pins rename(2) semantics on an AF_UNIX socket
     fn unix_socket_survives_rename() {
         use std::os::unix::net::{UnixListener, UnixStream};
         let stamp =

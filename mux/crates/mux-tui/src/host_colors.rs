@@ -5,15 +5,17 @@ use std::io;
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, RawFd};
 #[cfg(unix)]
-use std::time::{Duration, Instant};
+use std::time::Instant;
+#[cfg(any(unix, windows))]
+use std::time::Duration;
 
 use mux_core::DefaultColors;
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 use mux_core::Rgb;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const QUERY: &[u8] = b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\";
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const DEADLINE: Duration = Duration::from_millis(150);
 
 #[cfg(unix)]
@@ -55,9 +57,31 @@ pub fn probe_default_colors() -> DefaultColors {
     parse_replies(&read_available_until(io.read_fd, DEADLINE))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn probe_default_colors() -> DefaultColors {
     DefaultColors::default()
+}
+
+/// Windows probe: same OSC 10/11 query as unix, but only attempted
+/// when the console is VT-capable (`WT_SESSION` or
+/// `ENABLE_VIRTUAL_TERMINAL_PROCESSING`); otherwise the defaults stand.
+/// Degradation, documented: legacy conhost without VT answers nothing,
+/// so the TUI falls back to the theme's default colours instead of the
+/// terminal's real ones. Reads use `win_console::read_stdin_until`, so a
+/// terminal that never replies costs one 150 ms window, not a hang.
+#[cfg(windows)]
+pub fn probe_default_colors() -> DefaultColors {
+    if !crate::win_console::stdout_is_vt_capable() {
+        return DefaultColors::default();
+    }
+    crate::win_console::write_stdout(QUERY);
+    parse_replies(&crate::win_console::read_stdin_until(
+        DEADLINE,
+        &|bytes| {
+            let colors = parse_replies(bytes);
+            colors.fg.is_some() && colors.bg.is_some()
+        },
+    ))
 }
 
 #[cfg(unix)]
@@ -137,7 +161,7 @@ fn read_available_until(fd: RawFd, timeout: Duration) -> Vec<u8> {
     out
 }
 
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 fn parse_replies(bytes: &[u8]) -> DefaultColors {
     let mut colors = DefaultColors::default();
     let mut offset = 0;
@@ -158,7 +182,7 @@ fn parse_replies(bytes: &[u8]) -> DefaultColors {
     colors
 }
 
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 fn find_terminator(bytes: &[u8], start: usize) -> Option<(usize, usize)> {
     let mut i = start;
     while i < bytes.len() {
@@ -171,7 +195,7 @@ fn find_terminator(bytes: &[u8], start: usize) -> Option<(usize, usize)> {
     None
 }
 
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 fn parse_reply(reply: &[u8]) -> Option<(u8, Rgb)> {
     let (target, rest) = if let Some(rest) = reply.strip_prefix(b"10;rgb:") {
         (10, rest)
@@ -188,7 +212,7 @@ fn parse_reply(reply: &[u8]) -> Option<(u8, Rgb)> {
     parts.next().is_none().then_some((target, Rgb { r, g, b }))
 }
 
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 fn parse_component(bytes: &[u8]) -> Option<u8> {
     if !(2..=4).contains(&bytes.len()) {
         return None;
@@ -201,7 +225,7 @@ fn parse_component(bytes: &[u8]) -> Option<u8> {
     Some((value >> shift) as u8)
 }
 
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 fn hex_nibble(b: u8) -> Option<u8> {
     match b {
         b'0'..=b'9' => Some(b - b'0'),
@@ -211,7 +235,7 @@ fn hex_nibble(b: u8) -> Option<u8> {
     }
 }
 
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|window| window == needle)
 }

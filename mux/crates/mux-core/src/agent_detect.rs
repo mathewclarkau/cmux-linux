@@ -303,7 +303,15 @@ pub fn detect(
 
 /// Collect process evidence for a pane's PTY child tree: the child
 /// itself plus every descendant (`process::all_descendants`). Empty on
-/// non-Linux or when there is no local child (browser / remote panes).
+/// platforms without a process listing or when there is no local child
+/// (browser / remote panes).
+///
+/// Windows: a Toolhelp32 snapshot walk of the child's descendants
+/// (`win::descendant_processes`). Residual limitation: only image
+/// names are visible — no cmdline, no start time — so process patterns
+/// that need full command lines (`claude --resume …`) cannot match,
+/// and the most-recently-spawned tie-break degenerates to registry
+/// order. Documented, not hidden.
 pub fn collect_process_evidence(child_pid: Option<u32>) -> Vec<ProcessEvidence> {
     #[cfg(target_os = "linux")]
     {
@@ -312,7 +320,20 @@ pub fn collect_process_evidence(child_pid: Option<u32>) -> Vec<ProcessEvidence> 
         pids.extend(crate::process::all_descendants(root));
         pids.into_iter().filter_map(process_evidence_for_pid).collect()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        let Some(root) = child_pid else { return Vec::new() };
+        crate::win::descendant_processes(root)
+            .into_iter()
+            .map(|(pid, image)| ProcessEvidence {
+                pid,
+                comm: image,
+                cmdline: String::new(),
+                starttime: 0,
+            })
+            .collect()
+    }
+    #[cfg(all(not(target_os = "linux"), not(windows)))]
     {
         let _ = child_pid;
         Vec::new()

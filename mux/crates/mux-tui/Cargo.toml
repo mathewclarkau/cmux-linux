@@ -30,3 +30,14 @@ base64.workspace = true
 libc.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Same raw Win32 bindings mux-core uses (console ctrl handler, VT
+# queries, timed stdin reads, file locking). Never resolved or built on
+# other targets.
+windows-sys = { version = "0.61", features = [
+    "Win32_System_Console",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }

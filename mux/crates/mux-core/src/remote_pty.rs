@@ -465,6 +465,13 @@ impl Child for RemoteChild {
     fn process_id(&self) -> Option<u32> {
         None
     }
+
+    // portable-pty's Child trait requires this on Windows; a remote
+    // surface owns no local process handle.
+    #[cfg(windows)]
+    fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+        None
+    }
 }
 
 impl ChildKiller for RemoteChild {

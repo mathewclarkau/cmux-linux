@@ -25,6 +25,11 @@ pub mod layout;
 pub mod platform;
 pub mod server;
 
+/// Windows parity layer (job objects, console APIs, Toolhelp
+/// snapshots). Empty on non-Windows targets.
+#[cfg(windows)]
+pub mod win;
+
 /// The mtyx version, resolved at build time by `build.rs` and baked
 /// into the binary — it does not depend on git, a manifest, or anything
 /// else being present at run time. Prefer this over

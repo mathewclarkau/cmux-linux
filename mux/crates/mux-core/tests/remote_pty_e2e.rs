@@ -1,3 +1,5 @@
+#![cfg(unix)] // exercises unix PTY, /proc and AF_UNIX machinery
+
 //! Exercises `mux-core`'s remote-pty support (`remote_pty.rs`) against a
 //! real SSH target. Needs infrastructure this crate's default `cargo test`
 //! can't assume (a reachable sshd, key-based auth already set up, and a

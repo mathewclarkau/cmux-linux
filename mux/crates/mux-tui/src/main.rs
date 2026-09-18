@@ -36,6 +36,8 @@ mod socket_watchdog;
 mod ssh_bootstrap;
 mod theme;
 mod ui;
+#[cfg(windows)]
+mod win_console;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,6 +49,7 @@ use session::{RemoteSession, Session};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(unix)]
 extern "C" fn handle_signal(_: libc::c_int) {
     SHUTDOWN_REQUESTED.store(true, Ordering::Release);
 }
@@ -82,11 +85,42 @@ pub(crate) fn shutdown_requested() -> bool {
     SHUTDOWN_REQUESTED.load(Ordering::Acquire)
 }
 
+/// Install the terminate-shutdown hook: SIGTERM/SIGINT/SIGHUP on unix;
+/// CTRL_C/CTRL_BREAK/CTRL_CLOSE via `SetConsoleCtrlHandler` on Windows
+/// (routed to the same `SHUTDOWN_REQUESTED` flag, so the shutdown path
+/// below is shared verbatim). The handler only flips the flag — the
+/// main loops poll it, so everything stays async-signal-safe.
+#[cfg(unix)]
 fn install_signal_handlers() {
     unsafe {
         libc::signal(libc::SIGTERM, handle_signal as *const () as libc::sighandler_t);
         libc::signal(libc::SIGINT, handle_signal as *const () as libc::sighandler_t);
         libc::signal(libc::SIGHUP, handle_signal as *const () as libc::sighandler_t);
+    }
+}
+
+#[cfg(windows)]
+fn install_signal_handlers() {
+    use windows_sys::Win32::System::Console::{
+        SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT,
+    };
+
+    unsafe extern "system" fn handler(ctrl_type: u32) -> i32 {
+        if matches!(ctrl_type, CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT) {
+            SHUTDOWN_REQUESTED.store(true, Ordering::Release);
+            // Handled: ask the OS not to also terminate us before the
+            // main loop finishes its graceful pass.
+            1
+        } else {
+            0
+        }
+    }
+
+    unsafe {
+        // Failure is non-fatal (same posture as the unix path, where a
+        // failed signal(2) is silently ignored): worst case Ctrl-C gets
+        // the OS default handling.
+        SetConsoleCtrlHandler(Some(handler), 1);
     }
 }
 

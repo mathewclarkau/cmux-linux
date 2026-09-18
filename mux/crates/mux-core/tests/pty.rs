@@ -1,3 +1,5 @@
+#![cfg(unix)] // exercises unix PTY, /proc and AF_UNIX machinery
+
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};

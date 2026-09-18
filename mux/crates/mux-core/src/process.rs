@@ -28,6 +28,9 @@ pub fn set_child_subreaper() -> bool {
 }
 
 /// Whether `pid` is currently alive (same semantics as server::is_process_alive).
+///
+/// Windows: `OpenProcess` + `GetExitCodeProcess` probe (see `win.rs`);
+/// access-denied counts as alive, mirroring the unix EPERM convention.
 pub fn is_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
@@ -41,7 +44,11 @@ pub fn is_alive(pid: u32) -> bool {
             std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        crate::win::is_process_alive(pid)
+    }
+    #[cfg(all(not(unix), not(windows)))]
     {
         let _ = pid;
         false
@@ -50,6 +57,13 @@ pub fn is_alive(pid: u32) -> bool {
 
 /// Direct children of `pid` (Linux `/proc/<pid>/task/<pid>/children`, with
 /// a `/proc` scan fallback). Empty on non-Linux.
+///
+/// Windows residual limitation: there is no per-parent child listing
+/// used here — pane children are torn down via per-surface job objects
+/// (see `win.rs`), so the /proc-tree walk this feeds on unix has no
+/// Windows caller. Returns empty rather than a Toolhelp approximation,
+/// because approximating "children of this pid" with parent-pid links
+/// is unreliable when pids are reused mid-walk.
 pub fn direct_children(pid: u32) -> Vec<u32> {
     #[cfg(target_os = "linux")]
     {
@@ -148,6 +162,9 @@ pub fn all_descendants(root: u32) -> Vec<u32> {
 }
 
 /// Reap any zombie children of this process (non-blocking).
+///
+/// Windows: polls the tracked child handles (`win::reap_tracked_handles`)
+/// — the `waitpid(-1, WNOHANG)` analogue.
 pub fn reap_zombies() {
     #[cfg(unix)]
     {
@@ -159,24 +176,45 @@ pub fn reap_zombies() {
             }
         }
     }
+    #[cfg(windows)]
+    {
+        crate::win::reap_tracked_handles();
+    }
 }
 
 /// Send `sig` to every pid in `pids`. Ignores ESRCH / EPERM.
+///
+/// Windows residual limitation: `GenerateConsoleCtrlEvent` only
+/// reaches processes sharing the caller's console, and a headless
+/// daemon has none, so there is no graceful phase — both the SIGTERM
+/// and SIGKILL spellings hard-terminate (`TerminateProcess`). Surface
+/// teardown prefers the job-object path (`win::terminate_pid_tree`);
+/// this is the fallback for pids outside any tracked job.
 fn signal_all(pids: &[u32], sig: libc::c_int) {
-    #[cfg(unix)]
-    {
-        for &pid in pids {
-            if pid == 0 {
-                continue;
-            }
-            let _ = unsafe { libc::kill(pid as libc::pid_t, sig) };
+    for &pid in pids {
+        if pid == 0 {
+            continue;
         }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (pids, sig);
+        signal_pid(pid, sig);
     }
 }
+
+/// Signal/terminate one pid. Unix: `kill(2)`; Windows: hard
+/// `TerminateProcess` (no cross-console graceful signal exists — see
+/// `signal_all`'s doc comment for the residual limitation).
+#[cfg(unix)]
+fn signal_pid(pid: u32, sig: libc::c_int) {
+    let _ = unsafe { libc::kill(pid as libc::pid_t, sig) };
+}
+
+#[cfg(windows)]
+fn signal_pid(pid: u32, sig: libc::c_int) {
+    let _ = sig;
+    crate::win::terminate_pid(pid);
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn signal_pid(_pid: u32, _sig: libc::c_int) {}
 
 /// Terminate `root` and every descendant: SIGTERM, wait up to `grace`,
 /// then SIGKILL survivors. Also reaps zombies along the way.
@@ -212,7 +250,7 @@ pub fn kill_process_tree(root: u32) {
         for d in all_descendants(root) {
             if d != self_pid && is_alive(d) {
                 still = true;
-                let _ = unsafe { libc::kill(d as libc::pid_t, libc::SIGTERM) };
+                signal_pid(d, libc::SIGTERM);
             }
         }
         if !still && !is_alive(root) {

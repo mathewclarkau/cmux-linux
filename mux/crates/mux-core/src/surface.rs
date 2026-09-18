@@ -384,6 +384,15 @@ impl Surface {
             .with_context(|| format!("spawning pty child: {spawn_label}"))?;
         drop(pty.slave);
         let child_pid = child.process_id();
+        // Windows parity: put the pane child into a kill-on-close job
+        // object right after spawn — the PR_SET_PDEATHSIG analogue. The
+        // brief window between CreateProcess (inside portable-pty) and
+        // this assignment is a documented race: grandchildren spawned in
+        // it escape the job, exactly like fork-vs-prctl on unix.
+        #[cfg(windows)]
+        if let Some(pid) = child_pid {
+            crate::win::assign_pid_to_kill_on_close_job(pid);
+        }
         let killer = child.clone_killer();
         let mut reader = pty
             .master
@@ -770,6 +779,14 @@ impl Surface {
                     if let Some(pid) = pty.child_pid {
                         crate::process::kill_process_tree(pid);
                     }
+                }
+                // Windows parity: the kill(-pgid) analogue — terminate the
+                // per-surface job object assigned at spawn (see win.rs).
+                // No graceful phase exists cross-console; documented
+                // limitation in win.rs.
+                #[cfg(windows)]
+                if let Some(pid) = pty.child_pid {
+                    crate::win::terminate_pid_tree(pid);
                 }
                 let _ = pty.killer.lock().unwrap().kill();
             }
