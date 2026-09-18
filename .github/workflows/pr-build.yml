@@ -138,3 +138,16 @@ jobs:
       - name: Cargo test (mux-tui)
         working-directory: mux
         run: cargo +1.97 test -p mux-tui
+
+      # Windows parity integration tests with live diagnostics. Round 8
+      # (run 35394419102): a hung ConPTY read suppressed this binary's
+      # failure summary, so two sibling failures printed nothing at all.
+      # The parity tests are now deadline-bounded and stage-traced; this
+      # re-run streams those traces (--nocapture) and serialises the
+      # four tests (--test-threads=1) so a failure's output can't be
+      # interleaved away. Scoped to the Windows leg; the other three
+      # legs' steps are unchanged. Costs seconds when green.
+      - name: Windows parity tests (streaming diagnostics)
+        if: runner.os == 'Windows'
+        working-directory: mux
+        run: cargo +1.97 test -p mux-tui --test windows_parity -- --nocapture --test-threads=1
