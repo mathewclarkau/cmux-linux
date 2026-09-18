@@ -69,13 +69,45 @@ if [ ! -e "$ROOT/ghostty/build.zig" ]; then
   git -C "$ROOT" submodule update --init ghostty
 fi
 
+# Line-ending hardening (PR #101, run 35309727154): the windows-latest
+# image sets core.autocrlf=true system-wide and this repo carries no
+# .gitattributes, so actions/checkout converts patches/*.patch to CRLF
+# in the parent worktree — while ghostty's own .gitattributes pins *.zig
+# (and friends) to eol=lf. git apply matches context byte-exactly, so a
+# CRLF patch against LF files fails with "patch does not apply". Pin the
+# submodule to no conversion and rewrite its worktree from the index so
+# the target side is always deterministic LF; the patch side is handled
+# by the CR-stripping rung in the apply ladder below.
+git -C "$ROOT/ghostty" config core.autocrlf false
+git -C "$ROOT/ghostty" checkout-index --force --all
+
 for patch in "$ROOT"/patches/*.patch; do
   [ -e "$patch" ] || continue
-  if git -C "$ROOT/ghostty" apply --check --reverse "$patch" 2>/dev/null; then
+  # Already applied? The reverse check tolerates line-ending drift in
+  # both directions (strict first, then whitespace-insensitive).
+  if git -C "$ROOT/ghostty" apply --check --reverse "$patch" 2>/dev/null \
+     || git -C "$ROOT/ghostty" apply --check --reverse --ignore-whitespace "$patch" 2>/dev/null; then
     continue # already applied
   fi
   echo "==> applying $(basename "$patch") to ghostty/"
-  git -C "$ROOT/ghostty" apply "$patch"
+  patch_lf="$(mktemp)"
+  tr -d '\r' < "$patch" > "$patch_lf"
+  if git -C "$ROOT/ghostty" apply --check "$patch" 2>/dev/null; then
+    git -C "$ROOT/ghostty" apply "$patch"
+  elif ! cmp -s "$patch_lf" "$patch" \
+     && git -C "$ROOT/ghostty" apply --check "$patch_lf" 2>/dev/null; then
+    # Parent checkout CRLF-converted the patch; the CR-stripped copy is
+    # byte-identical to the committed LF patch, so this stays an exact
+    # apply, not a fuzzy one.
+    git -C "$ROOT/ghostty" apply "$patch_lf"
+  elif git -C "$ROOT/ghostty" apply --check --ignore-whitespace "$patch" 2>/dev/null; then
+    git -C "$ROOT/ghostty" apply --ignore-whitespace "$patch"
+  else
+    echo "error: $(basename "$patch") does not apply to ghostty/" >&2
+    rm -f "$patch_lf"
+    exit 1
+  fi
+  rm -f "$patch_lf"
 done
 
 echo "==> building mux-tui (release)"
