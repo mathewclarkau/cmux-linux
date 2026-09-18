@@ -192,24 +192,24 @@ func startMockTmuxCompatSocket(t *testing.T) string {
 
 func TestTmuxSplitWindowCanonicalizesCallerSurfaceRefs(t *testing.T) {
 	origHome := os.Getenv("HOME")
-	origWorkspace := os.Getenv("CMUX_WORKSPACE_ID")
-	origSurface := os.Getenv("CMUX_SURFACE_ID")
+	origWorkspace := os.Getenv("MTYX_WORKSPACE_ID")
+	origSurface := os.Getenv("MTYX_SURFACE_ID")
 	origPane := os.Getenv("TMUX_PANE")
 	os.Setenv("HOME", t.TempDir())
-	os.Setenv("CMUX_WORKSPACE_ID", "workspace:1")
-	os.Setenv("CMUX_SURFACE_ID", "surface:1")
+	os.Setenv("MTYX_WORKSPACE_ID", "workspace:1")
+	os.Setenv("MTYX_SURFACE_ID", "surface:1")
 	os.Setenv("TMUX_PANE", "%"+tmuxStableNumericId("33333333-3333-4333-8333-333333333333"))
 	defer func() {
 		os.Setenv("HOME", origHome)
 		if origWorkspace != "" {
-			os.Setenv("CMUX_WORKSPACE_ID", origWorkspace)
+			os.Setenv("MTYX_WORKSPACE_ID", origWorkspace)
 		} else {
-			os.Unsetenv("CMUX_WORKSPACE_ID")
+			os.Unsetenv("MTYX_WORKSPACE_ID")
 		}
 		if origSurface != "" {
-			os.Setenv("CMUX_SURFACE_ID", origSurface)
+			os.Setenv("MTYX_SURFACE_ID", origSurface)
 		} else {
-			os.Unsetenv("CMUX_SURFACE_ID")
+			os.Unsetenv("MTYX_SURFACE_ID")
 		}
 		if origPane != "" {
 			os.Setenv("TMUX_PANE", origPane)
@@ -235,25 +235,25 @@ func TestTmuxSplitWindowCanonicalizesCallerSurfaceRefs(t *testing.T) {
 
 func TestTmuxSplitWindowIgnoresStaleUUIDColumnSurface(t *testing.T) {
 	origHome := os.Getenv("HOME")
-	origWorkspace := os.Getenv("CMUX_WORKSPACE_ID")
-	origSurface := os.Getenv("CMUX_SURFACE_ID")
+	origWorkspace := os.Getenv("MTYX_WORKSPACE_ID")
+	origSurface := os.Getenv("MTYX_SURFACE_ID")
 	origPane := os.Getenv("TMUX_PANE")
 	home := t.TempDir()
 	os.Setenv("HOME", home)
-	os.Setenv("CMUX_WORKSPACE_ID", "workspace:1")
-	os.Setenv("CMUX_SURFACE_ID", "surface:1")
+	os.Setenv("MTYX_WORKSPACE_ID", "workspace:1")
+	os.Setenv("MTYX_SURFACE_ID", "surface:1")
 	os.Setenv("TMUX_PANE", "%"+tmuxStableNumericId("33333333-3333-4333-8333-333333333333"))
 	defer func() {
 		os.Setenv("HOME", origHome)
 		if origWorkspace != "" {
-			os.Setenv("CMUX_WORKSPACE_ID", origWorkspace)
+			os.Setenv("MTYX_WORKSPACE_ID", origWorkspace)
 		} else {
-			os.Unsetenv("CMUX_WORKSPACE_ID")
+			os.Unsetenv("MTYX_WORKSPACE_ID")
 		}
 		if origSurface != "" {
-			os.Setenv("CMUX_SURFACE_ID", origSurface)
+			os.Setenv("MTYX_SURFACE_ID", origSurface)
 		} else {
-			os.Unsetenv("CMUX_SURFACE_ID")
+			os.Unsetenv("MTYX_SURFACE_ID")
 		}
 		if origPane != "" {
 			os.Setenv("TMUX_PANE", origPane)
@@ -262,7 +262,7 @@ func TestTmuxSplitWindowIgnoresStaleUUIDColumnSurface(t *testing.T) {
 		}
 	}()
 
-	storePath := filepath.Join(home, ".cmuxterm", "tmux-compat-store.json")
+	storePath := filepath.Join(home, ".mattyxterm", "tmux-compat-store.json")
 	if err := os.MkdirAll(filepath.Dir(storePath), 0o755); err != nil {
 		t.Fatalf("mkdir store dir: %v", err)
 	}

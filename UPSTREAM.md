@@ -1,6 +1,6 @@
 # Upstream tracking
 
-How `mathewclarkau/cmux-linux` relates to
+How `mathewclarkau/mattyx` relates to
 [`manaflow-ai/cmux`](https://github.com/manaflow-ai/cmux), and how to re-sync.
 
 See also [`PROVENANCE.md`](./PROVENANCE.md) for the original vendor anchors and
@@ -36,11 +36,11 @@ known fixed upstream). Owner: whoever is on rotation.
 ### 1. Fetch and inventory
 
 ```bash
-# Side clone (do not put this inside the cmux-linux worktree)
+# Side clone (do not put this inside the mattyx worktree)
 git clone --filter=blob:none https://github.com/manaflow-ai/cmux.git /tmp/cmux-upstream
 cd /tmp/cmux-upstream
 ANCHOR=$(grep -oE 'manaflow-ai/cmux@[0-9a-f]{7,}' \
-  /path/to/cmux-linux/PROVENANCE.md | head -1 | cut -d@ -f2)
+  /path/to/mattyx/PROVENANCE.md | head -1 | cut -d@ -f2)
 # Prefer the latest "Integrated through" SHA from PROVENANCE.md Anchor history.
 git fetch origin "$ANCHOR" HEAD
 git log --oneline "${ANCHOR}..HEAD" -- mux/ daemon/remote/

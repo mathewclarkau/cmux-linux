@@ -1,7 +1,7 @@
 # Patches to `ghostty/`
 
 Applied automatically by `scripts/bootstrap.sh` after `git submodule update`.
-The submodule itself stays pinned to the exact upstream commit cmux uses (see
+The submodule itself stays pinned to the exact upstream commit mtyx uses (see
 `../PROVENANCE.md`) — these patches are layered on top, not committed into the
 submodule, so a fresh clone can always fetch that commit from the real
 `manaflow-ai/ghostty` remote.

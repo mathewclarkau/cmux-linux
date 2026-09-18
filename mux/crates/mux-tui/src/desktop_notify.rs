@@ -9,7 +9,7 @@
 //! without X/Wayland forwarding). The spawned child is still reaped, just
 //! off a background thread (never the render loop) - dropping a
 //! `std::process::Child` does NOT reap it, and every unreaped `notify-send`
-//! becomes a permanent zombie for the lifetime of the cmux process. Verified
+//! becomes a permanent zombie for the lifetime of the mtyx process. Verified
 //! live: a long-running session with repeated OSC 9 notifications
 //! accumulated one zombie per notification, unbounded, which is a
 //! reasonable suspect for "crashes if left open a while" reports.
@@ -19,7 +19,7 @@ use std::process::{Command, Stdio};
 pub fn send(pane_label: &str, title: &str, body: &str) {
     let summary = if title.is_empty() { pane_label.to_string() } else { format!("{pane_label}: {title}") };
     let child = Command::new("notify-send")
-        .arg("--app-name=cmux")
+        .arg("--app-name=mtyx")
         .arg(&summary)
         .arg(body)
         .stdin(Stdio::null())

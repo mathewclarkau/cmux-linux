@@ -1,9 +1,9 @@
-//! cmux: a tmux-like terminal multiplexer TUI.
+//! mtyx: a tmux-like terminal multiplexer TUI.
 //!
 //! Runs the mux core (workspaces → split panes → tabs on real PTYs,
 //! terminal state from libghostty-vt) with a Ratatui frontend, and always
 //! exposes the JSON control socket so external frontends can attach.
-//! `cmux attach` connects the same TUI to an existing (usually
+//! `mtyx attach` connects the same TUI to an existing (usually
 //! headless) session over that socket, which is how detach/reattach works.
 
 mod agents;
@@ -64,23 +64,23 @@ fn install_signal_handlers() {
 }
 
 const USAGE: &str = "\
-cmux - terminal multiplexer backed by libghostty-vt
+mtyx - terminal multiplexer backed by libghostty-vt
 
 USAGE:
-  cmux [OPTIONS]           Start a session (TUI + control socket)
-  cmux attach [OPTIONS]    Attach to an existing session's socket
-  cmux <verb> [OPTIONS]    Run one control-socket command
-  cmux workspace-color <name> <color>  Set a named workspace colour
-  cmux claude <subcommand> Claude Code hook integration (see below)
-  cmux antigravity install-hooks  Antigravity CLI hook integration (see below)
-  cmux codex install-hooks        Codex CLI hook integration (see below)
-  cmux pi install-hooks           Pi agent extension integration (see below)
-  cmux aider install-hooks        Aider wrapper integration (see below)
-  cmux grok install-hooks         Grok CLI hook integration (see below)
-  cmux opencode install-hooks     opencode plugin integration (see below)
-  cmux agents <list|install>     Manage all agent hook integrations (see below)
-  cmux plugin <subcommand> Manage cmux-plugin.toml manifests (see below)
-  cmux ssh <host> [OPTS]   Open a remote workspace over SSH (see below)
+  mtyx [OPTIONS]           Start a session (TUI + control socket)
+  mtyx attach [OPTIONS]    Attach to an existing session's socket
+  mtyx <verb> [OPTIONS]    Run one control-socket command
+  mtyx workspace-color <name> <color>  Set a named workspace colour
+  mtyx claude <subcommand> Claude Code hook integration (see below)
+  mtyx antigravity install-hooks  Antigravity CLI hook integration (see below)
+  mtyx codex install-hooks        Codex CLI hook integration (see below)
+  mtyx pi install-hooks           Pi agent extension integration (see below)
+  mtyx aider install-hooks        Aider wrapper integration (see below)
+  mtyx grok install-hooks         Grok CLI hook integration (see below)
+  mtyx opencode install-hooks     opencode plugin integration (see below)
+  mtyx agents <list|install>     Manage all agent hook integrations (see below)
+  mtyx plugin <subcommand> Manage mtyx-plugin.toml manifests (see below)
+  mtyx ssh <host> [OPTS]   Open a remote workspace over SSH (see below)
 
 OPTIONS:
   --session <name>   Session name (default: main). Determines the socket path.
@@ -91,7 +91,7 @@ OPTIONS:
                     Attach only: overlay the local mux.local.toml/mux.json
                     (theme, tabs, sidebar, keys) on top of the server config.
   --config <path>    Attach only: explicit local overlay file (overrides
-                    $CMUX_LOCAL_CONFIG and the XDG defaults).
+                    $MTYX_LOCAL_CONFIG and the XDG defaults).
   --show-local-config-resolution
                     Attach only: print which local config would apply and
                     how many keys it overrides, then exit without attaching.
@@ -107,11 +107,11 @@ OPTIONS:
   --json             With --session-list: print the discovered sessions as
                     JSON (one object per session, including socket_path)
                     and exit without attaching.
-  -V, --version      Print the cmux version and exit.
+  -V, --version      Print the mtyx version and exit.
   -h, --help         Show this help.
 
-SESSION PICKER  (cmux attach --session-list, without --json)
-  Lists every discovered cmux session (newest first) and lets you pick one
+SESSION PICKER  (mtyx attach --session-list, without --json)
+  Lists every discovered mtyx session (newest first) and lets you pick one
   to attach in-process. Stale (unconnectable) sessions are shown grey and
   labelled [unreachable]. Exit codes: 0 clean quit, 1 after a destructive
   kill + quit, 2 Ctrl-C, 0 on attach (then the normal attach/detach flow).
@@ -153,10 +153,10 @@ CLI VERBS
   kill-session, kill-stale, rename-session, layout-export, layout-apply,
   layout-export-all, theme list,
   pane-worktree-create, pane-worktree-list, pane-worktree-remove
-      (also spelled `cmux pane worktree <create|list|remove>`; issue #77)
+      (also spelled `mtyx pane worktree <create|list|remove>`; issue #77)
 
 SEND
-  cmux send --surface <id> --text <text> [--shell auto|fish|bash|zsh|sh|nu|raw]
+  mtyx send --surface <id> --text <text> [--shell auto|fish|bash|zsh|sh|nu|raw]
       Writes input to a PTY surface (stdin is used when neither --text nor
       --bytes is given). --shell enables shell-aware sanitisation (issue
       #35): with fish/bash/zsh/nu, a leading newline is prefixed when the
@@ -167,28 +167,28 @@ SEND
       (verbatim passthrough, unchanged from before).
 
 LAYOUT EXPORT/APPLY (issue #76)
-  cmux layout-export --workspace <name-or-id> --output <file>.json
+  mtyx layout-export --workspace <name-or-id> --output <file>.json
       Save one workspace's tab/pane/agent-argv topology as versioned JSON
       (schema 1, see spec/layout-schema.md). Client-side atomic write
       (tmp + rename); symlinked outputs are refused.
-  cmux layout-export-all --output-dir <dir>
+  mtyx layout-export-all --output-dir <dir>
       Save every workspace in the session as <dir>/<name>.json (mkdir -p).
-  cmux layout-apply --input <file>.json --workspace <name>
+  mtyx layout-apply --input <file>.json --workspace <name>
       Replay a saved layout: the workspace is created if missing; applying
       onto an existing name is refused (close it first or pick a new
       name). Panes spawn with the recorded argv/env/cwd; a failure aborts
       loudly naming the pane (index + pane-id).
-  cmux new-tab [--pane N] [--cwd P] [--env K=V,...] --exec -- <argv...>
-  cmux split --pane N --dir <right|down> [--env K=V,...] --exec -- <argv...>
+  mtyx new-tab [--pane N] [--cwd P] [--env K=V,...] --exec -- <argv...>
+  mtyx split --pane N --dir <right|down> [--env K=V,...] --exec -- <argv...>
       Spawn with an explicit command (agent start): everything after the
       literal `--` that follows --exec is the verbatim argv, so --exec
       must be the LAST flag. --env is a comma-separated K=V list.
       Layout-export records these argv/env pairs; for remote sessions
       compose `layout-apply` against the remote socket with a follow-up
-      `cmux attach --apply-local-config`.
+      `mtyx attach --apply-local-config`.
 
 AGENT DETECTION
-  cmux detect-agent --surface <id>
+  mtyx detect-agent --surface <id>
       Ambiently detect which AI agent is running in a pane (issue #78):
       walks the pane PTY's process tree (/proc comm/cmdline) and scrapes
       the visible screen against the pattern registry. Prints
@@ -196,12 +196,12 @@ AGENT DETECTION
       claude, codex, pi, opencode, cursor, aider, unknown — plus any
       user-added names; confidence is high/medium/low or none). The
       result is cached and surfaces in `list-workspaces` as agent_name.
-  cmux detect-agents
+  mtyx detect-agents
       Detection on every pane in one call: `<surface> <agent>` rows
       (the issue's `agent detect-batch`; --json prints
       {\"agents\":{\"<surface>\":\"<agent>\"}} — keys are surface ids).
-  cmux agent-pattern <add|list|remove>
-      Manage the live detection registry. add: `cmux agent-pattern add
+  mtyx agent-pattern <add|list|remove>
+      Manage the live detection registry. add: `mtyx agent-pattern add
       <name> --pattern <marker> [--kind process|screen] [--confidence
       high|medium|low] [--case-insensitive]`. Patterns are
       substring/glob ('*' wildcard), NOT regex; process patterns match
@@ -216,117 +216,117 @@ AGENT DETECTION
       `agent detection disabled by configuration`.
 
 AGENT STATE (issue #75)
-  cmux report-agent [--surface <id>] --state <idle|working|blocked|done|unknown>
+  mtyx report-agent [--surface <id>] --state <idle|working|blocked|done|unknown>
                     [--source <detected|socket|hook>] [--agent-session <id>]
                     [--agent <name>] [--message <text>]
-      Agent self-report. --surface defaults to $CMUX_MUX_SURFACE (set in
+      Agent self-report. --surface defaults to $MTYX_MUX_SURFACE (set in
       every pane, so an agent can report from inside its pane) and
       --source defaults to socket (hook reports keep authority).
-  cmux list-agents [--surface <id>] [--state <state>]
+  mtyx list-agents [--surface <id>] [--state <state>]
       Every pane with a report: surface, state, source, session, agent
       name, last message. JSON via --json (includes updated_at_ms).
-  cmux agent-read --target <name-or-surface-id>
+  mtyx agent-read --target <name-or-surface-id>
                    [--source visible|recent|recent-unwrapped] [--lines <n>]
       Read an agent's pane by name; tails the last N lines (default 40).
-  cmux agent-send --target <name-or-surface-id> --text <text> [--shell <mode>]
+  mtyx agent-send --target <name-or-surface-id> --text <text> [--shell <mode>]
       Type text into an agent's pane WITHOUT Enter; submit separately
-      (e.g. cmux send --surface <id> --text \"\" --send-cr 1).
-  cmux wait-agent-status --target <name-or-surface-id>
+      (e.g. mtyx send --surface <id> --text \"\" --send-cr 1).
+  mtyx wait-agent-status --target <name-or-surface-id>
                          --status <state> --timeout <ms>
       Block until the agent reaches --status; prints the pane text,
       exit 1 on timeout. --timeout 0 = single immediate check.
 
 RENAME-SESSION
-  cmux rename-session --old <name> --new <name> [--json]
-      Renames a live cmux session in place: moves its .sock/.pid to the new
+  mtyx rename-session --old <name> --new <name> [--json]
+      Renames a live mtyx session in place: moves its .sock/.pid to the new
       name, updates the session name, reparents the snapshot file, and keeps
       the SAME daemon serving at the new path (the listener is never rebound
       — rename(2) reparents the socket dirent while the kernel keeps it
       bound). A live target is refused; a stale target is cleared first.
       Exit codes: 0 success · 1 source not found / server error · 2 bad/missing
       flags, invalid name, or target already live · 3 connect failure.
-      Lifetime guarantee (AC4): EXISTING panes keep the CMUX_MUX_SOCKET they
+      Lifetime guarantee (AC4): EXISTING panes keep the MTYX_MUX_SOCKET they
       inherited at spawn (the old path) for their lifetime — this is
       intentional, not a bug. Panes spawned AFTER the rename inherit the new
       path. See the server.rs docstring for the mechanism and the watchdog
       caveat (a SIGKILL after rename is cleaned by the next serve()/kill-stale).
 
 CLAUDE CODE HOOK INTEGRATION
-  cmux claude install-hooks [--uninstall]
-      Wires ~/.claude/settings.json's hooks to call `cmux claude hook`
+  mtyx claude install-hooks [--uninstall]
+      Wires ~/.claude/settings.json's hooks to call `mtyx claude hook`
       on every lifecycle event, merged alongside any hooks already there.
-  cmux claude install-skill [--uninstall] [--global]
-      Installs the orchestration skill to .claude/skills/cmux-orchestration/SKILL.md
-      (or ~/.claude/skills/cmux-orchestration/SKILL.md if --global).
-  cmux claude sessions
+  mtyx claude install-skill [--uninstall] [--global]
+      Installs the orchestration skill to .claude/skills/mtyx-orchestration/SKILL.md
+      (or ~/.claude/skills/mtyx-orchestration/SKILL.md if --global).
+  mtyx claude sessions
       Lists recorded Claude Code sessions (session id, cwd, last event).
-  cmux claude resume <session-id>
+  mtyx claude resume <session-id>
       Opens a new pane in the recorded cwd and runs `claude --resume`.
-  cmux claude hook
+  mtyx claude hook
       Not for interactive use — this is what install-hooks points Claude
       Code's own hook config at.
 
 ANTIGRAVITY CLI INTEGRATION
-  cmux antigravity install-hooks [--uninstall] [--global]
+  mtyx antigravity install-hooks [--uninstall] [--global]
       Installs hooks into .agents/hooks.json (or ~/.gemini/config/hooks.json if --global)
-      to automatically report state changes to cmux.
-  cmux antigravity install-skill [--uninstall] [--global]
-      Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
-      (or ~/.gemini/antigravity-cli/skills/cmux-orchestration/SKILL.md if --global).
+      to automatically report state changes to mtyx.
+  mtyx antigravity install-skill [--uninstall] [--global]
+      Installs the orchestration skill to .agents/skills/mtyx-orchestration/SKILL.md
+      (or ~/.gemini/antigravity-cli/skills/mtyx-orchestration/SKILL.md if --global).
 
 CODEX CLI INTEGRATION
-  cmux codex install-hooks [--uninstall] [--global]
+  mtyx codex install-hooks [--uninstall] [--global]
       Installs hooks into .codex/hooks.json (or ~/.codex/hooks.json if --global) and
-      enables hooks feature in config.toml to report state to cmux.
-  cmux codex install-skill [--uninstall] [--global]
-      Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
-      (or ~/.codex/skills/cmux-orchestration/SKILL.md if --global).
+      enables hooks feature in config.toml to report state to mtyx.
+  mtyx codex install-skill [--uninstall] [--global]
+      Installs the orchestration skill to .agents/skills/mtyx-orchestration/SKILL.md
+      (or ~/.codex/skills/mtyx-orchestration/SKILL.md if --global).
 
 PI AGENT INTEGRATION
-  cmux pi install-hooks [--uninstall] [--global]
+  mtyx pi install-hooks [--uninstall] [--global]
       Installs TypeScript extensions into .pi/extensions/ (or ~/.pi/agent/extensions/
       if --global) to report state changes.
-  cmux pi install-skill [--uninstall] [--global]
+  mtyx pi install-skill [--uninstall] [--global]
       Appends the orchestration skill to .pi/APPEND_SYSTEM.md
       (or ~/.pi/agent/APPEND_SYSTEM.md if --global).
 
 AIDER INTEGRATION
-  cmux aider install-hooks [--uninstall] [--global]
+  mtyx aider install-hooks [--uninstall] [--global]
       Creates a wrapper script at .bin/aider (or ~/.local/bin/aider if --global)
       that wraps the real aider binary to report working/done state.
 
 GROK CLI INTEGRATION
-  cmux grok install-hooks [--uninstall] [--global]
-      Installs hooks into .grok/hooks/cmux-agent-state.json (or
-      ~/.grok/hooks/cmux-agent-state.json if --global) in the schema Grok
+  mtyx grok install-hooks [--uninstall] [--global]
+      Installs hooks into .grok/hooks/mtyx-agent-state.json (or
+      ~/.grok/hooks/mtyx-agent-state.json if --global) in the schema Grok
       Build actually loads, so panes report working/idle/blocked/done.
-  cmux grok install-skill [--uninstall] [--global]
-      Installs the orchestration skill to .agents/skills/cmux-orchestration/SKILL.md
-      (or ~/.grok/skills/cmux-orchestration/SKILL.md if --global).
+  mtyx grok install-skill [--uninstall] [--global]
+      Installs the orchestration skill to .agents/skills/mtyx-orchestration/SKILL.md
+      (or ~/.grok/skills/mtyx-orchestration/SKILL.md if --global).
 
 AGENT HOOK INTEGRATION
-  cmux agents list [--global]
+  mtyx agents list [--global]
       Lists installed status, version, timestamp, and path for all six agents.
-  cmux agents install --all [--uninstall] [--global]
+  mtyx agents install --all [--uninstall] [--global]
       Installs or removes every registered agent hook, continuing after failures.
-  cmux agents install --only <agent> [--uninstall] [--global]
+  mtyx agents install --only <agent> [--uninstall] [--global]
       Installs or removes one registered agent hook.
 
 PLUGIN LOADER (manifest + registry only; no execution yet)
-  cmux plugin list                       List installed plugins (read-only)
-  cmux plugin install <manifest-path>    Install a plugin from a cmux-plugin.toml
-  cmux plugin uninstall <name>           Remove an installed plugin
-  cmux plugin enable <name>              Mark a plugin enabled
-  cmux plugin disable <name>             Mark a plugin disabled
+  mtyx plugin list                       List installed plugins (read-only)
+  mtyx plugin install <manifest-path>    Install a plugin from a mtyx-plugin.toml
+  mtyx plugin uninstall <name>           Remove an installed plugin
+  mtyx plugin enable <name>              Mark a plugin enabled
+  mtyx plugin disable <name>             Mark a plugin disabled
 
       These verbs only manage on-disk manifest state and a small JSON
-      registry under ~/.local/share/cmux/plugins.json. Plugin *execution*
-      (proxying `cmux <plugin-name> <verb>` to a running plugin process,
+      registry under ~/.local/share/mattyx/plugins.json. Plugin *execution*
+      (proxying `mtyx <plugin-name> <verb>` to a running plugin process,
       WASM/WASI sandboxing) is NOT implemented by this verb group and is
       deferred to a follow-up PR.
 
 REMOTE (SSH) WORKSPACES
-  cmux ssh <host> [--name <workspace-name>] [--session <mux-session>]
+  mtyx ssh <host> [--name <workspace-name>] [--session <mux-session>]
       Opens a workspace whose tab is a shell on <host> instead of local.
       Builds and caches a cmuxd-remote binary for the remote's OS/arch
       the first time (needs Go on PATH), uploads it, and starts it in
@@ -346,18 +346,18 @@ struct Args {
     show_local_config_resolution: bool,
     print_resolved_config: bool,
     config: Option<PathBuf>,
-    // Issue #63 L1: `cmux attach --session-list [--json]` — discover
+    // Issue #63 L1: `mtyx attach --session-list [--json]` — discover
     // sessions and either dump them as JSON or open the interactive picker
     // before attaching. Parsed on the `attach` subcommand in parse_args.
     session_list: bool,
     json: bool,
 }
 
-/// cmux version, resolved at build time from the release tag and baked
+/// mtyx version, resolved at build time from the release tag and baked
 /// into the binary by `mux-core`'s build script. Surfaced by
-/// `cmux --version` / `cmux -V` (issue #59), by the control socket's
+/// `mtyx --version` / `mtyx -V` (issue #59), by the control socket's
 /// `identify` reply, and stamped into the `cmuxd-remote` daemon we
-/// cross-compile for `cmux ssh`. Reading `CARGO_PKG_VERSION` here is
+/// cross-compile for `mtyx ssh`. Reading `CARGO_PKG_VERSION` here is
 /// what made `-V` report a stale `0.1.0` (issue #71).
 const VERSION: &str = mux_core::VERSION;
 
@@ -408,9 +408,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
                 std::process::exit(0);
             }
             // Issue #59: print version and exit. Sits next to `-h`/`--help`
-            // so it works in any position (e.g. `cmux --headless -V`).
+            // so it works in any position (e.g. `mtyx --headless -V`).
             "-V" | "--version" => {
-                println!("cmux {VERSION}");
+                println!("mtyx {VERSION}");
                 std::process::exit(0);
             }
             other => usage_exit(&format!("unknown argument {other:?}")),
@@ -451,7 +451,7 @@ fn main() {
         match raw_args.get(1).map(String::as_str) {
             Some("list") => std::process::exit(theme::run_list()),
             _ => {
-                eprintln!("cmux: usage: cmux theme list");
+                eprintln!("mtyx: usage: mtyx theme list");
                 std::process::exit(2);
             }
         }
@@ -462,7 +462,7 @@ fn main() {
     if raw_args.first().map(|arg| arg.as_str()) == Some("plugin") {
         std::process::exit(plugin::run(&raw_args[1..]));
     }
-    // `cmux <plugin-name> <verb> [args]` — if the first positional arg
+    // `mtyx <plugin-name> <verb> [args]` — if the first positional arg
     // names an installed, enabled plugin, route the rest of the argv
     // through plugin_host::invoke. Falls through to the standard
     // verb dispatch if the name doesn't match a plugin.
@@ -479,7 +479,7 @@ fn main() {
                 // way cli::list does. The plugin's cmux_call host
                 // imports write back to this socket.
                 let raw_socket: Option<PathBuf> =
-                    std::env::var_os("CMUX_MUX_SOCKET").map(PathBuf::from).or_else(|| {
+                    std::env::var_os("MTYX_MUX_SOCKET").map(PathBuf::from).or_else(|| {
                         let mut idx = 0;
                         while idx + 1 < raw_args.len() {
                             if raw_args[idx] == "--socket" {
@@ -490,22 +490,22 @@ fn main() {
                         None
                     });
                 let socket_path = raw_socket.unwrap_or_else(|| {
-                    // Default: ~/.local/share/cmux/cmux-<pid>.sock
+                    // Default: ~/.local/share/mattyx/mtyx-<pid>.sock
                     // (matches mux_core::platform::default_socket_path
                     // when --session is "main"). Plugins running in
-                    // an attached cmux usually want to talk back to
-                    // the parent cmux's control socket, so honour
-                    // CMUX_MUX_SOCKET first.
+                    // an attached mtyx usually want to talk back to
+                    // the parent mtyx's control socket, so honour
+                    // MTYX_MUX_SOCKET first.
                     if let Some(home) = std::env::var_os("HOME") {
                         if !home.is_empty() {
                             return PathBuf::from(home)
                                 .join(".local")
                                 .join("share")
-                                .join("cmux")
-                                .join("cmux-main.sock");
+                                .join("mattyx")
+                                .join("mtyx-main.sock");
                         }
                     }
-                    PathBuf::from("/tmp/cmux-main.sock")
+                    PathBuf::from("/tmp/mtyx-main.sock")
                 });
                 std::process::exit(plugin::cmd_call(first, &raw_args[1..], &socket_path));
             }
@@ -527,7 +527,7 @@ fn main() {
     }
     if raw_args.get(command_index).map(String::as_str) == Some("workspace-color") {
         if raw_args.len() != command_index + 3 {
-            eprintln!("cmux: usage: cmux workspace-color <name> <color>");
+            eprintln!("mtyx: usage: mtyx workspace-color <name> <color>");
             std::process::exit(2);
         }
         let mut args = raw_args[..command_index].to_vec();
@@ -540,7 +540,7 @@ fn main() {
         ]);
         std::process::exit(cli::run(&args, USAGE));
     }
-    // `cmux agent-pattern <add|list|remove> ...` (issue #78 AC4): the
+    // `mtyx agent-pattern <add|list|remove> ...` (issue #78 AC4): the
     // issue's noun form, translated into the flat wire verbs the way
     // `workspace-color` is. The daemon owns the live registry, so adds
     // survive across CLI invocations within a session.
@@ -550,7 +550,7 @@ fn main() {
         match rest.first().map(String::as_str) {
             Some("add") => {
                 let Some(name) = rest.get(1).filter(|n| !n.starts_with('-')) else {
-                    eprintln!("cmux: usage: cmux agent-pattern add <name> --pattern <pattern>");
+                    eprintln!("mtyx: usage: mtyx agent-pattern add <name> --pattern <pattern>");
                     std::process::exit(2);
                 };
                 args.extend([
@@ -563,7 +563,7 @@ fn main() {
             Some("list") => args.push("agent-pattern-list".to_string()),
             Some("remove") => {
                 let Some(name) = rest.get(1).filter(|n| !n.starts_with('-')) else {
-                    eprintln!("cmux: usage: cmux agent-pattern remove <name>");
+                    eprintln!("mtyx: usage: mtyx agent-pattern remove <name>");
                     std::process::exit(2);
                 };
                 args.extend([
@@ -573,13 +573,13 @@ fn main() {
                 ]);
             }
             _ => {
-                eprintln!("cmux: usage: cmux agent-pattern <add|list|remove> ...");
+                eprintln!("mtyx: usage: mtyx agent-pattern <add|list|remove> ...");
                 std::process::exit(2);
             }
         }
         std::process::exit(cli::run(&args, USAGE));
     }
-    // Issue #77: accept the documented three-word form `cmux pane
+    // Issue #77: accept the documented three-word form `mtyx pane
     // worktree create ...` by rewriting it to the flat verb before CLI
     // dispatch (must run before `is_cli_invocation`, which would not
     // recognise the triple as a verb position).
@@ -616,14 +616,14 @@ fn main() {
             }
             Ok(session_picker::PickerOutcome::CtrlC) => std::process::exit(2),
             Err(e) => {
-                eprintln!("cmux: {e}");
+                eprintln!("mtyx: {e}");
                 std::process::exit(1);
             }
         }
     }
     let result = if args.attach { run_attach(args, None) } else { run_server(args) };
     if let Err(e) = result {
-        eprintln!("cmux: {e}");
+        eprintln!("mtyx: {e}");
         std::process::exit(1);
     }
 }
@@ -667,7 +667,7 @@ fn run_attach(mut args: Args, fallback: Option<PathBuf>) -> anyhow::Result<()> {
                     session::SwapRecovery::Propagate => {
                         return Err(e).with_context(|| {
                             format!(
-                                "attaching to cmux session socket at {}",
+                                "attaching to mtyx session socket at {}",
                                 socket_path.display()
                             )
                         });
@@ -748,19 +748,19 @@ fn resolve_local_overlay(explicit: Option<&std::path::Path>) -> Option<config::O
         Some(path) => match config::load_overlay_file(&path) {
             Some(overlay) => {
                 eprintln!(
-                    "cmux: applying local config from {} (overrides {} keys)",
+                    "mtyx: applying local config from {} (overrides {} keys)",
                     path.display(),
                     overlay.override_count()
                 );
                 Some(overlay)
             }
             None => {
-                eprintln!("cmux: no local config found at {}", path.display());
+                eprintln!("mtyx: no local config found at {}", path.display());
                 None
             }
         },
         None => {
-            eprintln!("cmux: no local config found");
+            eprintln!("mtyx: no local config found");
             None
         }
     }
@@ -773,15 +773,15 @@ fn show_local_config_resolution(args: Args) {
     if let Some(path) = config::local_config_path(args.config.as_deref()) {
         if let Some(overlay) = config::load_overlay_file(&path) {
             println!(
-                "cmux: local config resolves to {} (overrides {} keys)",
+                "mtyx: local config resolves to {} (overrides {} keys)",
                 path.display(),
                 overlay.override_count()
             );
         } else {
-            eprintln!("cmux: no local config found at {}", path.display());
+            eprintln!("mtyx: no local config found at {}", path.display());
         }
     } else {
-        eprintln!("cmux: no local config found");
+        eprintln!("mtyx: no local config found");
     }
     std::process::exit(0);
 }
@@ -811,11 +811,11 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     // Compute the socket path up front so surface children inherit it.
     let socket_path =
         args.socket.clone().unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));
-    surface_options.extra_env.push(("CMUX_MUX_SOCKET".into(), socket_path.display().to_string()));
+    surface_options.extra_env.push(("MTYX_MUX_SOCKET".into(), socket_path.display().to_string()));
 
     let mux = Mux::new(args.session.clone(), surface_options);
     // Issue #40 blocker 1: publish this server's resolved presentation
-    // chrome (theme/tabs/sidebar/keys) so a thin-client `cmux attach
+    // chrome (theme/tabs/sidebar/keys) so a thin-client `mtyx attach
     // --apply-local-config` can fetch it via the `get-resolved-config`
     // verb and layer its local overlay on top instead of replacing the
     // server config with the laptop's own. Browser and scrollbar stay
@@ -899,14 +899,14 @@ fn run_tui(
     let color_result = session.set_default_colors(colors);
     let raw_result = crossterm::terminal::disable_raw_mode();
     if let Err(err) = color_result {
-        eprintln!("cmux: failed to set default colors: {err}");
+        eprintln!("mtyx: failed to set default colors: {err}");
     }
     raw_result?;
     app::run(session, session_label, overlay, initial_status)
 }
 
 fn run_headless(mux: &Arc<Mux>, socket_path: &std::path::Path) -> anyhow::Result<()> {
-    eprintln!("cmux: headless, control socket at {}", socket_path.display());
+    eprintln!("mtyx: headless, control socket at {}", socket_path.display());
     // Keep the process alive; the control socket drives everything and
     // the mux reaps exited surfaces itself.
     let events = mux.subscribe();
@@ -925,6 +925,6 @@ fn run_headless(mux: &Arc<Mux>, socket_path: &std::path::Path) -> anyhow::Result
 }
 
 fn usage_exit(msg: &str) -> ! {
-    eprintln!("cmux: {msg}\n\n{USAGE}");
+    eprintln!("mtyx: {msg}\n\n{USAGE}");
     std::process::exit(2);
 }

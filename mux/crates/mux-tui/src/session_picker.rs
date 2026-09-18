@@ -1,4 +1,4 @@
-//! Interactive pre-attach session picker for `cmux attach --session-list`
+//! Interactive pre-attach session picker for `mtyx attach --session-list`
 //! (issue #63, layer L1).
 //!
 //! Runs BEFORE `run_attach`/`app::run`, so it must not touch `App` or
@@ -214,7 +214,7 @@ fn dispatch(
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
                     // Reuse the cli kill-stale path: it is already built on
-                    // discover_sessions, so semantics match `cmux kill-stale`.
+                    // discover_sessions, so semantics match `mtyx kill-stale`.
                     let cleaned = cli::kill_stale(global);
                     *status = format!("cleaned {cleaned} stale session(s)");
                     *sessions = refresh(global);
@@ -358,7 +358,7 @@ fn browse_key(
             Action::None
         }
         // Claim 3: kill focused. `x` (not `k`) — k is 'navigate up' per
-        // cmux USAGE ("h/j/k/l move focus") and matches the whole codebase.
+        // mtyx USAGE ("h/j/k/l move focus") and matches the whole codebase.
         KeyCode::Char('x') => {
             if let Some(i) = selected {
                 if let Some(s) = sessions.get(i) {
@@ -476,9 +476,9 @@ fn draw(
             })
             .collect();
         let title = if sessions.is_empty() {
-            " cmux sessions — none found (n new, q to quit) "
+            " mtyx sessions — none found (n new, q to quit) "
         } else {
-            " cmux sessions — pick one to attach "
+            " mtyx sessions — pick one to attach "
         };
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL).title(title))

@@ -11,17 +11,17 @@ import (
 	"time"
 )
 
-const claudeNodeOptionsRestoreModuleScript = `const hadOriginalNodeOptions = process.env.CMUX_ORIGINAL_NODE_OPTIONS_PRESENT === "1";
+const claudeNodeOptionsRestoreModuleScript = `const hadOriginalNodeOptions = process.env.MTYX_ORIGINAL_NODE_OPTIONS_PRESENT === "1";
 if (hadOriginalNodeOptions) {
-  process.env.NODE_OPTIONS = process.env.CMUX_ORIGINAL_NODE_OPTIONS ?? "";
+  process.env.NODE_OPTIONS = process.env.MTYX_ORIGINAL_NODE_OPTIONS ?? "";
 } else {
   delete process.env.NODE_OPTIONS;
 }
-delete process.env.CMUX_ORIGINAL_NODE_OPTIONS;
-delete process.env.CMUX_ORIGINAL_NODE_OPTIONS_PRESENT;
+delete process.env.MTYX_ORIGINAL_NODE_OPTIONS;
+delete process.env.MTYX_ORIGINAL_NODE_OPTIONS_PRESENT;
 `
 
-// runClaudeTeamsRelay implements `cmux claude-teams` on the remote side.
+// runClaudeTeamsRelay implements `mtyx claude-teams` on the remote side.
 // It creates tmux shim scripts, sets up environment variables, gets the
 // focused context via system.identify, and exec's into `claude`.
 func runClaudeTeamsRelay(socketPath string, args []string, refreshAddr func() string) int {
@@ -29,7 +29,7 @@ func runClaudeTeamsRelay(socketPath string, args []string, refreshAddr func() st
 
 	shimDir, err := createTmuxShimDir("claude-teams-bin", claudeTeamsShimScript)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux claude-teams: failed to create shim directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx claude-teams: failed to create shim directory: %v\n", err)
 		return 1
 	}
 
@@ -44,9 +44,9 @@ func runClaudeTeamsRelay(socketPath string, args []string, refreshAddr func() st
 		shimDir:        shimDir,
 		socketPath:     socketPath,
 		focused:        focused,
-		tmuxPathPrefix: "cmux-claude-teams",
-		cmuxBinEnvVar:  "CMUX_CLAUDE_TEAMS_CMUX_BIN",
-		termEnvVar:     "CMUX_CLAUDE_TEAMS_TERM",
+		tmuxPathPrefix: "mtyx-claude-teams",
+		mtyxBinEnvVar:  "MTYX_CLAUDE_TEAMS_MTYX_BIN",
+		termEnvVar:     "MTYX_CLAUDE_TEAMS_TERM",
 		extraEnv: map[string]string{
 			"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
 		},
@@ -58,22 +58,22 @@ func runClaudeTeamsRelay(socketPath string, args []string, refreshAddr func() st
 	launchArgs := claudeTeamsLaunchArgs(args)
 
 	if claudePath == "" {
-		fmt.Fprintf(os.Stderr, "cmux claude-teams: claude not found in PATH\n")
+		fmt.Fprintf(os.Stderr, "mtyx claude-teams: claude not found in PATH\n")
 		return 1
 	}
 	argv := append([]string{claudePath}, launchArgs...)
 	execErr := syscall.Exec(claudePath, argv, os.Environ())
-	fmt.Fprintf(os.Stderr, "cmux claude-teams: exec failed: %v\n", execErr)
+	fmt.Fprintf(os.Stderr, "mtyx claude-teams: exec failed: %v\n", execErr)
 	return 1
 }
 
-// runOMORelay implements `cmux omo` on the remote side.
+// runOMORelay implements `mtyx omo` on the remote side.
 func runOMORelay(socketPath string, args []string, refreshAddr func() string) int {
 	rc := &rpcContext{socketPath: socketPath, refreshAddr: refreshAddr}
 
 	shimDir, err := createOMOShimDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux omo: failed to create shim directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx omo: failed to create shim directory: %v\n", err)
 		return 1
 	}
 
@@ -81,14 +81,14 @@ func runOMORelay(socketPath string, args []string, refreshAddr func() string) in
 	originalPath := os.Getenv("PATH")
 	opencodePath := findExecutableInPath("opencode", originalPath, shimDir)
 	if opencodePath == "" {
-		fmt.Fprintf(os.Stderr, "cmux omo: opencode not found in PATH\n"+
+		fmt.Fprintf(os.Stderr, "mtyx omo: opencode not found in PATH\n"+
 			"Install it first:\n  npm install -g opencode-ai\n  # or\n  bun install -g opencode-ai\n")
 		return 1
 	}
 
 	// Ensure oh-my-opencode plugin is set up
 	if err := omoEnsurePlugin(originalPath); err != nil {
-		fmt.Fprintf(os.Stderr, "cmux omo: plugin setup: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx omo: plugin setup: %v\n", err)
 		return 1
 	}
 
@@ -98,9 +98,9 @@ func runOMORelay(socketPath string, args []string, refreshAddr func() string) in
 		shimDir:        shimDir,
 		socketPath:     socketPath,
 		focused:        focused,
-		tmuxPathPrefix: "cmux-omo",
-		cmuxBinEnvVar:  "CMUX_OMO_CMUX_BIN",
-		termEnvVar:     "CMUX_OMO_TERM",
+		tmuxPathPrefix: "mtyx-omo",
+		mtyxBinEnvVar:  "MTYX_OMO_MTYX_BIN",
+		termEnvVar:     "MTYX_OMO_TERM",
 		extraEnv:       map[string]string{},
 	})
 
@@ -128,24 +128,24 @@ func runOMORelay(socketPath string, args []string, refreshAddr func() string) in
 
 	launchPath, launchArgv := resolveNodeScriptExec(opencodePath, launchArgs, originalPath, shimDir)
 	execErr := syscall.Exec(launchPath, launchArgv, os.Environ())
-	fmt.Fprintf(os.Stderr, "cmux omo: exec failed: %v\n", execErr)
+	fmt.Fprintf(os.Stderr, "mtyx omo: exec failed: %v\n", execErr)
 	return 1
 }
 
-// runOMXRelay implements `cmux omx` on the remote side.
+// runOMXRelay implements `mtyx omx` on the remote side.
 func runOMXRelay(socketPath string, args []string, refreshAddr func() string) int {
 	rc := &rpcContext{socketPath: socketPath, refreshAddr: refreshAddr}
 
 	shimDir, err := createTmuxShimDir("omx-bin", omxShimScript)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux omx: failed to create shim directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx omx: failed to create shim directory: %v\n", err)
 		return 1
 	}
 
 	originalPath := os.Getenv("PATH")
 	omxPath := findExecutableInPath("omx", originalPath, shimDir)
 	if omxPath == "" {
-		fmt.Fprintf(os.Stderr, "cmux omx: omx not found in PATH\n"+
+		fmt.Fprintf(os.Stderr, "mtyx omx: omx not found in PATH\n"+
 			"Install it first:\n  npm install -g oh-my-codex\n")
 		return 1
 	}
@@ -156,32 +156,32 @@ func runOMXRelay(socketPath string, args []string, refreshAddr func() string) in
 		shimDir:        shimDir,
 		socketPath:     socketPath,
 		focused:        focused,
-		tmuxPathPrefix: "cmux-omx",
-		cmuxBinEnvVar:  "CMUX_OMX_CMUX_BIN",
-		termEnvVar:     "CMUX_OMX_TERM",
+		tmuxPathPrefix: "mtyx-omx",
+		mtyxBinEnvVar:  "MTYX_OMX_MTYX_BIN",
+		termEnvVar:     "MTYX_OMX_TERM",
 		extraEnv:       map[string]string{},
 	})
 
 	launchPath, launchArgv := resolveNodeScriptExec(omxPath, args, originalPath, shimDir)
 	execErr := syscall.Exec(launchPath, launchArgv, os.Environ())
-	fmt.Fprintf(os.Stderr, "cmux omx: exec failed: %v\n", execErr)
+	fmt.Fprintf(os.Stderr, "mtyx omx: exec failed: %v\n", execErr)
 	return 1
 }
 
-// runOMCRelay implements `cmux omc` on the remote side.
+// runOMCRelay implements `mtyx omc` on the remote side.
 func runOMCRelay(socketPath string, args []string, refreshAddr func() string) int {
 	rc := &rpcContext{socketPath: socketPath, refreshAddr: refreshAddr}
 
 	shimDir, err := createTmuxShimDir("omc-bin", omcShimScript)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux omc: failed to create shim directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx omc: failed to create shim directory: %v\n", err)
 		return 1
 	}
 
 	originalPath := os.Getenv("PATH")
 	omcPath := findExecutableInPath("omc", originalPath, shimDir)
 	if omcPath == "" {
-		fmt.Fprintf(os.Stderr, "cmux omc: omc not found in PATH\n"+
+		fmt.Fprintf(os.Stderr, "mtyx omc: omc not found in PATH\n"+
 			"Install it first:\n  npm install -g oh-my-claude-sisyphus\n")
 		return 1
 	}
@@ -192,9 +192,9 @@ func runOMCRelay(socketPath string, args []string, refreshAddr func() string) in
 		shimDir:        shimDir,
 		socketPath:     socketPath,
 		focused:        focused,
-		tmuxPathPrefix: "cmux-omc",
-		cmuxBinEnvVar:  "CMUX_OMC_CMUX_BIN",
-		termEnvVar:     "CMUX_OMC_TERM",
+		tmuxPathPrefix: "mtyx-omc",
+		mtyxBinEnvVar:  "MTYX_OMC_MTYX_BIN",
+		termEnvVar:     "MTYX_OMC_TERM",
 		extraEnv:       map[string]string{},
 	})
 
@@ -202,12 +202,12 @@ func runOMCRelay(socketPath string, args []string, refreshAddr func() string) in
 	if restoreModulePath, err := ensureClaudeNodeOptionsRestoreModule(); err == nil {
 		configureClaudeNodeOptions(restoreModulePath)
 	} else {
-		fmt.Fprintf(os.Stderr, "cmux omc: warning: failed to create NODE_OPTIONS restore module: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx omc: warning: failed to create NODE_OPTIONS restore module: %v\n", err)
 	}
 
 	launchPath, launchArgv := resolveNodeScriptExec(omcPath, args, originalPath, shimDir)
 	execErr := syscall.Exec(launchPath, launchArgv, os.Environ())
-	fmt.Fprintf(os.Stderr, "cmux omc: exec failed: %v\n", execErr)
+	fmt.Fprintf(os.Stderr, "mtyx omc: exec failed: %v\n", execErr)
 	return 1
 }
 
@@ -215,7 +215,7 @@ func runOMCRelay(socketPath string, args []string, refreshAddr func() string) in
 
 const claudeTeamsShimScript = `#!/usr/bin/env bash
 set -euo pipefail
-exec "${CMUX_CLAUDE_TEAMS_CMUX_BIN:-cmux}" __tmux-compat "$@"
+exec "${MTYX_CLAUDE_TEAMS_MTYX_BIN:-mtyx}" __tmux-compat "$@"
 `
 
 const omoTmuxShimScript = `#!/usr/bin/env bash
@@ -225,7 +225,7 @@ set -euo pipefail
 case "${1:-}" in
   -V|-v) echo "tmux 3.4"; exit 0 ;;
 esac
-exec "${CMUX_OMO_CMUX_BIN:-cmux}" __tmux-compat "$@"
+exec "${MTYX_OMO_MTYX_BIN:-mtyx}" __tmux-compat "$@"
 `
 
 const omxShimScript = `#!/usr/bin/env bash
@@ -233,7 +233,7 @@ set -euo pipefail
 case "${1:-}" in
   -V|-v) echo "tmux 3.4"; exit 0 ;;
 esac
-exec "${CMUX_OMX_CMUX_BIN:-cmux}" __tmux-compat "$@"
+exec "${MTYX_OMX_MTYX_BIN:-mtyx}" __tmux-compat "$@"
 `
 
 const omcShimScript = `#!/usr/bin/env bash
@@ -241,11 +241,11 @@ set -euo pipefail
 case "${1:-}" in
   -V|-v) echo "tmux 3.4"; exit 0 ;;
 esac
-exec "${CMUX_OMC_CMUX_BIN:-cmux}" __tmux-compat "$@"
+exec "${MTYX_OMC_MTYX_BIN:-mtyx}" __tmux-compat "$@"
 `
 
 const omoNotifierShimScript = `#!/usr/bin/env bash
-# Intercept terminal-notifier calls and route through cmux notify.
+# Intercept terminal-notifier calls and route through mtyx notify.
 TITLE="" BODY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -254,7 +254,7 @@ while [[ $# -gt 0 ]]; do
     *)        shift ;;
   esac
 done
-exec "${CMUX_OMO_CMUX_BIN:-cmux}" notify --title "${TITLE:-OpenCode}" --body "${BODY:-}"
+exec "${MTYX_OMO_MTYX_BIN:-mtyx}" notify --title "${TITLE:-OpenCode}" --body "${BODY:-}"
 `
 
 func createTmuxShimDir(dirName string, tmuxScript string) (string, error) {
@@ -262,7 +262,7 @@ func createTmuxShimDir(dirName string, tmuxScript string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".cmuxterm", dirName)
+	dir := filepath.Join(home, ".mattyxterm", dirName)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
@@ -314,7 +314,7 @@ func writeShimIfChanged(path string, content string) error {
 }
 
 func ensureClaudeNodeOptionsRestoreModule() (string, error) {
-	dir := filepath.Join(os.TempDir(), "cmux-claude-node-options")
+	dir := filepath.Join(os.TempDir(), "mtyx-claude-node-options")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
@@ -444,11 +444,11 @@ func canonicalizeFocusedContext(rc *rpcContext, focused map[string]any, ctx *foc
 func configureClaudeNodeOptions(restoreModulePath string) {
 	existing, hadExisting := os.LookupEnv("NODE_OPTIONS")
 	if hadExisting {
-		os.Setenv("CMUX_ORIGINAL_NODE_OPTIONS_PRESENT", "1")
-		os.Setenv("CMUX_ORIGINAL_NODE_OPTIONS", existing)
+		os.Setenv("MTYX_ORIGINAL_NODE_OPTIONS_PRESENT", "1")
+		os.Setenv("MTYX_ORIGINAL_NODE_OPTIONS", existing)
 	} else {
-		os.Setenv("CMUX_ORIGINAL_NODE_OPTIONS_PRESENT", "0")
-		os.Unsetenv("CMUX_ORIGINAL_NODE_OPTIONS")
+		os.Setenv("MTYX_ORIGINAL_NODE_OPTIONS_PRESENT", "0")
+		os.Unsetenv("MTYX_ORIGINAL_NODE_OPTIONS")
 	}
 	os.Setenv("NODE_OPTIONS", mergeNodeOptions(existing, restoreModulePath))
 }
@@ -502,7 +502,7 @@ type agentConfig struct {
 	socketPath     string
 	focused        *focusedContext
 	tmuxPathPrefix string
-	cmuxBinEnvVar  string
+	mtyxBinEnvVar  string
 	termEnvVar     string
 	extraEnv       map[string]string
 }
@@ -511,9 +511,9 @@ func configureAgentEnvironment(cfg agentConfig) {
 	// Find our own executable path for the shim to call back
 	selfPath, _ := os.Executable()
 	if selfPath == "" {
-		selfPath = "cmux"
+		selfPath = "mtyx"
 	}
-	os.Setenv(cfg.cmuxBinEnvVar, selfPath)
+	os.Setenv(cfg.mtyxBinEnvVar, selfPath)
 
 	// Prepend shim directory to PATH
 	currentPath := os.Getenv("PATH")
@@ -547,8 +547,8 @@ func configureAgentEnvironment(cfg agentConfig) {
 	os.Setenv("TERM", fakeTerm)
 
 	// Socket path
-	os.Setenv("CMUX_SOCKET_PATH", cfg.socketPath)
-	os.Unsetenv("CMUX_SOCKET")
+	os.Setenv("MTYX_SOCKET_PATH", cfg.socketPath)
+	os.Unsetenv("MTYX_SOCKET")
 
 	// Unset TERM_PROGRAM so apps don't detect the host terminal and
 	// override tmux-compatible behavior (e.g. opencode switches to
@@ -562,9 +562,9 @@ func configureAgentEnvironment(cfg agentConfig) {
 
 	// Set workspace/surface IDs from focused context
 	if cfg.focused != nil {
-		os.Setenv("CMUX_WORKSPACE_ID", cfg.focused.workspaceId)
+		os.Setenv("MTYX_WORKSPACE_ID", cfg.focused.workspaceId)
 		if cfg.focused.surfaceId != "" {
-			os.Setenv("CMUX_SURFACE_ID", cfg.focused.surfaceId)
+			os.Setenv("MTYX_SURFACE_ID", cfg.focused.surfaceId)
 		}
 	}
 
@@ -585,7 +585,7 @@ func omoUserConfigDir() string {
 
 func omoShadowConfigDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cmuxterm", "omo-config")
+	return filepath.Join(home, ".mattyxterm", "omo-config")
 }
 
 // omoEnsurePlugin creates a shadow config directory that layers the

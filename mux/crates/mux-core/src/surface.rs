@@ -39,7 +39,7 @@ pub struct SurfaceOptions {
     pub cols: u16,
     pub rows: u16,
     pub scrollback: usize,
-    /// Extra environment for children (e.g. CMUX_MUX_SOCKET).
+    /// Extra environment for children (e.g. MTYX_MUX_SOCKET).
     pub extra_env: Vec<(String, String)>,
     /// Optional Chrome/Chromium binary for browser surfaces.
     pub chrome_binary: Option<String>,
@@ -70,7 +70,7 @@ impl Default for SurfaceOptions {
         SurfaceOptions {
             command: None,
             cwd: None,
-            term: std::env::var("CMUX_MUX_TERM").unwrap_or_else(|_| "xterm-256color".into()),
+            term: std::env::var("MTYX_MUX_TERM").unwrap_or_else(|_| "xterm-256color".into()),
             cols: 80,
             rows: 24,
             scrollback: 10_000,
@@ -295,11 +295,11 @@ pub struct PtySurface {
     /// login shell), recorded at spawn time so `layout export` (issue
     /// #76) can replay the agent command. Reading it back from
     /// `/proc/<child>` at export time is insufficient: agents typed into
-    /// a shell via `cmux send` are grandchildren of the pty child.
+    /// a shell via `mtyx send` are grandchildren of the pty child.
     spawn_command: Option<Vec<String>>,
     /// The `extra_env` entries in force at spawn time (post
-    /// socket-env refresh), for the same reason. cmux's auto-injected
-    /// `CMUX_MUX_SOCKET`/`CMUX_SOCKET_PATH` are filtered out again at
+    /// socket-env refresh), for the same reason. mtyx's auto-injected
+    /// `MTYX_MUX_SOCKET`/`MTYX_SOCKET_PATH` are filtered out again at
     /// capture time (`layout_doc::capture_tab`).
     spawn_env: Vec<(String, String)>,
     agent: Mutex<Option<AgentReport>>,
@@ -354,17 +354,17 @@ impl Surface {
         };
         cmd.env("TERM", &opts.term);
         // Lets a hook script (e.g. a Claude Code hook) invoked from inside
-        // this pty call back into `cmux report-agent --surface
-        // $CMUX_MUX_SURFACE ...` without needing to know its own surface id.
-        cmd.env("CMUX_MUX_SURFACE", id.to_string());
-        // Grok Build's multiplexer detector (and macOS cmux) look for these
+        // this pty call back into `mtyx report-agent --surface
+        // $MTYX_MUX_SURFACE ...` without needing to know its own surface id.
+        cmd.env("MTYX_MUX_SURFACE", id.to_string());
+        // Grok Build's multiplexer detector (and macOS mtyx) look for these
         // names. Dual-write so an unpatched grok still classifies the pane
         // as MultiplexerKind::Cmux.
-        cmd.env("CMUX_PANEL_ID", id.to_string());
+        cmd.env("MTYX_PANEL_ID", id.to_string());
         for (k, v) in &opts.extra_env {
             cmd.env(k, v);
-            if k == "CMUX_MUX_SOCKET" {
-                cmd.env("CMUX_SOCKET_PATH", v);
+            if k == "MTYX_MUX_SOCKET" {
+                cmd.env("MTYX_SOCKET_PATH", v);
             }
         }
         // The local-home-dir fallback only makes sense for a local child;
@@ -677,7 +677,7 @@ impl Surface {
     }
 
     /// The extra env entries injected at spawn time (`[]` for browser
-    /// surfaces). Includes cmux's auto-injected socket keys; layout
+    /// surfaces). Includes mtyx's auto-injected socket keys; layout
     /// capture filters those back out.
     pub fn spawn_env(&self) -> Vec<(String, String)> {
         self.as_pty().map(|pty| pty.spawn_env.clone()).unwrap_or_default()

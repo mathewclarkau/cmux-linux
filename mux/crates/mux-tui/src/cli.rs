@@ -62,9 +62,9 @@ const VERBS: &[VerbSpec] = &[
     VerbSpec {
         // Issue #40: returns the server's resolved presentation chrome
         // (theme/tabs/sidebar/keys) for a thin-client attach to layer its
-        // local `Overlay` on top of. Read-only; `cmux attach
+        // local `Overlay` on top of. Read-only; `mtyx attach
         // --apply-local-config` invokes the same verb internally, and
-        // `cmux attach --print-resolved-config` shows the merged
+        // `mtyx attach --print-resolved-config` shows the merged
         // (server + local overlay) chrome for inspection.
         name: "get-resolved-config",
         allowed: &[],
@@ -95,7 +95,7 @@ const VERBS: &[VerbSpec] = &[
     },
     VerbSpec {
         // "exec"/"env" (issue #76) carry an explicit child argv/env —
-        // `cmux new-tab --exec -- <argv...>` is the agent-start primitive
+        // `mtyx new-tab --exec -- <argv...>` is the agent-start primitive
         // that `layout export` records and `layout apply` replays.
         name: "new-tab",
         allowed: &["pane", "cwd", "cols", "rows", "branch", "label", "prompt-file", "exec", "env"],
@@ -306,7 +306,7 @@ const VERBS: &[VerbSpec] = &[
         // CLI even though the wire protocol field is plain "session".
         // Issue #75: --agent names the pane for the name-addressed verbs,
         // --message carries free-text context, --surface may be omitted
-        // inside a pane ($CMUX_MUX_SURFACE) and --source defaults to
+        // inside a pane ($MTYX_MUX_SURFACE) and --source defaults to
         // socket (hooks stay the authority).
         allowed: &["surface", "state", "source", "agent-session", "agent", "message"],
         build: build_report_agent,
@@ -491,7 +491,7 @@ pub fn run(args: &[String], usage: &str) -> i32 {
         }
         Ok(Parsed::Command(args)) => run_command(args),
         Err(err) => {
-            eprintln!("cmux: {}", err.0);
+            eprintln!("mtyx: {}", err.0);
             2
         }
     }
@@ -628,7 +628,7 @@ fn run_command(args: CliArgs) -> i32 {
             value
         }
         Err(err) => {
-            eprintln!("cmux: {}", err.0);
+            eprintln!("mtyx: {}", err.0);
             return 2;
         }
     };
@@ -681,7 +681,7 @@ fn resolve_socket(global: &GlobalArgs) -> PathBuf {
     if let Some(path) = &global.socket {
         return path.clone();
     }
-    if let Some(path) = std::env::var_os("CMUX_MUX_SOCKET") {
+    if let Some(path) = std::env::var_os("MTYX_MUX_SOCKET") {
         if !path.is_empty() {
             return PathBuf::from(path);
         }
@@ -1052,7 +1052,7 @@ fn build_pane_worktree_remove(flags: &FlagMap) -> Result<Value, UsageError> {
     }))
 }
 
-/// Rewrite the issue-#77 three-word verb form (`cmux pane worktree
+/// Rewrite the issue-#77 three-word verb form (`mtyx pane worktree
 /// create ...`) into the canonical flat verb (`pane-worktree-create`)
 /// at the first-command position, so the issue's documented invocation
 /// works verbatim while the wire protocol keeps the flat kebab-case
@@ -1156,15 +1156,15 @@ fn build_scroll_surface(flags: &FlagMap) -> Result<Value, UsageError> {
 }
 
 fn build_report_agent(flags: &FlagMap) -> Result<Value, UsageError> {
-    // Issue #75 AC1: --surface defaults to $CMUX_MUX_SURFACE so a pane's
+    // Issue #75 AC1: --surface defaults to $MTYX_MUX_SURFACE so a pane's
     // own child (hook or agent) can self-report without knowing its id.
     let surface = match flags.optional("surface") {
         Some(raw) => parse_u64("surface", &raw)?,
-        None => match std::env::var("CMUX_MUX_SURFACE") {
-            Ok(value) => parse_u64("CMUX_MUX_SURFACE", &value)?,
+        None => match std::env::var("MTYX_MUX_SURFACE") {
+            Ok(value) => parse_u64("MTYX_MUX_SURFACE", &value)?,
             Err(_) => {
                 return Err(UsageError(
-                    "--surface is required (or run inside a cmux pane via $CMUX_MUX_SURFACE)"
+                    "--surface is required (or run inside a mtyx pane via $MTYX_MUX_SURFACE)"
                         .into(),
                 ))
             }
@@ -1319,7 +1319,7 @@ pub(crate) fn read_pid_file(path: &std::path::Path) -> Option<u32> {
     }
 }
 
-/// One discovered cmux session (issue #63 L1).
+/// One discovered mtyx session (issue #63 L1).
 ///
 /// `socket_path` is the exact path to reconnect to; `mtime` is for the
 /// picker's newest-first sort (pid-file mtime preferred — the socket mtime
@@ -1333,7 +1333,7 @@ pub(crate) struct DiscoveredSession {
     pub(crate) mtime: Option<std::time::SystemTime>,
 }
 
-/// Socket-centric discovery of cmux sessions in the runtime dir honoured
+/// Socket-centric discovery of mtyx sessions in the runtime dir honoured
 /// by `global` (parent of `--socket`, else `platform::runtime_dir()`).
 /// One row per `*.sock`: derive the pid via `server::pid_path`, liveness via
 /// `server::is_session_socket_live`, and an mtime for uptime sort. Shared by
@@ -1408,7 +1408,7 @@ fn run_list_sessions(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
     }
 }
 
-/// `cmux attach --session-list --json` (issue #63 L1): non-interactive
+/// `mtyx attach --session-list --json` (issue #63 L1): non-interactive
 /// discovery dump. Same shape as `run_list_sessions`'s JSON branch PLUS a
 /// `socket_path` per entry, so a caller can reconnect to the exact socket
 /// — important when discovery is scoped by `--socket <parent>/x.sock` and
@@ -1437,11 +1437,11 @@ pub(crate) fn run_attach_session_list_json(global: &GlobalArgs) -> i32 {
     }
 }
 
-/// Kill the cmux process owning `socket_path` (SIGTERM, escalate to SIGKILL
+/// Kill the mtyx process owning `socket_path` (SIGTERM, escalate to SIGKILL
 /// after 2s, reap up to 1s more) and remove its `.sock`/`.pid`. Shared by
 /// `run_kill_session` and the picker's kill-focused (Claim 3). Returns true
-/// if the pidfile named a live cmux process that was signalled (regardless
-/// of whether it died in time); false if there was no pid / no cmux process.
+/// if the pidfile named a live mtyx process that was signalled (regardless
+/// of whether it died in time); false if there was no pid / no mtyx process.
 /// The `.sock`/`.pid` are removed unconditionally, matching the historical
 /// `run_kill_session` behaviour.
 pub(crate) fn kill_session_at(socket_path: &std::path::Path, pid: Option<u32>) -> bool {
@@ -1619,7 +1619,7 @@ pub(crate) fn select_workspace_remote(
 fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
     let target_session = flags.optional("session").or_else(|| global.session.clone());
     let Some(session_name) = target_session else {
-        eprintln!("cmux: --session is required");
+        eprintln!("mtyx: --session is required");
         return 2;
     };
 
@@ -1628,7 +1628,7 @@ fn run_kill_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
     let pid_p = dir.join(format!("{session_name}.pid"));
 
     if !sock_path.exists() && !pid_p.exists() {
-        eprintln!("cmux: session {session_name:?} not found");
+        eprintln!("mtyx: session {session_name:?} not found");
         return 1;
     }
 
@@ -1669,7 +1669,7 @@ pub(crate) fn kill_stale(global: &GlobalArgs) -> usize {
     cleaned
 }
 
-/// `cmux rename-session --old <name> --new <name>` (issue #63). Resolves
+/// `mtyx rename-session --old <name> --new <name>` (issue #63). Resolves
 /// the old session's socket the same way `kill-session` does (parent of
 /// `--socket`, else `runtime_dir()`), pre-checks the target, then connects
 /// and issues `rename-session`. Exit-code table (scout-plan Q5):
@@ -1680,14 +1680,14 @@ fn run_rename_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
     let old = match flags.required("old") {
         Ok(v) => v,
         Err(err) => {
-            eprintln!("cmux: {}", err.0);
+            eprintln!("mtyx: {}", err.0);
             return 2;
         }
     };
     let new = match flags.required("new") {
         Ok(v) => v,
         Err(err) => {
-            eprintln!("cmux: {}", err.0);
+            eprintln!("mtyx: {}", err.0);
             return 2;
         }
     };
@@ -1697,7 +1697,7 @@ fn run_rename_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
     // clean "session name …" error instead of a cryptic "session not found".
     for name in [&old, &new] {
         if let Err(err) = mux_core::server::validate_session_name(name) {
-            eprintln!("cmux: {err}");
+            eprintln!("mtyx: {err}");
             return 2;
         }
     }
@@ -1709,14 +1709,14 @@ fn run_rename_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
 
     // Old session must be present (mirrors kill-session's not-found exit 1).
     if !old_sock.exists() && !old_pid.exists() {
-        eprintln!("cmux: session {old:?} not found");
+        eprintln!("mtyx: session {old:?} not found");
         return 1;
     }
     // Criterion 5: refuse a LIVE target BEFORE connecting (exit 2). The
     // server re-checks inside the handler to cover direct API use and the
     // connect-vs-precheck race.
     if mux_core::server::is_session_socket_live(&new_sock) {
-        eprintln!("cmux: session {new:?} already exists");
+        eprintln!("mtyx: session {new:?} already exists");
         return 2;
     }
 
@@ -1736,7 +1736,7 @@ fn run_rename_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
             0
         }
         RenameOutcome::ServerErr(err) => {
-            eprintln!("cmux: {err}");
+            eprintln!("mtyx: {err}");
             1
         }
         RenameOutcome::ConnectErr(err) => {
@@ -1748,7 +1748,7 @@ fn run_rename_session(global: &GlobalArgs, flags: &FlagMap) -> i32 {
 
 // -- issue #76: layout export/apply runners ------------------------------
 
-/// `cmux layout-export --workspace <name-or-id> --output <path>.json`.
+/// `mtyx layout-export --workspace <name-or-id> --output <path>.json`.
 /// The server produces the document; the CLIENT writes the file (tmp +
 /// rename, refusing symlinked targets) so no daemon ever touches the
 /// invoker's filesystem. Exit codes: 0 ok · 1 server/file error · 2 bad
@@ -1757,13 +1757,13 @@ fn run_layout_export(global: &GlobalArgs, flags: &FlagMap) -> i32 {
     let (workspace, output) = match (flags.required("workspace"), flags.required("output")) {
         (Ok(w), Ok(o)) => (w, o),
         (Err(e), _) | (_, Err(e)) => {
-            eprintln!("cmux: {}", e.0);
+            eprintln!("mtyx: {}", e.0);
             return 2;
         }
     };
     let output = PathBuf::from(output);
     if let Err(e) = refuse_symlink(&output) {
-        eprintln!("cmux: {e}");
+        eprintln!("mtyx: {e}");
         return 1;
     }
     let request = json!({ "cmd": "layout-export", "workspace": workspace, "id": REQUEST_ID });
@@ -1773,12 +1773,12 @@ fn run_layout_export(global: &GlobalArgs, flags: &FlagMap) -> i32 {
             let pretty = match serde_json::to_string_pretty(&doc) {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("cmux: encoding layout document: {e}");
+                    eprintln!("mtyx: encoding layout document: {e}");
                     return 1;
                 }
             };
             if let Err(e) = write_json_atomic(&output, &pretty) {
-                eprintln!("cmux: writing {}: {e}", output.display());
+                eprintln!("mtyx: writing {}: {e}", output.display());
                 return 1;
             }
             if global.json {
@@ -1789,7 +1789,7 @@ fn run_layout_export(global: &GlobalArgs, flags: &FlagMap) -> i32 {
             0
         }
         OneShotOutcome::ServerErr(e) => {
-            eprintln!("cmux: {e}");
+            eprintln!("mtyx: {e}");
             1
         }
         OneShotOutcome::ConnectErr(e) => {
@@ -1799,7 +1799,7 @@ fn run_layout_export(global: &GlobalArgs, flags: &FlagMap) -> i32 {
     }
 }
 
-/// `cmux layout-apply --input <path>.json --workspace <name>` (issue #76
+/// `mtyx layout-apply --input <path>.json --workspace <name>` (issue #76
 /// AC2): replay a saved layout, creating the workspace if missing. The
 /// file is parsed structurally here (parse errors propagate, exit 2);
 /// the schema gate lives server-side so a version mismatch surfaces as
@@ -1808,21 +1808,21 @@ fn run_layout_apply(global: &GlobalArgs, flags: &FlagMap) -> i32 {
     let (input, workspace) = match (flags.required("input"), flags.required("workspace")) {
         (Ok(i), Ok(w)) => (i, w),
         (Err(e), _) | (_, Err(e)) => {
-            eprintln!("cmux: {}", e.0);
+            eprintln!("mtyx: {}", e.0);
             return 2;
         }
     };
     let contents = match std::fs::read_to_string(&input) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("cmux: reading layout {input:?}: {e}");
+            eprintln!("mtyx: reading layout {input:?}: {e}");
             return 2;
         }
     };
     let document: mux_core::LayoutDocument = match serde_json::from_str(&contents) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("cmux: parsing layout {input:?}: {e}");
+            eprintln!("mtyx: parsing layout {input:?}: {e}");
             return 2;
         }
     };
@@ -1838,7 +1838,7 @@ fn run_layout_apply(global: &GlobalArgs, flags: &FlagMap) -> i32 {
             0
         }
         OneShotOutcome::ServerErr(e) => {
-            eprintln!("cmux: {e}");
+            eprintln!("mtyx: {e}");
             1
         }
         OneShotOutcome::ConnectErr(e) => {
@@ -1848,19 +1848,19 @@ fn run_layout_apply(global: &GlobalArgs, flags: &FlagMap) -> i32 {
     }
 }
 
-/// `cmux layout-export-all --output-dir <dir>` (issue #76 AC3): fetch one
+/// `mtyx layout-export-all --output-dir <dir>` (issue #76 AC3): fetch one
 /// document per workspace and fan them out as `<dir>/<sanitized>.json`.
 fn run_layout_export_all(global: &GlobalArgs, flags: &FlagMap) -> i32 {
     let dir = match flags.required("output-dir") {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("cmux: {}", e.0);
+            eprintln!("mtyx: {}", e.0);
             return 2;
         }
     };
     let dir = PathBuf::from(dir);
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("cmux: creating {}: {e}", dir.display());
+        eprintln!("mtyx: creating {}: {e}", dir.display());
         return 2;
     }
     let request = json!({ "cmd": "layout-export-all", "id": REQUEST_ID });
@@ -1873,13 +1873,13 @@ fn run_layout_export_all(global: &GlobalArgs, flags: &FlagMap) -> i32 {
                 .cloned()
                 .unwrap_or_default();
             if files.is_empty() {
-                eprintln!("cmux: no workspaces to export");
+                eprintln!("mtyx: no workspaces to export");
                 return 1;
             }
             let mut written = Vec::new();
             for file in &files {
                 let Some(name) = file.get("filename").and_then(Value::as_str) else {
-                    eprintln!("cmux: export-all response entry missing filename");
+                    eprintln!("mtyx: export-all response entry missing filename");
                     return 1;
                 };
                 // The server sanitizes, but never trust a path component
@@ -1890,23 +1890,23 @@ fn run_layout_export_all(global: &GlobalArgs, flags: &FlagMap) -> i32 {
                     || name.contains('/')
                     || name.contains('\\')
                 {
-                    eprintln!("cmux: refusing unsafe export filename {name:?}");
+                    eprintln!("mtyx: refusing unsafe export filename {name:?}");
                     return 1;
                 }
                 let path = dir.join(name);
                 if let Err(e) = refuse_symlink(&path) {
-                    eprintln!("cmux: {e}");
+                    eprintln!("mtyx: {e}");
                     return 1;
                 }
                 let pretty = match serde_json::to_string_pretty(file.get("document").unwrap_or(&Value::Null)) {
                     Ok(p) => p,
                     Err(e) => {
-                        eprintln!("cmux: encoding layout document: {e}");
+                        eprintln!("mtyx: encoding layout document: {e}");
                         return 1;
                     }
                 };
                 if let Err(e) = write_json_atomic(&path, &pretty) {
-                    eprintln!("cmux: writing {}: {e}", path.display());
+                    eprintln!("mtyx: writing {}: {e}", path.display());
                     return 1;
                 }
                 written.push(path.display().to_string());
@@ -1921,7 +1921,7 @@ fn run_layout_export_all(global: &GlobalArgs, flags: &FlagMap) -> i32 {
             0
         }
         OneShotOutcome::ServerErr(e) => {
-            eprintln!("cmux: {e}");
+            eprintln!("mtyx: {e}");
             1
         }
         OneShotOutcome::ConnectErr(e) => {
@@ -2165,9 +2165,9 @@ fn print_worktrees(data: &Value, out: &mut dyn Write) -> io::Result<()> {
     Ok(())
 }
 
-/// Human stdout for `cmux get-resolved-config`: pretty-print the
+/// Human stdout for `mtyx get-resolved-config`: pretty-print the
 /// server's resolved chrome as JSON (matches the shape that
-/// `Config::resolved_chrome_value` produces and `cmux attach
+/// `Config::resolved_chrome_value` produces and `mtyx attach
 /// --print-resolved-config` prints for the merged view). `--json`
 /// mode prints the same object compact via `print_response`.
 fn print_get_resolved_config(data: &Value, out: &mut dyn Write) -> io::Result<()> {
@@ -2178,7 +2178,7 @@ fn print_get_resolved_config(data: &Value, out: &mut dyn Write) -> io::Result<()
 fn print_identify(data: &Value, out: &mut dyn Write) -> io::Result<()> {
     writeln!(
         out,
-        "cmux session={} protocol={} pid={}",
+        "mtyx session={} protocol={} pid={}",
         data.get("session").and_then(Value::as_str).unwrap_or(""),
         data.get("protocol").and_then(Value::as_u64).unwrap_or(0),
         data.get("pid").and_then(Value::as_u64).unwrap_or(0)
@@ -2299,7 +2299,7 @@ fn atom(value: Option<&Value>) -> String {
 mod tests {
     //! Tests for `cli` internals that a bin-only crate cannot expose to its
     //! integration-test file (`tests/cli.rs` links only against `mux-core`
-    //! + the `cmux` binary, not `mux-tui`'s private modules). These unit
+    //! + the `mtyx` binary, not `mux-tui`'s private modules). These unit
     //! tests can call `pub(crate)` helpers directly and drive an in-process
     //! `mux-core` server — no subprocess spawn needed.
     use super::*;
@@ -2309,7 +2309,7 @@ mod tests {
     /// AC7/picker (scout-plan T11): the non-TUI helper the picker's `r` flow
     /// uses (`rename_session_at`) renames a live session over a direct socket
     /// connection. Driven against an in-process `mux-core` server so no
-    // `CARGO_BIN_EXE_cmux` (unavailable to in-source unit tests of a bin
+    // `CARGO_BIN_EXE_mtyx` (unavailable to in-source unit tests of a bin
     // crate) is needed. The accept thread outlives the assertion but dies
     // with the test process; the temp socket is unique per run.
     // --- prompt-file frontmatter (issue #77 AC4) ---
@@ -2352,7 +2352,7 @@ mod tests {
     #[test]
     fn rename_session_at_renames_via_socket() {
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let dir = PathBuf::from("/tmp").join(format!("cmux-t11-{}-{stamp}", std::process::id()));
+        let dir = PathBuf::from("/tmp").join(format!("mtyx-t11-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let old_sock = dir.join("old.sock");
 

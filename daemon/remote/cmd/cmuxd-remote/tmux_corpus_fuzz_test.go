@@ -12,7 +12,7 @@ func FuzzTmuxCompatArgParser(f *testing.F) {
 		`split-window -h -P -F #{pane_id}`,
 		`capture-pane -p -S -2000`,
 		`display-message -p -F #{session_name}:#{window_name}:#{pane_id}`,
-		`-L cmux has-session -t main`,
+		`-L mtyx has-session -t main`,
 		`-- send-keys -l C-c Enter`,
 	} {
 		f.Add(seed)
@@ -39,7 +39,7 @@ func FuzzTmuxRenderFormatSupportedSubset(f *testing.F) {
 	}
 
 	ctx := map[string]string{
-		"session_name": "cmux",
+		"session_name": "mtyx",
 		"window_id":    "@workspace",
 		"window_index": "1",
 		"window_name":  "main",

@@ -241,7 +241,7 @@ fn control_socket_round_trip() {
     reader.read_line(&mut line).unwrap();
     let v: serde_json::Value = serde_json::from_str(&line).unwrap();
     assert_eq!(v["ok"], true);
-    assert_eq!(v["data"]["app"], "cmux");
+    assert_eq!(v["data"]["app"], "mtyx");
 
     line.clear();
     writeln!(writer, r#"{{"id":2,"cmd":"list-workspaces"}}"#).unwrap();

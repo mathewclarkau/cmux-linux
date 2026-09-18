@@ -55,4 +55,4 @@ fi
 echo "    using: $("$CARGO_BIN" --version)"
 ZIG="$ZIG_DIR/zig" "$CARGO_BIN" "+1.97" build --release -p mux-tui
 
-echo "==> built: $ROOT/mux/target/release/cmux"
+echo "==> built: $ROOT/mux/target/release/mtyx"

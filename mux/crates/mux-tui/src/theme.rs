@@ -1,4 +1,4 @@
-//! `cmux theme list` — print available bundled theme presets.
+//! `mtyx theme list` — print available bundled theme presets.
 
 use std::path::Path;
 
@@ -7,7 +7,7 @@ use std::path::Path;
 pub fn run_list() -> i32 {
     let themes_dir = std::env::current_dir().unwrap_or_else(|_| Path::new(".").into());
     let entries = std::fs::read_dir(themes_dir.join("themes")).unwrap_or_else(|_| {
-        eprintln!("cmux: themes/ directory not found; is the binary running from the repo root?");
+        eprintln!("mtyx: themes/ directory not found; is the binary running from the repo root?");
         std::process::exit(1);
     });
 

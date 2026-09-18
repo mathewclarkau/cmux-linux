@@ -217,13 +217,13 @@ impl RemoteSession {
 
         // Identify (validates the endpoint) and subscribe to events.
         let ident = session.request(json!({"cmd": "identify"}))?;
-        if ident.get("app").and_then(|v| v.as_str()) != Some("cmux") {
-            anyhow::bail!("socket endpoint is not a cmux session");
+        if ident.get("app").and_then(|v| v.as_str()) != Some("mtyx") {
+            anyhow::bail!("socket endpoint is not a mtyx session");
         }
         let protocol = ident.get("protocol").and_then(|v| v.as_u64()).unwrap_or(0);
         if protocol != SUPPORTED_PROTOCOL_VERSION {
             anyhow::bail!(
-                "unsupported cmux protocol {protocol}; this client requires protocol 6 because attach-stream resize markers are authoritative; restart the cmux server"
+                "unsupported mtyx protocol {protocol}; this client requires protocol 6 because attach-stream resize markers are authoritative; restart the mtyx server"
             );
         }
         session.request(json!({"cmd": "subscribe"}))?;
@@ -426,7 +426,7 @@ impl RemoteSession {
     }
 
     fn log_frame(&self, surface: SurfaceId, line: String) {
-        if std::env::var_os("CMUX_MUX_DEBUG_MIRROR_DUMP").is_none() {
+        if std::env::var_os("MTYX_MUX_DEBUG_MIRROR_DUMP").is_none() {
             return;
         }
         self.frame_logs.lock().unwrap().entry(surface).or_default().push(line);
@@ -563,7 +563,7 @@ impl RemoteSession {
 
 impl Drop for RemoteSession {
     fn drop(&mut self) {
-        let Ok(dir) = std::env::var("CMUX_MUX_DEBUG_MIRROR_DUMP") else {
+        let Ok(dir) = std::env::var("MTYX_MUX_DEBUG_MIRROR_DUMP") else {
             return;
         };
         let _ = fs::create_dir_all(&dir);

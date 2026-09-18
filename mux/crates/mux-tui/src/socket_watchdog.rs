@@ -2,9 +2,9 @@
 //! daemon dies — including the SIGKILL case where signal handlers and
 //! `atexit` never run (issue #27).
 //!
-//! The daemon spawns `cmux socket-watchdog --pid <daemon> --socket <path>`
+//! The daemon spawns `mtyx socket-watchdog --pid <daemon> --socket <path>`
 //! as a detached child right after binding. The watchdog polls until the
-//! target PID is gone (or is no longer a cmux process — PID-reuse guard),
+//! target PID is gone (or is no longer a mtyx process — PID-reuse guard),
 //! then unlinks both files and exits. On graceful shutdown the daemon
 //! already unlinks; the watchdog's second unlink is a no-op.
 
@@ -37,7 +37,7 @@ pub fn spawn(daemon_pid: u32, socket_path: &Path) {
         .spawn();
 }
 
-/// Entry point for `cmux socket-watchdog ...`. Returns a process exit code.
+/// Entry point for `mtyx socket-watchdog ...`. Returns a process exit code.
 pub fn run(args: &[String]) -> i32 {
     let mut pid: Option<u32> = None;
     let mut socket: Option<PathBuf> = None;
@@ -48,13 +48,13 @@ pub fn run(args: &[String]) -> i32 {
             "--pid" => {
                 i += 1;
                 let Some(v) = args.get(i) else {
-                    eprintln!("cmux socket-watchdog: --pid needs a value");
+                    eprintln!("mtyx socket-watchdog: --pid needs a value");
                     return 2;
                 };
                 match v.parse::<u32>() {
                     Ok(p) if p > 1 => pid = Some(p),
                     _ => {
-                        eprintln!("cmux socket-watchdog: invalid --pid {v}");
+                        eprintln!("mtyx socket-watchdog: invalid --pid {v}");
                         return 2;
                     }
                 }
@@ -62,7 +62,7 @@ pub fn run(args: &[String]) -> i32 {
             "--socket" => {
                 i += 1;
                 let Some(v) = args.get(i) else {
-                    eprintln!("cmux socket-watchdog: --socket needs a value");
+                    eprintln!("mtyx socket-watchdog: --socket needs a value");
                     return 2;
                 };
                 socket = Some(PathBuf::from(v));
@@ -72,7 +72,7 @@ pub fn run(args: &[String]) -> i32 {
                 return 0;
             }
             other => {
-                eprintln!("cmux socket-watchdog: unknown argument {other}");
+                eprintln!("mtyx socket-watchdog: unknown argument {other}");
                 print_usage();
                 return 2;
             }
@@ -81,11 +81,11 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     let Some(pid) = pid else {
-        eprintln!("cmux socket-watchdog: --pid is required");
+        eprintln!("mtyx socket-watchdog: --pid is required");
         return 2;
     };
     let Some(socket) = socket else {
-        eprintln!("cmux socket-watchdog: --socket is required");
+        eprintln!("mtyx socket-watchdog: --socket is required");
         return 2;
     };
 
@@ -97,23 +97,23 @@ pub fn run(args: &[String]) -> i32 {
 fn print_usage() {
     eprint!(
         "\
-cmux socket-watchdog — remove a session socket after the daemon dies
+mtyx socket-watchdog — remove a session socket after the daemon dies
 
 USAGE:
-  cmux socket-watchdog --pid <daemon-pid> --socket <path>
+  mtyx socket-watchdog --pid <daemon-pid> --socket <path>
 
 Not intended for interactive use; the daemon spawns this automatically.
 "
     );
 }
 
-/// Block until `pid` is dead or no longer a cmux process (PID reuse).
+/// Block until `pid` is dead or no longer a mtyx process (PID reuse).
 fn watch_until_dead(pid: u32, _socket: &Path) {
     loop {
         if !is_process_alive(pid) {
             break;
         }
-        // PID reused by something that is not cmux → treat as dead so we
+        // PID reused by something that is not mtyx → treat as dead so we
         // don't hold the socket forever for the wrong owner.
         if !is_cmux_process(pid) {
             break;
@@ -138,7 +138,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn watchdog_unlinks_after_target_dies() {
         let dir = std::env::temp_dir().join(format!(
-            "cmux-wd-test-{}-{}",
+            "mtyx-wd-test-{}-{}",
             std::process::id(),
             Instant::now().elapsed().as_nanos()
         ));

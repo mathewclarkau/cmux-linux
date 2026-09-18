@@ -79,7 +79,7 @@ impl HeadlessServer {
         let child = Command::new(bin())
             .args(["--headless", "--socket"])
             .arg(&socket)
-            .env("CMUX_MUX_CONFIG", &config)
+            .env("MTYX_MUX_CONFIG", &config)
             .env("XDG_STATE_HOME", &dir)
             .env("SHELL", "/bin/sh")
             .stdout(Stdio::null())
@@ -120,12 +120,12 @@ fn cli_verbs_cover_command_output_errors_and_streams() {
 
     let identify = cli(&server, &["identify"]);
     assert_success(&identify);
-    assert!(String::from_utf8_lossy(&identify.stdout).starts_with("cmux session="));
+    assert!(String::from_utf8_lossy(&identify.stdout).starts_with("mtyx session="));
 
     let identify_json = cli(&server, &["--json", "identify"]);
     assert_success(&identify_json);
     let value: serde_json::Value = serde_json::from_slice(&identify_json.stdout).unwrap();
-    assert_eq!(value.get("app").and_then(|v| v.as_str()), Some("cmux"));
+    assert_eq!(value.get("app").and_then(|v| v.as_str()), Some("mtyx"));
     assert!(value.get("protocol").and_then(|v| v.as_u64()).unwrap_or(0) >= 5);
     // Issue #71: `identify` carried the same stale CARGO_PKG_VERSION as
     // `-V` did; both now report the build-time version.
@@ -136,7 +136,7 @@ fn cli_verbs_cover_command_output_errors_and_streams() {
     let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
     assert!(surface > 0, "new-workspace should print the new surface id");
 
-    let marker = format!("cmux_cli_marker_{}", std::process::id());
+    let marker = format!("mtyx_cli_marker_{}", std::process::id());
     let marker_suffix = std::process::id().to_string();
     let send = cli(
         &server,
@@ -145,7 +145,7 @@ fn cli_verbs_cover_command_output_errors_and_streams() {
             "--surface",
             &surface.to_string(),
             "--text",
-            &format!("printf 'cmux_cli_marker_%s\\n' '{marker_suffix}'\n"),
+            &format!("printf 'mtyx_cli_marker_%s\\n' '{marker_suffix}'\n"),
         ],
     );
     assert_success(&send);
@@ -166,7 +166,7 @@ fn cli_verbs_cover_command_output_errors_and_streams() {
         .args(["--socket"])
         .arg(server.dir.join("missing.sock"))
         .arg("identify")
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_eq!(bogus.status.code(), Some(3));
@@ -431,7 +431,7 @@ fn detect_agents_batch_returns_map_for_every_pane() {
     assert!(text.contains(&format!("{s2} unknown")), "rows were {text:?}");
 }
 
-/// Issue #78 AC4: `cmux agent-pattern add <name> --pattern <marker>`
+/// Issue #78 AC4: `mtyx agent-pattern add <name> --pattern <marker>`
 /// extends the live registry (noun form), `list` shows it, detection
 /// hits it, duplicates are rejected, and `remove` drops it.
 #[test]
@@ -790,7 +790,7 @@ fn wait_agent_status_blocks_until_report() {
             .args(["--socket"])
             .arg(&socket)
             .args(["report-agent", "--surface", &surface_str, "--state", "idle", "--source", "hook"])
-            .env_remove("CMUX_MUX_SOCKET")
+            .env_remove("MTYX_MUX_SOCKET")
             .output()
             .unwrap();
     });
@@ -1033,7 +1033,7 @@ fn wait_agent_status_errors_when_surface_exits() {
                 "--timeout",
                 "10000",
             ])
-            .env_remove("CMUX_MUX_SOCKET")
+            .env_remove("MTYX_MUX_SOCKET")
             .output()
             .unwrap()
     });
@@ -1070,7 +1070,7 @@ fn agent_send_types_text_without_enter() {
     // unexecuted until the caller sends Enter separately.
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
     let marker_file =
-        std::path::PathBuf::from(format!("/tmp/cmux-agent-send-{stamp}-{}", std::process::id()));
+        std::path::PathBuf::from(format!("/tmp/mtyx-agent-send-{stamp}-{}", std::process::id()));
     let marker_file = marker_file.to_str().unwrap().to_string();
     let typed = format!("touch {marker_file}");
 
@@ -1205,9 +1205,9 @@ fn report_agent_carries_message_and_agent_name() {
 
 #[test]
 fn report_agent_defaults_surface_from_env_and_source_to_socket() {
-    // Issue #75 AC1: inside a cmux pane, `cmux report-agent --state X
+    // Issue #75 AC1: inside a mtyx pane, `mtyx report-agent --state X
     // --message Y` self-reports without knowing its own surface id (from
-    // $CMUX_MUX_SURFACE, which every pane child inherits) and without
+    // $MTYX_MUX_SURFACE, which every pane child inherits) and without
     // --source (defaults to "socket", preserving the hook-authority
     // model).
     let server = HeadlessServer::start("agent-env-defaults");
@@ -1219,8 +1219,8 @@ fn report_agent_defaults_surface_from_env_and_source_to_socket() {
         .args(["--socket"])
         .arg(&server.socket)
         .args(["report-agent", "--state", "idle", "--message", "waiting for work"])
-        .env_remove("CMUX_MUX_SOCKET")
-        .env("CMUX_MUX_SURFACE", surface.to_string())
+        .env_remove("MTYX_MUX_SOCKET")
+        .env("MTYX_MUX_SURFACE", surface.to_string())
         .output()
         .unwrap();
     assert_success(&report);
@@ -1235,14 +1235,14 @@ fn report_agent_defaults_surface_from_env_and_source_to_socket() {
     assert_eq!(agents[0]["state"].as_str(), Some("idle"));
     assert_eq!(agents[0]["message"].as_str(), Some("waiting for work"));
 
-    // Without --surface and without $CMUX_MUX_SURFACE the verb errors
+    // Without --surface and without $MTYX_MUX_SURFACE the verb errors
     // (usage exit 2, before any socket traffic).
     let missing = Command::new(bin())
         .args(["--socket"])
         .arg(&server.socket)
         .args(["report-agent", "--state", "idle"])
-        .env_remove("CMUX_MUX_SOCKET")
-        .env_remove("CMUX_MUX_SURFACE")
+        .env_remove("MTYX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SURFACE")
         .output()
         .unwrap();
     assert_eq!(missing.status.code(), Some(2));
@@ -1357,7 +1357,7 @@ fn workspace_color_shorthand_creates_named_workspace() {
         .arg("--socket")
         .arg(&server.socket)
         .args(["workspace-color", "Build Team", "green"])
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -1396,11 +1396,11 @@ fn set_default_colors_regression_keeps_working() {
 // run (regression test for the symlink_metadata pre-check in claude_hook.rs).
 #[test]
 fn install_skill_refuses_symlinks() {
-    // AC1 setup: a temp project dir whose .claude/skills/cmux-orchestration/SKILL.md
+    // AC1 setup: a temp project dir whose .claude/skills/mtyx-orchestration/SKILL.md
     // is a symlink to a temp file with known content. Drop guard removes both.
     let guard = SymlinkSkillFixture::new();
 
-    // Invoke the REAL cmux binary (integration test, not a unit call into
+    // Invoke the REAL mtyx binary (integration test, not a unit call into
     // run_install_skill), so AC3's "remove the check and the test fails" holds.
     // `claude` MUST be arg[0] (main.rs dispatches it before --socket parsing),
     // so we cannot use the cli() helper; install-skill never used the socket
@@ -1408,9 +1408,9 @@ fn install_skill_refuses_symlinks() {
     let output = Command::new(bin())
         .args(["claude", "install-skill"])
         .current_dir(&guard.project_dir)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
-        .expect("failed to spawn cmux claude install-skill");
+        .expect("failed to spawn mtyx claude install-skill");
 
     // Assertion 1 — exit code is non-zero (the refusal path returns 1;
     // claude_hook.rs:474).
@@ -1460,12 +1460,12 @@ fn grok_install_hooks_writes_native_schema() {
     let install = Command::new(bin())
         .args(["grok", "install-hooks"])
         .current_dir(&project)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&install);
 
-    let path = project.join(".grok").join("hooks").join("cmux-agent-state.json");
+    let path = project.join(".grok").join("hooks").join("mtyx-agent-state.json");
     assert!(path.is_file(), "expected hooks at {}", path.display());
     let value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -1503,7 +1503,7 @@ fn grok_install_hooks_cleans_legacy_file() {
   "hooks": [
     {
       "event": "PreToolUse",
-      "command": "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state working --source grok"
+      "command": "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state working --source grok"
     }
   ]
 }"#,
@@ -1513,13 +1513,13 @@ fn grok_install_hooks_cleans_legacy_file() {
     let install = Command::new(bin())
         .args(["grok", "install-hooks"])
         .current_dir(&project)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&install);
     assert!(
         !project.join(".grok").join("hooks.json").exists(),
-        "legacy file that only held cmux hooks should be removed"
+        "legacy file that only held mtyx hooks should be removed"
     );
 
     fs::remove_dir_all(project).unwrap();
@@ -1528,7 +1528,7 @@ fn grok_install_hooks_cleans_legacy_file() {
 #[test]
 fn grok_install_hooks_refuses_symlinks() {
     let project = unique_temp_dir("grok-install-hooks-symlink");
-    let hook_path = project.join(".grok").join("hooks").join("cmux-agent-state.json");
+    let hook_path = project.join(".grok").join("hooks").join("mtyx-agent-state.json");
     fs::create_dir_all(hook_path.parent().unwrap()).unwrap();
     let target = project.join("target.json");
     fs::write(&target, "{\"keep\":true}\n").unwrap();
@@ -1537,7 +1537,7 @@ fn grok_install_hooks_refuses_symlinks() {
     let output = Command::new(bin())
         .args(["grok", "install-hooks"])
         .current_dir(&project)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert!(
@@ -1564,17 +1564,17 @@ fn grok_install_hooks_refuses_symlinks() {
 // Regression test for the symlink_metadata guard added to
 // grok_hook::run_install_skill (PR #24 follow-up). Sibling to the Claude
 // test above (PR #18 / issue #10) — the grok non-global skill path is
-// `.agents/skills/cmux-orchestration/SKILL.md` (see grok_hook.rs:147-149),
+// `.agents/skills/mtyx-orchestration/SKILL.md` (see grok_hook.rs:147-149),
 // so the fixture is built with `top = ".agents"`. Exercises the same
 // attack vector on the new grok install path: an attacker-placed symlink
 // must NOT silently redirect fs::write at the target file.
 #[test]
 fn install_skill_refuses_symlinks_grok() {
-    // AC1 setup: a temp project dir whose .agents/skills/cmux-orchestration/SKILL.md
+    // AC1 setup: a temp project dir whose .agents/skills/mtyx-orchestration/SKILL.md
     // is a symlink to a temp file with known content. Drop guard removes both.
     let guard = SymlinkSkillFixture::new_for(".agents", "install-skill-symlink-grok");
 
-    // Invoke the REAL cmux binary (integration test, not a unit call into
+    // Invoke the REAL mtyx binary (integration test, not a unit call into
     // run_install_skill), so removing the check makes this test fail.
     // `grok` MUST be arg[0] (main.rs dispatches it before --socket parsing);
     // install-skill never uses the socket anyway. current_dir pins
@@ -1582,9 +1582,9 @@ fn install_skill_refuses_symlinks_grok() {
     let output = Command::new(bin())
         .args(["grok", "install-skill"])
         .current_dir(&guard.project_dir)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
-        .expect("failed to spawn cmux grok install-skill");
+        .expect("failed to spawn mtyx grok install-skill");
 
     // Assertion 1 — exit code is non-zero (the refusal path returns 1;
     // grok_hook.rs::run_install_skill install branch).
@@ -1675,7 +1675,7 @@ fn trigger_flash_returns_success() {
 
     // 3. Unknown workspace id -> server-side `anyhow::bail!("unknown workspace {workspace}")`
     //    (server.rs line 863), surfaced by `print_response` (cli.rs lines 550–555)
-    //    as exit code 1 and a bare (no `cmux:` prefix) stderr line
+    //    as exit code 1 and a bare (no `mtyx:` prefix) stderr line
     //    `unknown workspace 99999`.
     let out = cli(&server, &["trigger-flash", "--workspace", "99999"]);
     assert_eq!(out.status.code(), Some(1), "unknown workspace should fail with exit 1");
@@ -1689,7 +1689,7 @@ fn trigger_flash_returns_success() {
     // 4. Missing --workspace flag entirely -> client-side usage error from
     //    `build_trigger_flash` (cli.rs lines 696–701) -> `flags.required_u64("workspace")`
     //    (cli.rs lines 798–804) -> `UsageError("--workspace is required")` (line 799),
-    //    which `run_command` prints as `cmux: --workspace is required` (line 408)
+    //    which `run_command` prints as `mtyx: --workspace is required` (line 408)
     //    and returns exit code 2. This is the same usage-error contract the
     //    template asserts for `set-workspace-color`'s missing `--colour` case
     //    (lines 377–378: `assert_eq!(missing.status.code(), Some(2));`).
@@ -1708,7 +1708,7 @@ fn assert_subscribe_reports_tree_changed(server: &HeadlessServer) {
         .args(["--socket"])
         .arg(&server.socket)
         .arg("subscribe")
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1773,7 +1773,7 @@ fn stream_preserves_partial_line_across_read_timeout() {
         .args(["--socket"])
         .arg(&socket)
         .arg("subscribe")
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     server.join().unwrap();
@@ -1814,7 +1814,7 @@ fn git_repo_fixture(name: &str) -> PathBuf {
         String::from_utf8_lossy(&out.stderr)
     );
     let out = Command::new("git")
-        .args(["-c", "user.email=cmux@test", "-c", "user.name=cmux"])
+        .args(["-c", "user.email=mtyx@test", "-c", "user.name=mtyx"])
         .args(["commit", "--allow-empty", "-m", "init"])
         .current_dir(&dir)
         .output()
@@ -2052,11 +2052,11 @@ fn pane_worktree_create_failure_returns_exit_1_and_cwd_unchanged() {
 #[test]
 fn worktree_pattern_config_overrides_default() {
     // AC6: `[[worktree_pattern]]` in mux.toml redirects where worktrees
-    // are created. (The issue text says `cmux.toml`; cmux reads
+    // are created. (The issue text says `cmux.toml`; mtyx reads
     // mux.toml/mux.json — see the scout plan's config-path correction.)
     let server = HeadlessServer::start_with_config(
         "pane-worktree-config",
-        "[[worktree_pattern]]\npattern = \"../cmux-wt-<repo>-<branch>\"\n",
+        "[[worktree_pattern]]\npattern = \"../mtyx-wt-<repo>-<branch>\"\n",
     );
     let repo = git_repo_fixture("pane-worktree-config-repo");
     let workspace = cli(&server, &["new-workspace", "--name", "wt-config"]);
@@ -2081,12 +2081,12 @@ fn worktree_pattern_config_overrides_default() {
     assert_success(&created);
     let value: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
     let path = value["path"].as_str().expect("worktree path").to_string();
-    // ../cmux-wt-<repo>-<branch> resolved against the repo root; the
+    // ../mtyx-wt-<repo>-<branch> resolved against the repo root; the
     // <repo> placeholder keeps the path unique per run (the repo fixture
     // dir is unique), so leftovers never collide across runs.
     assert!(
         path.ends_with(&format!(
-            "cmux-wt-{}-feat-pattern",
+            "mtyx-wt-{}-feat-pattern",
             repo.file_name().unwrap().to_str().unwrap()
         )),
         "configured pattern should win over the default, got {path}"
@@ -2334,7 +2334,7 @@ fn pane_worktree_three_word_alias_matches_flat_verb() {
 // Regression test for the symlink_metadata guard added to
 // grok_hook::run_install_skill (PR #24 follow-up). Sibling to the Claude
 // test above (PR #18 / issue #10) — the grok non-global skill path is
-// `.agents/skills/cmux-orchestration/SKILL.md` (see grok_hook.rs:147-149),
+// `.agents/skills/mtyx-orchestration/SKILL.md` (see grok_hook.rs:147-149),
 // so the fixture is built with `top = ".agents"`. Exercises the same
 // attack vector on the new grok install path: an attacker-placed symlink
 // must NOT silently redirect fs::write at the target file.
@@ -2347,7 +2347,7 @@ fn cli(server: &HeadlessServer, args: &[&str]) -> Output {
         .args(["--socket"])
         .arg(&server.socket)
         .args(args)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap()
 }
@@ -2364,24 +2364,24 @@ fn assert_success(output: &Output) {
 
 fn unique_temp_dir(name: &str) -> PathBuf {
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    PathBuf::from("/tmp").join(format!("cmux-cli-{name}-{}-{stamp}", std::process::id()))
+    PathBuf::from("/tmp").join(format!("mtyx-cli-{name}-{}-{stamp}", std::process::id()))
 }
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_cmux")
+    env!("CARGO_BIN_EXE_mtyx")
 }
 
 /// Fixture for the install-skill symlink-refusal test.
 ///
-/// Owns a temp "project" dir acting as CWD for `cmux claude install-skill`
-/// (whose non-global `skill_path` is `.claude/skills/cmux-orchestration/SKILL.md`,
+/// Owns a temp "project" dir acting as CWD for `mtyx claude install-skill`
+/// (whose non-global `skill_path` is `.claude/skills/mtyx-orchestration/SKILL.md`,
 /// relative to CWD — see claude_hook.rs:427-432). Inside it we place:
-///   <project>/.claude/skills/cmux-orchestration/SKILL.md -> <project>/target.txt
+///   <project>/.claude/skills/mtyx-orchestration/SKILL.md -> <project>/target.txt
 ///
 /// On drop we remove the symlink, the target file, and the whole project dir,
 /// even if the test panicked — mirroring HeadlessServer::drop (tests/cli.rs:45-52).
 struct SymlinkSkillFixture {
-    /// Temp dir used as `current_dir` for the cmux subprocess.
+    /// Temp dir used as `current_dir` for the mtyx subprocess.
     project_dir: PathBuf,
     /// Absolute path of the symlink itself (the path install-skill targets).
     symlink_path: PathBuf,
@@ -2398,7 +2398,7 @@ impl SymlinkSkillFixture {
     }
 
     /// Build a fixture for an install-skill variant whose non-global path is
-    /// `<top>/skills/cmux-orchestration/SKILL.md` relative to CWD (e.g.
+    /// `<top>/skills/mtyx-orchestration/SKILL.md` relative to CWD (e.g.
     /// `.claude` for claude, `.agents` for grok — see grok_hook.rs:147-149).
     /// `tag` keeps the temp dir name unique per variant so parallel test
     /// runs never collide.
@@ -2411,9 +2411,9 @@ impl SymlinkSkillFixture {
 
         // The exact non-global path install-skill will write to.
         let symlink_path: PathBuf =
-            project_dir.join(top).join("skills").join("cmux-orchestration").join("SKILL.md");
+            project_dir.join(top).join("skills").join("mtyx-orchestration").join("SKILL.md");
         fs::create_dir_all(symlink_path.parent().expect("symlink_path has parent"))
-            .expect("mkdir skills/cmux-orchestration");
+            .expect("mkdir skills/mtyx-orchestration");
 
         // The real file the symlink redirects to. Putting it inside the same
         // temp project dir keeps cleanup to one remove_dir_all on drop.
@@ -2480,7 +2480,7 @@ fn list_sessions_lists_active_headless_session() {
         .arg(&socket)
         .arg("list-sessions")
         .env("XDG_RUNTIME_DIR", &dir)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2493,7 +2493,7 @@ fn list_sessions_lists_active_headless_session() {
         .arg(&socket)
         .args(["--json", "list-sessions"])
         .env("XDG_RUNTIME_DIR", &dir)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&json_output);
@@ -2539,7 +2539,7 @@ fn kill_session_terminates_daemon_and_cleans_files() {
         .arg(&socket)
         .args(["kill-session", "--session", "target-sess"])
         .env("XDG_RUNTIME_DIR", &dir)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2559,7 +2559,7 @@ fn kill_session_terminates_daemon_and_cleans_files() {
         .arg(&socket)
         .args(["kill-session", "--session", "nonexistent"])
         .env("XDG_RUNTIME_DIR", &dir)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_eq!(missing.status.code(), Some(1));
@@ -2600,7 +2600,7 @@ fn kill_stale_removes_stale_pair_and_leaves_live_untouched() {
         .arg(&live_socket)
         .args(["kill-stale"])
         .env("XDG_RUNTIME_DIR", &dir)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2616,7 +2616,7 @@ fn kill_stale_removes_stale_pair_and_leaves_live_untouched() {
         .arg(&live_socket)
         .args(["kill-stale"])
         .env("XDG_RUNTIME_DIR", &dir)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output2);
@@ -2626,7 +2626,7 @@ fn kill_stale_removes_stale_pair_and_leaves_live_untouched() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// `cmux attach --session-list --json` lists discovered sessions with a
+/// `mtyx attach --session-list --json` lists discovered sessions with a
 /// `socket_path` per entry (issue #63, layer L1). Same shape as
 /// `list-sessions --json` plus `socket_path`; exit 0. Modelled on
 /// `list_sessions_lists_active_headless_session` (:904).
@@ -2659,7 +2659,7 @@ fn attach_session_list_json_includes_socket_path() {
         .args(["attach", "--session-list", "--json", "--socket"])
         .arg(&socket)
         .env("XDG_RUNTIME_DIR", &dir)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2718,7 +2718,7 @@ fn attach_session_list_json_marks_stale() {
         .args(["attach", "--session-list", "--json", "--socket"])
         .arg(&live_socket)
         .env("XDG_RUNTIME_DIR", &dir)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2754,7 +2754,7 @@ fn attach_session_list_json_empty() {
         .args(["attach", "--session-list", "--json", "--socket"])
         .arg(&socket)
         .env("XDG_RUNTIME_DIR", &dir)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
     assert_success(&output);
@@ -2859,7 +2859,7 @@ fn sigkill_watchdog_removes_socket_and_pid_within_5s() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// Issue #40: `cmux attach --show-local-config-resolution` is a dry run that
+/// Issue #40: `mtyx attach --show-local-config-resolution` is a dry run that
 /// resolves the local overlay file (theme/sidebar_rail + keys/prefix here)
 /// and prints the path plus the override count, without attaching to a
 /// server or starting the TUI. Exits 0 and needs no live session.
@@ -2867,10 +2867,10 @@ fn sigkill_watchdog_removes_socket_and_pid_within_5s() {
 fn show_local_config_resolution_prints_path_without_attaching() {
     let dir = unique_temp_dir("show-local-config-res");
     fs::create_dir_all(&dir).unwrap();
-    let cmux_dir = dir.join("cmux");
-    fs::create_dir_all(&cmux_dir).unwrap();
+    let mtyx_dir = dir.join("mattyx");
+    fs::create_dir_all(&mtyx_dir).unwrap();
     fs::write(
-        cmux_dir.join("mux.local.toml"),
+        mtyx_dir.join("mux.local.toml"),
         "[theme]\nsidebar_rail = 42\n[keys]\nprefix = \"ctrl+s\"\n",
     )
     .unwrap();
@@ -2878,9 +2878,9 @@ fn show_local_config_resolution_prints_path_without_attaching() {
     let output = Command::new(bin())
         .args(["attach", "--show-local-config-resolution"])
         .env("XDG_CONFIG_HOME", &dir)
-        .env_remove("CMUX_LOCAL_CONFIG")
-        .env_remove("CMUX_MUX_CONFIG")
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_LOCAL_CONFIG")
+        .env_remove("MTYX_MUX_CONFIG")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
 
@@ -2907,11 +2907,11 @@ fn show_local_config_resolution_prints_path_without_attaching() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// Issue #40 round-2 blocker 1: a thin-client `cmux attach
+/// Issue #40 round-2 blocker 1: a thin-client `mtyx attach
 /// --apply-local-config` must layer the local overlay on top of the
 /// *server's* resolved config, not replace it with the laptop's own. We
 /// start a headless server whose `mux.json` sets a distinctive theme
-/// colour (server-side truth), then run `cmux attach --socket <sock>
+/// colour (server-side truth), then run `mtyx attach --socket <sock>
 /// --apply-local-config --print-resolved-config` with a local overlay
 /// that overrides a key binding (NOT theme), and assert the merged
 /// chrome JSON carries the server's theme colour AND the local overlay's
@@ -2926,9 +2926,9 @@ fn attach_overlay_layers_over_server_config() {
     // Server-side config: only a theme colour, so the local overlay (keys
     // only) must NOT clobber it.
     let server_cfg_root = dir.join("server-config");
-    let server_cmux_dir = server_cfg_root.join("cmux");
-    fs::create_dir_all(&server_cmux_dir).unwrap();
-    fs::write(server_cmux_dir.join("mux.json"), r##"{"theme": {"sidebar_rail": "#112233"}}"##)
+    let server_mtyx_dir = server_cfg_root.join("mattyx");
+    fs::create_dir_all(&server_mtyx_dir).unwrap();
+    fs::write(server_mtyx_dir.join("mux.json"), r##"{"theme": {"sidebar_rail": "#112233"}}"##)
         .unwrap();
 
     let socket = dir.join("mux.sock");
@@ -2936,7 +2936,7 @@ fn attach_overlay_layers_over_server_config() {
         .args(["--headless", "--socket"])
         .arg(&socket)
         .env("XDG_CONFIG_HOME", &server_cfg_root)
-        .env_remove("CMUX_MUX_CONFIG")
+        .env_remove("MTYX_MUX_CONFIG")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -2960,17 +2960,17 @@ fn attach_overlay_layers_over_server_config() {
     // Local laptop config dir: a local overlay that overrides a key
     // binding only, not theme, so the server theme must survive.
     let local_cfg_root = dir.join("local-config");
-    let local_cmux_dir = local_cfg_root.join("cmux");
-    fs::create_dir_all(&local_cmux_dir).unwrap();
-    fs::write(local_cmux_dir.join("mux.local.toml"), "[keys]\nprefix = \"ctrl+s\"\n").unwrap();
+    let local_mtyx_dir = local_cfg_root.join("mattyx");
+    fs::create_dir_all(&local_mtyx_dir).unwrap();
+    fs::write(local_mtyx_dir.join("mux.local.toml"), "[keys]\nprefix = \"ctrl+s\"\n").unwrap();
 
     let output = Command::new(bin())
         .args(["attach", "--socket"])
         .arg(&socket)
         .args(["--apply-local-config", "--print-resolved-config"])
         .env("XDG_CONFIG_HOME", &local_cfg_root)
-        .env_remove("CMUX_LOCAL_CONFIG")
-        .env_remove("CMUX_MUX_CONFIG")
+        .env_remove("MTYX_LOCAL_CONFIG")
+        .env_remove("MTYX_MUX_CONFIG")
         .output()
         .unwrap();
 
@@ -3004,11 +3004,11 @@ fn attach_overlay_layers_over_server_config() {
 }
 
 /// Issue #40 blocker 1: the `get-resolved-config` protocol verb is also
-/// exposed as a standalone read-only CLI verb (`cmux get-resolved-config`)
+/// exposed as a standalone read-only CLI verb (`mtyx get-resolved-config`)
 /// so ops scripts can inspect the server's chrome without attaching. It
 /// must return the server's published chrome verbatim (no local overlay).
 /// We start a headless server whose config sets a distinctive theme
-/// colour, then call `cmux --json get-resolved-config` against its
+/// colour, then call `mtyx --json get-resolved-config` against its
 /// socket and assert the colour is present in the returned object.
 #[test]
 fn get_resolved_config_cli_verb_returns_server_chrome() {
@@ -3016,9 +3016,9 @@ fn get_resolved_config_cli_verb_returns_server_chrome() {
 
     // Server-side config: a distinctive theme colour only.
     let server_cfg_root = dir.join("server-config");
-    let server_cmux_dir = server_cfg_root.join("cmux");
-    fs::create_dir_all(&server_cmux_dir).unwrap();
-    fs::write(server_cmux_dir.join("mux.json"), r##"{"theme": {"sidebar_rail": "#445566"}}"##)
+    let server_mtyx_dir = server_cfg_root.join("mattyx");
+    fs::create_dir_all(&server_mtyx_dir).unwrap();
+    fs::write(server_mtyx_dir.join("mux.json"), r##"{"theme": {"sidebar_rail": "#445566"}}"##)
         .unwrap();
 
     let socket = dir.join("mux.sock");
@@ -3026,7 +3026,7 @@ fn get_resolved_config_cli_verb_returns_server_chrome() {
         .args(["--headless", "--socket"])
         .arg(&socket)
         .env("XDG_CONFIG_HOME", &server_cfg_root)
-        .env_remove("CMUX_MUX_CONFIG")
+        .env_remove("MTYX_MUX_CONFIG")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -3051,7 +3051,7 @@ fn get_resolved_config_cli_verb_returns_server_chrome() {
         .args(["--socket"])
         .arg(&socket)
         .args(["--json", "get-resolved-config"])
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
         .unwrap();
 
@@ -3064,7 +3064,7 @@ fn get_resolved_config_cli_verb_returns_server_chrome() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.status.success(), "cmux get-resolved-config failed: {combined}");
+    assert!(output.status.success(), "mtyx get-resolved-config failed: {combined}");
 
     let chrome: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|e| panic!("expected chrome JSON on stdout, parse failed:{e}\n{combined}"));
@@ -3075,8 +3075,8 @@ fn get_resolved_config_cli_verb_returns_server_chrome() {
     );
 }
 
-/// Issue #42 (scoped first PR): the `cmux plugin` verb group manages
-/// `cmux-plugin.toml` manifests on disk only (no execution yet). We
+/// Issue #42 (scoped first PR): the `mtyx plugin` verb group manages
+/// `mtyx-plugin.toml` manifests on disk only (no execution yet). We
 /// install a fixture manifest against a HeadlessServer-style temp env
 /// (an isolated XDG_DATA_HOME under the server's temp dir), then list
 /// it, then uninstall and confirm `list` reports empty. The server
@@ -3089,7 +3089,7 @@ fn plugin_install_list_uninstall_round_trip() {
     fs::create_dir_all(&data_home).unwrap();
     let manifest_dir = server.dir.join("manifest");
     fs::create_dir_all(&manifest_dir).unwrap();
-    let manifest_path = manifest_dir.join("cmux-plugin.toml");
+    let manifest_path = manifest_dir.join("mtyx-plugin.toml");
     fs::write(
         &manifest_path,
         "[plugin]\nname = \"pifactory-fleet\"\nentry = \"bin/fleet.wasm\"\nverbs = [\"deploy\", \"rollback\"]\n",
@@ -3100,7 +3100,7 @@ fn plugin_install_list_uninstall_round_trip() {
         Command::new(bin())
             .args(args)
             .env("XDG_DATA_HOME", &data_home)
-            .env_remove("CMUX_MUX_SOCKET")
+            .env_remove("MTYX_MUX_SOCKET")
             .output()
             .unwrap()
     };
@@ -3142,7 +3142,7 @@ fn plugin_install_list_uninstall_round_trip() {
 
 /// Issue #42 AC6: the shipped example plugin at
 /// `mux/spec/plugins/pifactory-fleet/` has a valid manifest that
-/// installs and lists correctly via the `cmux plugin` verb group.
+/// installs and lists correctly via the `mtyx plugin` verb group.
 /// This guards against schema drift between the example manifest and
 /// the loader's `ManifestFile` parser.
 #[test]
@@ -3152,7 +3152,7 @@ fn plugin_shipped_example_manifest_installs() {
     fs::create_dir_all(&data_home).unwrap();
 
     let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../spec/plugins/pifactory-fleet/cmux-plugin.toml")
+        .join("../../spec/plugins/pifactory-fleet/mtyx-plugin.toml")
         .canonicalize()
         .unwrap_or_else(|_| {
             panic!("shipped example manifest not found relative to {}", env!("CARGO_MANIFEST_DIR"))
@@ -3167,7 +3167,7 @@ fn plugin_shipped_example_manifest_installs() {
         Command::new(bin())
             .args(args)
             .env("XDG_DATA_HOME", &data_home)
-            .env_remove("CMUX_MUX_SOCKET")
+            .env_remove("MTYX_MUX_SOCKET")
             .output()
             .unwrap()
     };
@@ -3194,7 +3194,7 @@ fn plugin_shipped_example_manifest_installs() {
     assert!(list_out.contains("cmux_call"), "verb allowlist should include cmux_call: {list_out}");
 }
 
-/// Issue #59: `cmux --version` / `-V` print `cmux <version>` and exit 0.
+/// Issue #59: `mtyx --version` / `-V` print `mtyx <version>` and exit 0.
 ///
 /// Issue #71: the version is the build-time constant, not
 /// `CARGO_PKG_VERSION`. Pinning this test to the manifest was why the
@@ -3203,10 +3203,10 @@ fn plugin_shipped_example_manifest_installs() {
 /// The independent checks below are the part that would have caught it.
 #[test]
 fn version_flag_prints_build_version_and_exits_zero() {
-    let expected = format!("cmux {}", mux_core::VERSION);
+    let expected = format!("mtyx {}", mux_core::VERSION);
 
     let run = |args: &[&str]| {
-        Command::new(bin()).args(args).env_remove("CMUX_MUX_SOCKET").output().unwrap()
+        Command::new(bin()).args(args).env_remove("MTYX_MUX_SOCKET").output().unwrap()
     };
 
     for args in [&["--version"][..], &["-V"][..], &["--headless", "--version"][..]] {
@@ -3253,7 +3253,7 @@ fn version_is_not_the_stale_placeholder() {
 }
 
 // =====================================================================
-// cmux rename-session (issue #63 L2) — full TDD acceptance suite.
+// mtyx rename-session (issue #63 L2) — full TDD acceptance suite.
 //
 // These tests are written RED (cookbook Rule 5) before the feature is
 // implemented. At this commit the `rename-session` verb does not exist
@@ -3300,12 +3300,12 @@ fn read_pid_file(path: &std::path::Path) -> u32 {
         .unwrap()
 }
 
-/// Run a cmux CLI subcommand against `--socket <socket>` with CMUX_MUX_SOCKET
+/// Run a mtyx CLI subcommand against `--socket <socket>` with MTYX_MUX_SOCKET
 /// unset (so resolution is deterministic) and return its output.
 fn run_against(socket: &std::path::Path, xdg: &std::path::Path, args: &[&str]) -> Output {
     let mut cmd = Command::new(bin());
     cmd.args(["--socket"]).arg(socket).args(args);
-    cmd.env("XDG_RUNTIME_DIR", xdg).env_remove("CMUX_MUX_SOCKET");
+    cmd.env("XDG_RUNTIME_DIR", xdg).env_remove("MTYX_MUX_SOCKET");
     cmd.output().unwrap()
 }
 
@@ -3435,12 +3435,12 @@ fn old_session_name_gone_after_rename() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// AC4: existing panes keep the `CMUX_MUX_SOCKET` they inherited at spawn
+/// AC4: existing panes keep the `MTYX_MUX_SOCKET` they inherited at spawn
 /// (the old path) for their lifetime; panes spawned AFTER the rename
 /// inherit the new path. This is the lifetime guarantee (intentional, not
 /// a bug) documented in USAGE and the server.rs docstring.
 #[test]
-fn rename_preserves_inherited_cmux_socket_in_existing_panes() {
+fn rename_preserves_inherited_mtyx_socket_in_existing_panes() {
     let dir = unique_temp_dir("rename-t4");
     fs::create_dir_all(&dir).unwrap();
     let mut child = spawn_named_headless(&dir, "old");
@@ -3453,7 +3453,7 @@ fn rename_preserves_inherited_cmux_socket_in_existing_panes() {
     let old_sock_str = old_sock.display().to_string();
     // Fish is the default surface shell; the trailing real `\n` submits
     // the line (no --send-cr needed — matches the cli_verbs marker probe).
-    let probe = "printf 'E=%s\\n' \"$CMUX_MUX_SOCKET\"\n";
+    let probe = "printf 'E=%s\\n' \"$MTYX_MUX_SOCKET\"\n";
     let send = run_against(
         &old_sock,
         &dir,
@@ -3487,7 +3487,7 @@ fn rename_preserves_inherited_cmux_socket_in_existing_panes() {
     let after = wait_for_screen_at(&new_sock, surface_pre, &old_sock_str);
     assert!(
         after.contains(&old_sock_str) && !after.contains(&new_sock_str),
-        "existing pane must keep the old CMUX_MUX_SOCKET after rename; \
+        "existing pane must keep the old MTYX_MUX_SOCKET after rename; \
          screen was {after:?}"
     );
 
@@ -3716,7 +3716,7 @@ fn rename_no_regressions_on_list_kill_killstale() {
 
 // T11 (`rename_session_at_renames_via_socket`) lives in `cli.rs`'s own
 // `#[cfg(test)]` module: mux-tui is a bin-only crate, so this integration
-// test file links only against the `mux-core` lib + the `cmux` binary and
+// test file links only against the `mux-core` lib + the `mtyx` binary and
 // cannot import the `pub(crate)` helper. The in-process unit test there
 // drives a `mux-core` server directly (no subprocess) and exercises the
 // exact code path the picker's `r` flow uses.
@@ -3724,7 +3724,7 @@ fn rename_no_regressions_on_list_kill_killstale() {
 /// T10 (issue #63 L3, scout plan): the session-manager overlay previews an
 /// *other* session's workspaces with a one-shot `list-workspaces` RPC over
 /// that session's control socket (the same connect→write→read path
-/// `cli::one_shot_rpc` shares with `rename_rpc`, and that `cmux
+/// `cli::one_shot_rpc` shares with `rename_rpc`, and that `mtyx
 /// list-workspaces` rides). `fetch_workspaces` is `pub(crate)` so this
 /// bin-test cannot call it directly; instead it drives the identical wire
 /// path against two named headless daemons and asserts each returns a
@@ -3913,7 +3913,7 @@ fn overlay_rename_reuses_l2_helper() {
 /// T10 (issue #69, scout plan §3c): REGRESSION -- a genuine first attach to a
 /// dead socket must STILL exit non-zero (exit 1), both before and after the
 /// swap-recovery fix. The recovery path only fires when there is a
-/// last-known-good socket to fall back to (a swap); a fresh `cmux attach`
+/// last-known-good socket to fall back to (a swap); a fresh `mtyx attach`
 /// has no origin, so the connect error propagates to `main()` exactly as
 /// today. This test pins that behavior so the fix cannot accidentally make a
 /// real first-attach silently loop instead of failing.
@@ -3929,9 +3929,9 @@ fn first_attach_to_dead_socket_still_exits_nonzero() {
     let out = Command::new(bin())
         .args(["attach", "--socket"])
         .arg(&socket)
-        .env_remove("CMUX_MUX_SOCKET")
+        .env_remove("MTYX_MUX_SOCKET")
         .output()
-        .expect("failed to spawn cmux attach");
+        .expect("failed to spawn mtyx attach");
     let stderr = String::from_utf8_lossy(&out.stderr);
 
     assert_eq!(
@@ -3942,7 +3942,7 @@ fn first_attach_to_dead_socket_still_exits_nonzero() {
         stderr,
     );
     assert!(
-        stderr.contains("attaching to cmux session socket"),
+        stderr.contains("attaching to mtyx session socket"),
         "stderr should carry the connect-failure context, got: {stderr:?}"
     );
 
@@ -4229,10 +4229,10 @@ fn layout_export_refuses_symlinked_output() {
 
 /// Fixture for the install-skill symlink-refusal test.
 ///
-/// Owns a temp "project" dir acting as CWD for `cmux claude install-skill`
-/// (whose non-global `skill_path` is `.claude/skills/cmux-orchestration/SKILL.md`,
+/// Owns a temp "project" dir acting as CWD for `mtyx claude install-skill`
+/// (whose non-global `skill_path` is `.claude/skills/mtyx-orchestration/SKILL.md`,
 /// relative to CWD — see claude_hook.rs:427-432). Inside it we place:
-///   <project>/.claude/skills/cmux-orchestration/SKILL.md -> <project>/target.txt
+///   <project>/.claude/skills/mtyx-orchestration/SKILL.md -> <project>/target.txt
 ///
 /// On drop we remove the symlink, the target file, and the whole project dir,
 /// even if the test panicked — mirroring HeadlessServer::drop (tests/cli.rs:45-52).
@@ -4242,7 +4242,7 @@ fn layout_export_refuses_symlinked_output() {
 
 
 
-/// `cmux attach --session-list --json` lists discovered sessions with a
+/// `mtyx attach --session-list --json` lists discovered sessions with a
 /// `socket_path` per entry (issue #63, layer L1). Same shape as
 /// `list-sessions --json` plus `socket_path`; exit 0. Modelled on
 /// `list_sessions_lists_active_headless_session` (:904).
@@ -4256,16 +4256,16 @@ fn layout_export_refuses_symlinked_output() {
 /// Issue #27 acceptance: `kill -9` on a headless daemon leaves zero
 /// leftover `.sock`/`.pid` files within ≤5s without operator action.
 
-/// Issue #40: `cmux attach --show-local-config-resolution` is a dry run that
+/// Issue #40: `mtyx attach --show-local-config-resolution` is a dry run that
 /// resolves the local overlay file (theme/sidebar_rail + keys/prefix here)
 /// and prints the path plus the override count, without attaching to a
 /// server or starting the TUI. Exits 0 and needs no live session.
 
-/// Issue #40 round-2 blocker 1: a thin-client `cmux attach
+/// Issue #40 round-2 blocker 1: a thin-client `mtyx attach
 /// --apply-local-config` must layer the local overlay on top of the
 /// *server's* resolved config, not replace it with the laptop's own. We
 /// start a headless server whose `mux.json` sets a distinctive theme
-/// colour (server-side truth), then run `cmux attach --socket <sock>
+/// colour (server-side truth), then run `mtyx attach --socket <sock>
 /// --apply-local-config --print-resolved-config` with a local overlay
 /// that overrides a key binding (NOT theme), and assert the merged
 /// chrome JSON carries the server's theme colour AND the local overlay's
@@ -4275,15 +4275,15 @@ fn layout_export_refuses_symlinked_output() {
 /// JSON without starting the TUI.
 
 /// Issue #40 blocker 1: the `get-resolved-config` protocol verb is also
-/// exposed as a standalone read-only CLI verb (`cmux get-resolved-config`)
+/// exposed as a standalone read-only CLI verb (`mtyx get-resolved-config`)
 /// so ops scripts can inspect the server's chrome without attaching. It
 /// must return the server's published chrome verbatim (no local overlay).
 /// We start a headless server whose config sets a distinctive theme
-/// colour, then call `cmux --json get-resolved-config` against its
+/// colour, then call `mtyx --json get-resolved-config` against its
 /// socket and assert the colour is present in the returned object.
 
-/// Issue #42 (scoped first PR): the `cmux plugin` verb group manages
-/// `cmux-plugin.toml` manifests on disk only (no execution yet). We
+/// Issue #42 (scoped first PR): the `mtyx plugin` verb group manages
+/// `mtyx-plugin.toml` manifests on disk only (no execution yet). We
 /// install a fixture manifest against a HeadlessServer-style temp env
 /// (an isolated XDG_DATA_HOME under the server's temp dir), then list
 /// it, then uninstall and confirm `list` reports empty. The server
@@ -4292,11 +4292,11 @@ fn layout_export_refuses_symlinked_output() {
 
 /// Issue #42 AC6: the shipped example plugin at
 /// `mux/spec/plugins/pifactory-fleet/` has a valid manifest that
-/// installs and lists correctly via the `cmux plugin` verb group.
+/// installs and lists correctly via the `mtyx plugin` verb group.
 /// This guards against schema drift between the example manifest and
 /// the loader's `ManifestFile` parser.
 
-/// Issue #59: `cmux --version` / `-V` print `cmux <version>` and exit 0.
+/// Issue #59: `mtyx --version` / `-V` print `mtyx <version>` and exit 0.
 ///
 /// Issue #71: the version is the build-time constant, not
 /// `CARGO_PKG_VERSION`. Pinning this test to the manifest was why the
@@ -4311,7 +4311,7 @@ fn layout_export_refuses_symlinked_output() {
 /// the value under test cannot catch this class of bug.
 
 // =====================================================================
-// cmux rename-session (issue #63 L2) — full TDD acceptance suite.
+// mtyx rename-session (issue #63 L2) — full TDD acceptance suite.
 //
 // These tests are written RED (cookbook Rule 5) before the feature is
 // implemented. At this commit the `rename-session` verb does not exist
@@ -4327,7 +4327,7 @@ fn layout_export_refuses_symlinked_output() {
 
 /// Read the daemon pid recorded in `<dir>/<name>.pid`.
 
-/// Run a cmux CLI subcommand against `--socket <socket>` with CMUX_MUX_SOCKET
+/// Run a mtyx CLI subcommand against `--socket <socket>` with MTYX_MUX_SOCKET
 /// unset (so resolution is deterministic) and return its output.
 
 /// Poll `read-screen` until `needle` appears on the surface (or timeout).
@@ -4338,7 +4338,7 @@ fn layout_export_refuses_symlinked_output() {
 /// AC3: after rename, the old session name is gone from discovery and the
 /// new name is listed as live.
 
-/// AC4: existing panes keep the `CMUX_MUX_SOCKET` they inherited at spawn
+/// AC4: existing panes keep the `MTYX_MUX_SOCKET` they inherited at spawn
 /// (the old path) for their lifetime; panes spawned AFTER the rename
 /// inherit the new path. This is the lifetime guarantee (intentional, not
 /// a bug) documented in USAGE and the server.rs docstring.
@@ -4365,7 +4365,7 @@ fn layout_export_refuses_symlinked_output() {
 
 // T11 (`rename_session_at_renames_via_socket`) lives in `cli.rs`'s own
 // `#[cfg(test)]` module: mux-tui is a bin-only crate, so this integration
-// test file links only against the `mux-core` lib + the `cmux` binary and
+// test file links only against the `mux-core` lib + the `mtyx` binary and
 // cannot import the `pub(crate)` helper. The in-process unit test there
 // drives a `mux-core` server directly (no subprocess) and exercises the
 // exact code path the picker's `r` flow uses.
@@ -4373,7 +4373,7 @@ fn layout_export_refuses_symlinked_output() {
 /// T10 (issue #63 L3, scout plan): the session-manager overlay previews an
 /// *other* session's workspaces with a one-shot `list-workspaces` RPC over
 /// that session's control socket (the same connect→write→read path
-/// `cli::one_shot_rpc` shares with `rename_rpc`, and that `cmux
+/// `cli::one_shot_rpc` shares with `rename_rpc`, and that `mtyx
 /// list-workspaces` rides). `fetch_workspaces` is `pub(crate)` so this
 /// bin-test cannot call it directly; instead it drives the identical wire
 /// path against two named headless daemons and asserts each returns a
@@ -4404,7 +4404,7 @@ fn layout_export_refuses_symlinked_output() {
 /// T10 (issue #69, scout plan §3c): REGRESSION -- a genuine first attach to a
 /// dead socket must STILL exit non-zero (exit 1), both before and after the
 /// swap-recovery fix. The recovery path only fires when there is a
-/// last-known-good socket to fall back to (a swap); a fresh `cmux attach`
+/// last-known-good socket to fall back to (a swap); a fresh `mtyx attach`
 /// has no origin, so the connect error propagates to `main()` exactly as
 /// today. This test pins that behavior so the fix cannot accidentally make a
 /// real first-attach silently loop instead of failing.

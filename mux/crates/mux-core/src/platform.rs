@@ -1,4 +1,4 @@
-//! Platform decisions for cmux.
+//! Platform decisions for mattyx.
 
 use std::path::{Path, PathBuf};
 
@@ -111,7 +111,7 @@ pub mod transport {
 
 /// Runtime socket/pidfile directory for the current user.
 pub fn runtime_dir() -> PathBuf {
-    runtime_base_dir().join(format!("cmux-{}", user_id_component()))
+    runtime_base_dir().join(format!("mtyx-{}", user_id_component()))
 }
 
 /// Where a session's persisted tree snapshot lives, honoring the XDG
@@ -121,14 +121,14 @@ pub fn session_snapshot_path(session: &str) -> PathBuf {
     let base = env_path("XDG_STATE_HOME")
         .or_else(|| home_dir().map(|home| home.join(".local").join("state")))
         .unwrap_or_else(std::env::temp_dir);
-    base.join("cmux").join("sessions").join(format!("{session}.json"))
+    base.join("mattyx").join("sessions").join(format!("{session}.json"))
 }
 
 /// User config directory, honoring the XDG override order. The config
 /// file itself is `mux.json` or `mux.toml` inside this directory.
 pub fn config_dir() -> Option<PathBuf> {
     if let Some(config_home) = env_path("XDG_CONFIG_HOME") {
-        return Some(config_home.join("cmux"));
+        return Some(config_home.join("mattyx"));
     }
     platform_config_dir()
 }
@@ -137,7 +137,7 @@ pub fn config_dir() -> Option<PathBuf> {
 /// `mux.json` wins when both JSON and TOML exist (it is the explicit
 /// override); otherwise `mux.toml` is loaded when present.
 pub fn config_path() -> Option<PathBuf> {
-    if let Some(path) = env_path("CMUX_MUX_CONFIG") {
+    if let Some(path) = env_path("MTYX_MUX_CONFIG") {
         return Some(path);
     }
     let dir = config_dir()?;
@@ -154,12 +154,12 @@ pub fn config_path() -> Option<PathBuf> {
 
 #[cfg(not(windows))]
 fn platform_config_dir() -> Option<PathBuf> {
-    home_dir().map(|home| home.join(".config").join("cmux"))
+    home_dir().map(|home| home.join(".config").join("mattyx"))
 }
 
 #[cfg(windows)]
 fn platform_config_dir() -> Option<PathBuf> {
-    env_path("APPDATA").map(|appdata| appdata.join("cmux"))
+    env_path("APPDATA").map(|appdata| appdata.join("mattyx"))
 }
 
 /// Default interactive shell for spawned PTY surfaces.
@@ -294,32 +294,32 @@ pub fn chrome_user_data_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         home_dir().map(|home| {
-            home.join("Library").join("Application Support").join("cmux").join("chrome-profile")
+            home.join("Library").join("Application Support").join("mattyx").join("chrome-profile")
         })
     }
 
     #[cfg(target_os = "linux")]
     {
         env_path("XDG_DATA_HOME")
-            .map(|data_home| data_home.join("cmux").join("chrome-profile"))
+            .map(|data_home| data_home.join("mattyx").join("chrome-profile"))
             .or_else(|| {
                 home_dir().map(|home| {
-                    home.join(".local").join("share").join("cmux").join("chrome-profile")
+                    home.join(".local").join("share").join("mattyx").join("chrome-profile")
                 })
             })
     }
 
     #[cfg(windows)]
     {
-        env_path("LOCALAPPDATA").map(|dir| dir.join("cmux").join("chrome-profile"))
+        env_path("LOCALAPPDATA").map(|dir| dir.join("mattyx").join("chrome-profile"))
     }
 
     #[cfg(all(not(target_os = "macos"), not(target_os = "linux"), not(windows)))]
     {
-        env_path("XDG_DATA_HOME").map(|dir| dir.join("cmux").join("chrome-profile")).or_else(
+        env_path("XDG_DATA_HOME").map(|dir| dir.join("mattyx").join("chrome-profile")).or_else(
             || {
                 home_dir().map(|home| {
-                    home.join(".local").join("share").join("cmux").join("chrome-profile")
+                    home.join(".local").join("share").join("mattyx").join("chrome-profile")
                 })
             },
         )

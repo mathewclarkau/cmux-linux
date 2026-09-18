@@ -2,19 +2,19 @@
 
 As of protocol v6, every server speaks JSON Lines over a Unix domain socket. Send one JSON object per line. Every request receives one response line. `subscribe` and `attach-surface` also push event lines on the same connection.
 
-For shell use, prefer `cmux <verb>`; it wraps the same socket commands and preserves JSON output with `--json`.
+For shell use, prefer `mtyx <verb>`; it wraps the same socket commands and preserves JSON output with `--json`.
 
 Default socket path:
 
 ```text
-$TMPDIR/cmux-<uid>/<session>.sock
+$TMPDIR/mtyx-<uid>/<session>.sock
 ```
 
 `identify` reports the protocol version:
 
 ```json
 {"id":1,"cmd":"identify"}
-{"id":1,"ok":true,"data":{"app":"cmux","version":"...","protocol":6,"session":"main","pid":12345}}
+{"id":1,"ok":true,"data":{"app":"mtyx","version":"...","protocol":6,"session":"main","pid":12345}}
 ```
 
 Responses have this shape:
@@ -185,10 +185,10 @@ The bundled TUI forwards this to the host desktop via `notify-send`. There is no
 
 ## Remote Workspaces
 
-`new-remote-workspace` creates a workspace whose tab is a `cmuxd-remote` session over SSH instead of a local shell (see `getting-started.md`'s "Remote (SSH) workspaces" and `remote_pty.rs`'s module doc for the transport). Building/caching the daemon binary for the remote's OS/arch is the caller's job — the bundled `cmux ssh <host>` CLI command does it and is the intended way to use this, not calling the socket command directly:
+`new-remote-workspace` creates a workspace whose tab is a `cmuxd-remote` session over SSH instead of a local shell (see `getting-started.md`'s "Remote (SSH) workspaces" and `remote_pty.rs`'s module doc for the transport). Building/caching the daemon binary for the remote's OS/arch is the caller's job — the bundled `mtyx ssh <host>` CLI command does it and is the intended way to use this, not calling the socket command directly:
 
 ```json
-{"id":60,"cmd":"new-remote-workspace","host":"myhost","slot":"cmux","session_id":"cmux-...","local_binary_path":"/home/me/.cache/cmux/cmuxd-remote-linux-amd64","name":"work"}
+{"id":60,"cmd":"new-remote-workspace","host":"myhost","slot":"mtyx","session_id":"mtyx-...","local_binary_path":"/home/me/.cache/mattyx/cmuxd-remote-linux-amd64","name":"work"}
 {"id":60,"ok":true,"data":{"surface":7}}
 ```
 

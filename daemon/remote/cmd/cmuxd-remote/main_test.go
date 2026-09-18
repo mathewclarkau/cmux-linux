@@ -562,8 +562,8 @@ func TestPersistentDaemonPathsUseShortSocketPath(t *testing.T) {
 		strings.Repeat("long-path-segment-", 4),
 		"daemon-root",
 	)
-	t.Setenv("CMUX_REMOTE_DAEMON_ROOT", rootBase)
-	t.Setenv("CMUX_REMOTE_DAEMON_SOCKET_DIR", "")
+	t.Setenv("MTYX_REMOTE_DAEMON_ROOT", rootBase)
+	t.Setenv("MTYX_REMOTE_DAEMON_SOCKET_DIR", "")
 
 	paths, err := persistentDaemonPathsForSlot(strings.Repeat("a", 128))
 	if err != nil {
@@ -579,8 +579,8 @@ func TestPersistentDaemonPathsUseShortSocketPath(t *testing.T) {
 
 func TestPersistentDaemonPathsIncludeDaemonVersion(t *testing.T) {
 	rootBase := filepath.Join(t.TempDir(), "daemon-root")
-	t.Setenv("CMUX_REMOTE_DAEMON_ROOT", rootBase)
-	t.Setenv("CMUX_REMOTE_DAEMON_SOCKET_DIR", "")
+	t.Setenv("MTYX_REMOTE_DAEMON_ROOT", rootBase)
+	t.Setenv("MTYX_REMOTE_DAEMON_SOCKET_DIR", "")
 	oldVersion := version
 	defer func() { version = oldVersion }()
 
@@ -618,8 +618,8 @@ func TestPersistentDaemonSocketDirOverrideUsesPrivateChild(t *testing.T) {
 	if err := os.Chmod(socketParent, 0o755); err != nil {
 		t.Fatalf("chmod socket parent: %v", err)
 	}
-	t.Setenv("CMUX_REMOTE_DAEMON_ROOT", rootBase)
-	t.Setenv("CMUX_REMOTE_DAEMON_SOCKET_DIR", socketParent)
+	t.Setenv("MTYX_REMOTE_DAEMON_ROOT", rootBase)
+	t.Setenv("MTYX_REMOTE_DAEMON_SOCKET_DIR", socketParent)
 
 	paths, err := persistentDaemonPathsForSlot("override-slot")
 	if err != nil {
@@ -667,8 +667,8 @@ func TestPersistentDaemonSocketDirFallsBackFromUnsafeSymlink(t *testing.T) {
 	if err := os.Symlink(unsafeTarget, unsafeChild); err != nil {
 		t.Fatalf("create unsafe socket child symlink: %v", err)
 	}
-	t.Setenv("CMUX_REMOTE_DAEMON_ROOT", rootBase)
-	t.Setenv("CMUX_REMOTE_DAEMON_SOCKET_DIR", socketParent)
+	t.Setenv("MTYX_REMOTE_DAEMON_ROOT", rootBase)
+	t.Setenv("MTYX_REMOTE_DAEMON_SOCKET_DIR", socketParent)
 
 	paths, err := persistentDaemonPathsForSlot("unsafe-socket-slot")
 	if err != nil {
@@ -723,8 +723,8 @@ func TestPersistentDaemonSocketDirReplacesInvalidStoredFallback(t *testing.T) {
 	if err := os.Symlink(unsafeTarget, unsafeChild); err != nil {
 		t.Fatalf("create unsafe socket child symlink: %v", err)
 	}
-	t.Setenv("CMUX_REMOTE_DAEMON_ROOT", rootBase)
-	t.Setenv("CMUX_REMOTE_DAEMON_SOCKET_DIR", socketParent)
+	t.Setenv("MTYX_REMOTE_DAEMON_ROOT", rootBase)
+	t.Setenv("MTYX_REMOTE_DAEMON_SOCKET_DIR", socketParent)
 
 	paths, err := persistentDaemonPathsForSlot("invalid-stored-fallback-slot")
 	if err != nil {
@@ -771,8 +771,8 @@ func TestPersistentDaemonSocketDirReusesStoredFallback(t *testing.T) {
 	if err := os.WriteFile(unsafeChild, []byte("not a directory"), 0o600); err != nil {
 		t.Fatalf("create unsafe socket child file: %v", err)
 	}
-	t.Setenv("CMUX_REMOTE_DAEMON_ROOT", rootBase)
-	t.Setenv("CMUX_REMOTE_DAEMON_SOCKET_DIR", socketParent)
+	t.Setenv("MTYX_REMOTE_DAEMON_ROOT", rootBase)
+	t.Setenv("MTYX_REMOTE_DAEMON_SOCKET_DIR", socketParent)
 
 	paths, err := persistentDaemonPathsForSlot("stored-fallback-slot")
 	if err != nil {

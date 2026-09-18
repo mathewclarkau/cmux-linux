@@ -2,7 +2,7 @@
 //!
 //! When a pane's shell exits (or is killed), grandchildren that double-forked
 //! or were backgrounded can outlive the direct PTY child. Combined with
-//! [`set_child_subreaper`], this module lets cmux inherit those orphans and
+//! [`set_child_subreaper`], this module lets mtyx inherit those orphans and
 //! terminate the whole tree on surface kill / mux shutdown.
 //!
 //! See issue #28.

@@ -276,6 +276,6 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        PathBuf::from("/tmp").join(format!("cmux-reattach-{name}-{}-{stamp}", std::process::id()))
+        PathBuf::from("/tmp").join(format!("mtyx-reattach-{name}-{}-{stamp}", std::process::id()))
     }
 }

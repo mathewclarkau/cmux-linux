@@ -299,7 +299,7 @@ func TestTmuxCorpusSendKeysAndTTYKeyTokens(t *testing.T) {
 
 func TestTmuxCorpusFormatStringsSupportedSubset(t *testing.T) {
 	ctx := map[string]string{
-		"session_name": "cmux",
+		"session_name": "mtyx",
 		"window_id":    "@workspace",
 		"window_name":  "Build",
 		"pane_id":      "%pane",
@@ -312,7 +312,7 @@ func TestTmuxCorpusFormatStringsSupportedSubset(t *testing.T) {
 		fallback string
 		want     string
 	}{
-		{format: "#{session_name}:#{window_name}:#{pane_id}", want: "cmux:Build:%pane"},
+		{format: "#{session_name}:#{window_name}:#{pane_id}", want: "mtyx:Build:%pane"},
 		{format: "#{window_id} #{pane_width}x#{pane_height}", want: "@workspace 120x40"},
 		{format: "#{unknown}#{also_unknown}", fallback: "fallback", want: "fallback"},
 	}

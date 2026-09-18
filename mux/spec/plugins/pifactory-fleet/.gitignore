@@ -1,7 +1,7 @@
 # Build artefacts from `cargo build` (invoked by ./build.sh). This
-# crate is NOT part of the main cmux-linux workspace, so its
+# crate is NOT part of the main mattyx workspace, so its
 # target/ dir is sibling to mux/target/ rather than nested under
-# it. Keep it out of git per the cmux-linux AGENTS.md rule "Never
+# it. Keep it out of git per the mattyx AGENTS.md rule "Never
 # commit .tools/, mux/target/, .venv/, or anything in .gitignore".
 target/
 

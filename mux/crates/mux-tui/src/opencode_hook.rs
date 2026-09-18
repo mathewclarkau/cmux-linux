@@ -3,19 +3,19 @@ use std::path::PathBuf;
 
 use crate::hook_merge;
 
-/// The TypeScript plugin content that reports agent state to cmux.
-/// Installed at `.opencode/plugin/cmux.ts` (project) or
-/// `~/.config/opencode/plugin/cmux.ts` (global).
-const CMUX_PLUGIN: &str = r#"// CMUX-START
-// cmux agent-state reporting plugin for opencode
-// Installed by: cmux opencode install-hooks
-// Removed by: cmux opencode install-hooks --uninstall
+/// The TypeScript plugin content that reports agent state to mtyx.
+/// Installed at `.opencode/plugin/mtyx.ts` (project) or
+/// `~/.config/opencode/plugin/mtyx.ts` (global).
+const MTYX_PLUGIN: &str = r#"// MTYX-START
+// mtyx agent-state reporting plugin for opencode
+// Installed by: mtyx opencode install-hooks
+// Removed by: mtyx opencode install-hooks --uninstall
 import { exec } from "node:child_process"
 
 function reportAgent(state: string) {
-  const surface = process.env.CMUX_MUX_SURFACE
+  const surface = process.env.MTYX_MUX_SURFACE
   if (!surface) return
-  exec(`cmux report-agent --surface ${surface} --state ${state} --source hook`)
+  exec(`mtyx report-agent --surface ${surface} --state ${state} --source hook`)
 }
 
 export default async () => {
@@ -28,14 +28,14 @@ export default async () => {
     },
   }
 }
-// CMUX-END
+// MTYX-END
 "#;
 
 fn plugin_path(global: bool) -> Option<PathBuf> {
     if global {
-        mux_core::platform::home_dir().map(|h| h.join(".config").join("opencode").join("plugin").join("cmux.ts"))
+        mux_core::platform::home_dir().map(|h| h.join(".config").join("opencode").join("plugin").join("mtyx.ts"))
     } else {
-        Some(PathBuf::from(".opencode").join("plugin").join("cmux.ts"))
+        Some(PathBuf::from(".opencode").join("plugin").join("mtyx.ts"))
     }
 }
 
@@ -45,7 +45,7 @@ fn skill_path(global: bool) -> Option<PathBuf> {
     } else {
         PathBuf::from(".opencode").join("skills")
     };
-    Some(base.join("cmux-orchestration").join("SKILL.md"))
+    Some(base.join("mtyx-orchestration").join("SKILL.md"))
 }
 
 fn hotfix_skill_path(global: bool) -> Option<PathBuf> {
@@ -54,7 +54,7 @@ fn hotfix_skill_path(global: bool) -> Option<PathBuf> {
     } else {
         PathBuf::from(".opencode").join("skills")
     };
-    Some(base.join("cmux-hotfix-race").join("SKILL.md"))
+    Some(base.join("mtyx-hotfix-race").join("SKILL.md"))
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -73,7 +73,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("cmux: usage: cmux opencode <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!("mtyx: usage: mtyx opencode <install-hooks|install-skill> [--uninstall] [--global]");
             2
         }
     }
@@ -86,30 +86,30 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
     };
 
     if uninstall {
-        // If the file contains only our CMUX block, remove it entirely.
-        // Otherwise, strip the CMUX-START..CMUX-END block.
+        // If the file contains only our MTYX block, remove it entirely.
+        // Otherwise, strip the MTYX-START..MTYX-END block.
         if !path.exists() {
             println!("No opencode plugin found at {}", path.display());
             return 0;
         }
         match fs::read_to_string(&path) {
             Ok(content) => {
-                if content.trim() == CMUX_PLUGIN.trim() {
+                if content.trim() == MTYX_PLUGIN.trim() {
                     if let Err(e) = fs::remove_file(&path) {
                         eprintln!("error removing {}: {e}", path.display());
                         return 1;
                     }
                 } else {
                     let stripped = hook_merge::strip_marked_block(&content, &hook_merge::Markers {
-                        start: "CMUX-START",
-                        end: "CMUX-END",
+                        start: "MTYX-START",
+                        end: "MTYX-END",
                     });
                     if let Err(e) = fs::write(&path, stripped) {
                         eprintln!("error writing {}: {e}", path.display());
                         return 1;
                     }
                 }
-                println!("Successfully removed cmux plugin from {}", path.display());
+                println!("Successfully removed mtyx plugin from {}", path.display());
             }
             Err(e) => {
                 eprintln!("error reading {}: {e}", path.display());
@@ -131,11 +131,11 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
                 return 1;
             }
         }
-        if let Err(e) = fs::write(&path, CMUX_PLUGIN) {
+        if let Err(e) = fs::write(&path, MTYX_PLUGIN) {
             eprintln!("error writing {}: {e}", path.display());
             return 1;
         }
-        println!("Successfully installed cmux plugin into {}", path.display());
+        println!("Successfully installed mtyx plugin into {}", path.display());
         0
     }
 }
@@ -167,7 +167,7 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
                 removed += 1;
             }
         }
-        println!("Removed {removed} cmux skill(s) from opencode");
+        println!("Removed {removed} mtyx skill(s) from opencode");
         0
     } else {
         let mut installed = 0;
@@ -191,7 +191,7 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
             }
             installed += 1;
         }
-        println!("Successfully installed {installed} cmux skill(s) into opencode");
+        println!("Successfully installed {installed} mtyx skill(s) into opencode");
         if installed > 0 { 0 } else { 1 }
     }
 }
@@ -208,15 +208,15 @@ mod tests {
 
     #[test]
     fn plugin_content_has_markers() {
-        assert!(CMUX_PLUGIN.contains("CMUX-START"));
-        assert!(CMUX_PLUGIN.contains("CMUX-END"));
+        assert!(MTYX_PLUGIN.contains("MTYX-START"));
+        assert!(MTYX_PLUGIN.contains("MTYX-END"));
     }
 
     #[test]
     fn plugin_content_reports_agent_state() {
-        assert!(CMUX_PLUGIN.contains("report-agent"));
-        assert!(CMUX_PLUGIN.contains("working"));
-        assert!(CMUX_PLUGIN.contains("idle"));
-        assert!(CMUX_PLUGIN.contains("--source hook"));
+        assert!(MTYX_PLUGIN.contains("report-agent"));
+        assert!(MTYX_PLUGIN.contains("working"));
+        assert!(MTYX_PLUGIN.contains("idle"));
+        assert!(MTYX_PLUGIN.contains("--source hook"));
     }
 }

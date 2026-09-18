@@ -28,9 +28,9 @@ covered only by the existing test suite (no real plugin WASM).
    the fixture to `target/wasm32-unknown-unknown/debug/fixture.wasm`
    before the integration test runs.
 4. Add an integration test in `mux/crates/mux-tui/tests/cli.rs`:
-   - `cmux plugin install <path to fixture manifest>` against a
+   - `mtyx plugin install <path to fixture manifest>` against a
      temp data dir
-   - `cmux <plugin-name> <verb>` to invoke
+   - `mtyx <plugin-name> <verb>` to invoke
    - assert the output is correct
 5. (Optionally) Add `wasm32-unknown-unknown` as a target dep in
    `mux/crates/mux-tui/Cargo.toml` so the test fixture builds

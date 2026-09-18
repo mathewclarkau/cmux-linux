@@ -1,7 +1,7 @@
 //! Control socket: a JSON-lines protocol over the platform transport.
 //!
-//! This is the attach surface for external frontends (the cmux app, the
-//! bundled `cmux attach` client, scripts). One JSON request per line;
+//! This is the attach surface for external frontends (the mtyx app, the
+//! bundled `mtyx attach` client, scripts). One JSON request per line;
 //! every request gets one JSON response line. Two commands additionally
 //! turn the connection full-duplex:
 //!
@@ -15,12 +15,12 @@
 //!
 //! ```text
 //! {"id":1,"cmd":"identify"}
-//! {"id":1,"ok":true,"data":{"app":"cmux","session":"main",...}}
+//! {"id":1,"ok":true,"data":{"app":"mtyx","session":"main",...}}
 //! ```
 //!
 //! ## `rename-session` (issue #63)
 //!
-//! `cmux rename-session --old X --new Y` connects to the `X` socket and
+//! `mtyx rename-session --old X --new Y` connects to the `X` socket and
 //! sends `{"cmd":"rename-session","new_name":"Y"}`. The daemon renames
 //! THIS session in place: `rename(2)` the `.sock` and `.pid` to the new
 //! names, flip `Mux.session`, reparent the snapshot file, and keep serving.
@@ -34,7 +34,7 @@
 //! anything is committed. Partial failure is self-healing. A LIVE target
 //! is refused (`session "Y" already exists`); a STALE target is cleared.
 //!
-//! **Lifetime guarantee (AC4):** existing panes keep the `CMUX_MUX_SOCKET`
+//! **Lifetime guarantee (AC4):** existing panes keep the `MTYX_MUX_SOCKET`
 //! they inherited at spawn (the old path) for their lifetime — this is
 //! intentional, not a bug. Panes spawned AFTER the rename inherit the new
 //! path (`Mux::refresh_socket_env` rewrites the env on every spawn from
@@ -91,7 +91,7 @@ pub fn is_process_alive(pid: u32) -> bool {
     }
 }
 
-/// Check if a process ID is alive AND is a cmux process.
+/// Check if a process ID is alive AND is a mtyx process.
 pub fn is_cmux_process(pid: u32) -> bool {
     if !is_process_alive(pid) {
         return false;
@@ -100,7 +100,9 @@ pub fn is_cmux_process(pid: u32) -> bool {
     {
         let cmdline_path = format!("/proc/{pid}/cmdline");
         if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
-            cmdline.contains("cmux")
+            // Accept both the canonical `mtyx` name and the `cmux` transition
+            // alias (Cargo.toml keeps a [[bin]] so old wrappers keep working).
+            cmdline.contains("mtyx") || cmdline.contains("cmux")
         } else {
             false
         }
@@ -134,7 +136,7 @@ pub fn is_session_socket_live(socket_path: &Path) -> bool {
 
 /// Reject session names that are unsafe as filesystem path components.
 /// The name becomes `<name>.sock` / `<name>.pid` /
-/// `$XDG_STATE_HOME/cmux/sessions/<name>.json`, so a `/` or `\0` is a
+/// `$XDG_STATE_HOME/mattyx/sessions/<name>.json`, so a `/` or `\0` is a
 /// path-traversal / NUL-injection vector (AGENTS.md review checklist).
 /// Called from BOTH the CLI (`run_rename_session`, client-side defence)
 /// and the server (`RenameSession` handler, the security authority).
@@ -183,10 +185,10 @@ enum Command {
         #[serde(default)]
         bytes: Option<String>,
         /// If true, append a literal CR (0x0D) to the written bytes — used to
-        /// submit a fish REPL buffer when dispatching into a cmux pane from
-        /// a non-interactive context (e.g. another agent via `cmux send`).
+        /// submit a fish REPL buffer when dispatching into a mtyx pane from
+        /// a non-interactive context (e.g. another agent via `mtyx send`).
         /// Without this, fish's multi-line mode holds the text in its input
-        /// buffer and waits for a real CR keystroke that cmux's regular
+        /// buffer and waits for a real CR keystroke that mtyx's regular
         /// `send` does not deliver. Added 2026-07-09 to support the
         /// pifactory-fleet interactive-pi worker dispatch pattern
         /// (`scripts/cmux-panel-lib.sh`'s `cmux_dispatch_worker_pane_interactive`).
@@ -320,7 +322,7 @@ enum Command {
     /// New workspace whose tab is a `cmuxd-remote` session over SSH
     /// instead of a local shell (see `remote_pty.rs`). Building/caching
     /// the daemon binary for the remote's OS/arch is the caller's job
-    /// (typically `cmux ssh <host>`, not this socket API directly);
+    /// (typically `mtyx ssh <host>`, not this socket API directly);
     /// `local_binary_path` must already point at one.
     NewRemoteWorkspace {
         host: String,
@@ -335,7 +337,7 @@ enum Command {
         rows: Option<u16>,
     },
     /// Return the server's resolved presentation chrome (theme/tabs/
-    /// sidebar/keys) so a thin-client `cmux attach --apply-local-config`
+    /// sidebar/keys) so a thin-client `mtyx attach --apply-local-config`
     /// can layer its local `Overlay` on top of the server config rather
     /// than replacing it with the laptop's own config (issue #40,
     /// blocker 1). See `mux-tui`'s `Config::resolved_chrome_value`/
@@ -525,7 +527,7 @@ enum Command {
     },
     /// Ambient detection on every live surface in one call (issue #78
     /// AC2): `{"agents": {"<surface>": "<agent>"}}` for fleet
-    /// dashboards. Keys are surface ids — the cmux pane-content ids
+    /// dashboards. Keys are surface ids — the mtyx pane-content ids
     /// (this repo's model is Workspace → Screen → Pane → Surface).
     DetectAgents,
     /// Add a user pattern to the live registry (issue #78 AC4). Patterns
@@ -614,7 +616,7 @@ enum Command {
     /// bound to the inode (pinned by the `unix_socket_survives_rename`
     /// unit test), so the daemon never rebinds. Carries only `new_name`:
     /// the daemon is authoritative about its own identity. Issued by
-    /// `cmux rename-session --old X --new Y` after the CLI has connected
+    /// `mtyx rename-session --old X --new Y` after the CLI has connected
     /// to the old socket. Backward compatible (no protocol-version bump):
     /// old servers hit serde's unknown-variant path; the attach client
     /// never emits it. Response:
@@ -862,7 +864,7 @@ fn workspaces_json(state: &State) -> Value {
 /// Shell-aware input sanitisation for `send` (issue #35).
 ///
 /// Some shells (fish especially) interpret a leading `$`, `!` or an
-/// unterminated quote in a pasted input buffer, so a `cmux send --text
+/// unterminated quote in a pasted input buffer, so a `mtyx send --text
 /// '$ pwd\n'` can corrupt a pane. When a known shell is selected
 /// (explicitly or via `auto`) we prefix a single `\n` to reset the
 /// line editor's buffer when the text could be mis-parsed. `raw` (the
@@ -1257,7 +1259,7 @@ fn resolve_workspace_index(mux: &Mux, selector: Option<&str>) -> anyhow::Result<
 fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::Result<Value> {
     match cmd {
         Command::Identify => Ok(json!({
-            "app": "cmux",
+            "app": "mtyx",
             "version": crate::VERSION,
             "protocol": PROTOCOL_VERSION,
             "session": mux.session_name(),
@@ -2024,7 +2026,7 @@ pub fn cleanup(path: &Path) {
 mod tests {
     use super::*;
 
-    /// Foundation pin for `cmux rename-session` (issue #63 L2, scout-plan
+    /// Foundation pin for `mtyx rename-session` (issue #63 L2, scout-plan
     /// Q1). On a bound `AF_UNIX` `SOCK_STREAM` listener, `rename(2)`
     /// reparents the dirent while the kernel keeps the listener bound to
     /// the inode. The listener therefore keeps accepting at the NEW path
@@ -2039,7 +2041,7 @@ mod tests {
         let stamp =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let dir =
-            std::env::temp_dir().join(format!("cmux-t0-rename-{}-{stamp}", std::process::id()));
+            std::env::temp_dir().join(format!("mtyx-t0-rename-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let old = dir.join("old.sock");
         let new = dir.join("new.sock");
@@ -2188,7 +2190,7 @@ mod tests {
     // --- Per-pane git worktrees over the wire (issue #77) ---
 
     /// One request → one response over a fresh connection, skipping
-    /// any pushed events (the shape `cmux` CLI verbs speak).
+    /// any pushed events (the shape `mtyx` CLI verbs speak).
     fn rpc(socket: &Path, request: Value) -> Value {
         let mut stream = transport::connect(socket).unwrap();
         let mut line = serde_json::to_string(&request).unwrap();
@@ -2211,7 +2213,7 @@ mod tests {
     fn temp_git_repo(name: &str) -> PathBuf {
         use std::time::{SystemTime, UNIX_EPOCH};
         let dir = std::env::temp_dir().join(format!(
-            "cmux-srv-wt-{name}-{}-{}",
+            "mtyx-srv-wt-{name}-{}-{}",
             std::process::id(),
             SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
         ));
@@ -2219,7 +2221,7 @@ mod tests {
         let out = std::process::Command::new("git").arg("init").arg(&dir).output().unwrap();
         assert!(out.status.success(), "git init failed");
         let out = std::process::Command::new("git")
-            .args(["-c", "user.email=cmux@test", "-c", "user.name=cmux"])
+            .args(["-c", "user.email=mtyx@test", "-c", "user.name=mtyx"])
             .args(["commit", "--allow-empty", "-m", "init"])
             .current_dir(&dir)
             .output()

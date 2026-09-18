@@ -1,5 +1,5 @@
-//! TUI configuration: `~/.config/cmux/mux.json` (override the path with
-//! `CMUX_MUX_CONFIG`), with colors seeded from the user's Ghostty config
+//! TUI configuration: `~/.config/mattyx/mux.json` (override the path with
+//! `MTYX_MUX_CONFIG`), with colors seeded from the user's Ghostty config
 //! where sensible.
 //!
 //! ```json
@@ -30,7 +30,7 @@
 //!     "cdp_url": "http://127.0.0.1:9222",
 //!     "discover": false,
 //!     "discover_ports": [9222],
-//!     "user_data_dir": "/Users/me/Library/Application Support/cmux/chrome-profile",
+//!     "user_data_dir": "/Users/me/Library/Application Support/mattyx/chrome-profile",
 //!     "ephemeral": false,
 //!     "max_capture_megapixels": 2.0,
 //!     "capture_scale": null
@@ -701,11 +701,11 @@ impl Keys {
             }
             if name == "prefix" {
                 let Some(value) = value.as_str() else {
-                    eprintln!("cmux: ignoring non-string prefix binding {value:?}");
+                    eprintln!("mtyx: ignoring non-string prefix binding {value:?}");
                     continue;
                 };
                 let Some(chord) = parse_chord(value) else {
-                    eprintln!("cmux: ignoring unparseable key binding prefix = {value:?}");
+                    eprintln!("mtyx: ignoring unparseable key binding prefix = {value:?}");
                     continue;
                 };
                 self.prefix = chord;
@@ -724,7 +724,7 @@ impl Keys {
                         }
                         let Some(chord) = parse_chord(raw_chord) else {
                             eprintln!(
-                                "cmux: ignoring unparseable key binding {name} = {raw_chord:?}"
+                                "mtyx: ignoring unparseable key binding {name} = {raw_chord:?}"
                             );
                             continue;
                         };
@@ -732,7 +732,7 @@ impl Keys {
                         self.bindings.push((chord, *action));
                     }
                 }
-                None => eprintln!("cmux: ignoring unknown key action {name:?}"),
+                None => eprintln!("mtyx: ignoring unknown key action {name:?}"),
             }
         }
     }
@@ -1122,14 +1122,14 @@ pub fn load() -> Config {
         if megapixels.is_finite() && megapixels > 0.0 {
             config.browser.max_capture_megapixels = megapixels;
         } else {
-            eprintln!("cmux: ignoring browser.max_capture_megapixels={megapixels:?}; expected > 0");
+            eprintln!("mtyx: ignoring browser.max_capture_megapixels={megapixels:?}; expected > 0");
         }
     }
     if let Some(scale) = raw.browser.capture_scale {
         if scale.is_finite() && scale > 0.0 && scale <= 1.0 {
             config.browser.capture_scale = Some(scale);
         } else {
-            eprintln!("cmux: ignoring browser.capture_scale={scale:?}; expected 0 < scale <= 1");
+            eprintln!("mtyx: ignoring browser.capture_scale={scale:?}; expected 0 < scale <= 1");
         }
     }
     if let Some(position) = raw.scrollbar.position {
@@ -1149,7 +1149,7 @@ pub fn load() -> Config {
             match mux_core::agent_detect::Confidence::parse(confidence) {
                 Some(parsed) => config.agent_detection.min_confidence = parsed,
                 None => eprintln!(
-                    "cmux: ignoring agent_detection.min_confidence={confidence:?}; expected high, medium, or low"
+                    "mtyx: ignoring agent_detection.min_confidence={confidence:?}; expected high, medium, or low"
                 ),
             }
         }
@@ -1190,7 +1190,7 @@ struct RawOverlay {
 }
 
 /// Typed client overlay: a subset of `Config` (theme/tabs/sidebar/keys)
-/// applied on top of the server-side config during `cmux attach`. The
+/// applied on top of the server-side config during `mtyx attach`. The
 /// browser, scrollbar, and session name stay server-side truth.
 #[derive(Debug, Default)]
 pub struct Overlay {
@@ -1236,7 +1236,7 @@ impl Overlay {
     }
 
     /// How many top-level chrome keys this overlay overrides, for the
-    /// `cmux: applying local config from <path> (overrides N keys)` log
+    /// `mtyx: applying local config from <path> (overrides N keys)` log
     /// line. Counts a section once if it is present at all.
     pub fn override_count(&self) -> usize {
         let mut n = 0;
@@ -1258,8 +1258,8 @@ impl Overlay {
 
 /// Resolve which local overlay file would apply for an attach, without
 /// reading it. Resolution order (AC2): explicit `--config <path>` ->
-/// `$CMUX_LOCAL_CONFIG` -> `~/.config/cmux/mux.local.toml` ->
-/// `~/.config/cmux/mux.json` -> `None` (server-side config wins). The
+/// `$MTYX_LOCAL_CONFIG` -> `~/.config/mattyx/mux.local.toml` ->
+/// `~/.config/mattyx/mux.json` -> `None` (server-side config wins). The
 /// explicit and env cases are returned as-is even when the file does not
 /// exist, so the caller can log the missing path rather than silently
 /// falling back to the server config.
@@ -1267,7 +1267,7 @@ pub fn local_config_path(explicit: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = explicit {
         return Some(path.to_path_buf());
     }
-    if let Some(path) = std::env::var_os("CMUX_LOCAL_CONFIG") {
+    if let Some(path) = std::env::var_os("MTYX_LOCAL_CONFIG") {
         return Some(PathBuf::from(path));
     }
     let dir = platform::config_dir()?;
@@ -1302,7 +1302,7 @@ pub fn load_overlay_file(path: &Path) -> Option<Overlay> {
     match parsed {
         Ok(raw) => Some(Overlay::from_raw(raw)),
         Err(e) => {
-            eprintln!("cmux: ignoring invalid local config {}: {e}", path.display());
+            eprintln!("mtyx: ignoring invalid local config {}: {e}", path.display());
             None
         }
     }
@@ -1363,13 +1363,13 @@ fn load_raw_config() -> RawConfig {
         Err(e) => {
             // A broken config should not take the TUI down; complain on
             // stderr (visible pre-alternate-screen and in logs).
-            eprintln!("cmux: ignoring invalid config {}: {e}", path.display());
+            eprintln!("mtyx: ignoring invalid config {}: {e}", path.display());
             RawConfig::default()
         }
     }
 }
 
-/// True when the path extension (or `CMUX_MUX_CONFIG` value) marks a
+/// True when the path extension (or `MTYX_MUX_CONFIG` value) marks a
 /// TOML file.
 fn is_toml_path(path: &Path) -> bool {
     path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
@@ -1436,7 +1436,7 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    /// `CMUX_MUX_CONFIG` is process-global state; tests that set it must not
+    /// `MTYX_MUX_CONFIG` is process-global state; tests that set it must not
     /// run concurrently with each other.
     static CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1499,9 +1499,9 @@ min_confidence = "high"
 "##,
         )
         .unwrap();
-        std::env::set_var("CMUX_MUX_CONFIG", &path);
+        std::env::set_var("MTYX_MUX_CONFIG", &path);
         let config = load();
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
         assert!(!config.agent_detection.enabled, "detection should resolve to disabled");
@@ -1651,9 +1651,9 @@ bogus = true
             }"##,
         )
         .unwrap();
-        std::env::set_var("CMUX_MUX_CONFIG", &path);
+        std::env::set_var("MTYX_MUX_CONFIG", &path);
         let config = load();
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let _ = std::fs::remove_file(&path);
         assert_eq!(config.theme.selection_bg, Color::Rgb(0x10, 0x10, 0x10));
         assert_eq!(config.theme.sidebar_rail, Color::Indexed(42));
@@ -1742,13 +1742,13 @@ bogus = true
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("mux.json");
         std::fs::write(&path, r##"{"theme": {"selection_foreground": null}}"##).unwrap();
-        std::env::set_var("CMUX_MUX_CONFIG", &path);
+        std::env::set_var("MTYX_MUX_CONFIG", &path);
         // `load()` always seeds `selection_fg` from the Ghostty selection
         // colors (or leaves it `None` if there aren't any) before applying
         // this override, so regardless of the ambient Ghostty config, an
         // explicit `null` here must land back on `None`.
         let config = load();
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let _ = std::fs::remove_file(&path);
         assert_eq!(config.theme.selection_fg, None);
     }
@@ -1765,7 +1765,7 @@ bogus = true
             r##"{"browser": {"max_capture_megapixels": 3.5, "capture_scale": 0.5}}"##,
         )
         .unwrap();
-        std::env::set_var("CMUX_MUX_CONFIG", &path);
+        std::env::set_var("MTYX_MUX_CONFIG", &path);
         let config = load();
         assert_eq!(config.browser.max_capture_megapixels, 3.5);
         assert_eq!(config.browser.capture_scale, Some(0.5));
@@ -1776,7 +1776,7 @@ bogus = true
         )
         .unwrap();
         let config = load();
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let _ = std::fs::remove_file(&path);
         assert_eq!(
             config.browser.max_capture_megapixels,
@@ -1813,7 +1813,7 @@ bogus = true
     "cdp_url": "http://127.0.0.1:9222",
     "discover": true,
     "discover_ports": [9222, 9223],
-    "user_data_dir": "/Users/me/Library/Application Support/cmux/chrome-profile",
+    "user_data_dir": "/Users/me/Library/Application Support/mattyx/chrome-profile",
     "ephemeral": false,
     "max_capture_megapixels": 2.0,
     "capture_scale": 0.5
@@ -1840,7 +1840,7 @@ bogus = true
 "##;
 
     const TOML_EXAMPLE: &str = r##"
-# cmux TOML config: the user-facing surface. When both mux.json and
+# mtyx TOML config: the user-facing surface. When both mux.json and
 # mux.toml exist, mux.json wins (it is the explicit override).
 [theme]
 selection_background = "#355c7d"
@@ -1868,7 +1868,7 @@ chrome_binary = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 cdp_url = "http://127.0.0.1:9222"
 discover = true
 discover_ports = [9222, 9223]
-user_data_dir = "/Users/me/Library/Application Support/cmux/chrome-profile"
+user_data_dir = "/Users/me/Library/Application Support/mattyx/chrome-profile"
 ephemeral = false
 max_capture_megapixels = 2.0
 capture_scale = 0.5
@@ -1909,11 +1909,11 @@ detach = "d"
         std::fs::write(&json_path, JSON_EXAMPLE).unwrap();
         std::fs::write(&toml_path, TOML_EXAMPLE).unwrap();
 
-        std::env::set_var("CMUX_MUX_CONFIG", &json_path);
+        std::env::set_var("MTYX_MUX_CONFIG", &json_path);
         let from_json = load();
-        std::env::set_var("CMUX_MUX_CONFIG", &toml_path);
+        std::env::set_var("MTYX_MUX_CONFIG", &toml_path);
         let from_toml = load();
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let _ = std::fs::remove_dir_all(&dir);
 
         // The `keys.bindings` Vec is rebuilt by iterating a HashMap, whose
@@ -1951,14 +1951,14 @@ detach = "d"
     #[test]
     fn mux_toml_loaded_when_only_toml_present() {
         let _guard = CONFIG_ENV_LOCK.lock().unwrap();
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let dir = unique_dir("only-toml");
         let _ = std::fs::remove_dir_all(&dir);
-        let cmux_dir = dir.join("cmux");
-        std::fs::create_dir_all(&cmux_dir).unwrap();
+        let mtyx_dir = dir.join("mattyx");
+        std::fs::create_dir_all(&mtyx_dir).unwrap();
         // A minimal TOML that overrides one distinguishable colour.
         std::fs::write(
-            cmux_dir.join("mux.toml"),
+            mtyx_dir.join("mux.toml"),
             r##"
 [theme]
 sidebar_rail = 99
@@ -1975,20 +1975,20 @@ sidebar_rail = 99
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(config.theme.sidebar_rail, Color::Indexed(99));
-        assert_eq!(resolved, Some(dir.join("cmux").join("mux.toml")));
+        assert_eq!(resolved, Some(dir.join("mattyx").join("mux.toml")));
     }
 
     #[test]
     fn mux_json_wins_when_both_present() {
         let _guard = CONFIG_ENV_LOCK.lock().unwrap();
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let dir = unique_dir("json-wins");
         let _ = std::fs::remove_dir_all(&dir);
-        let cmux_dir = dir.join("cmux");
-        std::fs::create_dir_all(&cmux_dir).unwrap();
-        std::fs::write(cmux_dir.join("mux.json"), r##"{"theme": {"sidebar_rail": 42}}"##).unwrap();
+        let mtyx_dir = dir.join("mattyx");
+        std::fs::create_dir_all(&mtyx_dir).unwrap();
+        std::fs::write(mtyx_dir.join("mux.json"), r##"{"theme": {"sidebar_rail": 42}}"##).unwrap();
         std::fs::write(
-            cmux_dir.join("mux.toml"),
+            mtyx_dir.join("mux.toml"),
             r##"
 [theme]
 sidebar_rail = 99
@@ -2003,11 +2003,11 @@ sidebar_rail = 99
 
         // JSON is the explicit override and wins over TOML.
         assert_eq!(config.theme.sidebar_rail, Color::Indexed(42));
-        assert_eq!(resolved, Some(dir.join("cmux").join("mux.json")));
+        assert_eq!(resolved, Some(dir.join("mattyx").join("mux.json")));
     }
 
     #[test]
-    fn cmux_mux_config_accepts_toml_or_json_by_extension() {
+    fn mtyx_mux_config_accepts_toml_or_json_by_extension() {
         let _guard = CONFIG_ENV_LOCK.lock().unwrap();
         let dir = unique_dir("ext");
         let _ = std::fs::remove_dir_all(&dir);
@@ -2022,15 +2022,15 @@ sidebar_rail = 77
 "##,
         )
         .unwrap();
-        std::env::set_var("CMUX_MUX_CONFIG", &toml_path);
+        std::env::set_var("MTYX_MUX_CONFIG", &toml_path);
         assert_eq!(load().theme.sidebar_rail, Color::Indexed(77));
 
         let json_path = dir.join("config.json");
         std::fs::write(&json_path, r##"{"theme": {"sidebar_rail": 66}}"##).unwrap();
-        std::env::set_var("CMUX_MUX_CONFIG", &json_path);
+        std::env::set_var("MTYX_MUX_CONFIG", &json_path);
         assert_eq!(load().theme.sidebar_rail, Color::Indexed(66));
 
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2116,7 +2116,7 @@ sidebar_rail = 77
     }
 
     #[test]
-    fn cmux_mux_config_sniffs_content_when_extension_missing() {
+    fn mtyx_mux_config_sniffs_content_when_extension_missing() {
         let _guard = CONFIG_ENV_LOCK.lock().unwrap();
         let dir = unique_dir("sniff");
         let _ = std::fs::remove_dir_all(&dir);
@@ -2127,22 +2127,22 @@ sidebar_rail = 77
         std::fs::write(
             &toml_path,
             r##"
-# a TOML cmux config
+# a TOML mtyx config
 [theme]
 sidebar_rail = 55
 "##,
         )
         .unwrap();
-        std::env::set_var("CMUX_MUX_CONFIG", &toml_path);
+        std::env::set_var("MTYX_MUX_CONFIG", &toml_path);
         assert_eq!(load().theme.sidebar_rail, Color::Indexed(55));
 
         // No extension: JSON content (the first non-whitespace char is `{`).
         let json_path = dir.join("cfg");
         std::fs::write(&json_path, r##"{"theme": {"sidebar_rail": 44}}"##).unwrap();
-        std::env::set_var("CMUX_MUX_CONFIG", &json_path);
+        std::env::set_var("MTYX_MUX_CONFIG", &json_path);
         assert_eq!(load().theme.sidebar_rail, Color::Indexed(44));
 
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2198,9 +2198,9 @@ sidebar_rail = 55
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("mux.json");
         std::fs::write(&path, r#"{"theme": "none"}"#).unwrap();
-        std::env::set_var("CMUX_MUX_CONFIG", &path);
+        std::env::set_var("MTYX_MUX_CONFIG", &path);
         let config = load();
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let _ = std::fs::remove_dir_all(&dir);
 
         // Theme::default() values.
@@ -2288,7 +2288,7 @@ sidebar_rail = 55
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("mux.json");
         std::fs::write(&path, r#"{"theme": "catpuccin-mocha"}"#).unwrap();
-        std::env::set_var("CMUX_MUX_CONFIG", &path);
+        std::env::set_var("MTYX_MUX_CONFIG", &path);
         // load_preset() resolves themes/ relative to current_dir(); cd to the
         // workspace root so it can find the bundled themes.
         let orig = std::env::current_dir().unwrap();
@@ -2296,7 +2296,7 @@ sidebar_rail = 55
         std::env::set_current_dir(&ws).unwrap();
         let config = load();
         std::env::set_current_dir(&orig).unwrap();
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(config.theme.sidebar_rail, Color::Rgb(0xcb, 0xa6, 0xf7));
@@ -2312,9 +2312,9 @@ sidebar_rail = 55
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("mux.json");
         std::fs::write(&path, r##"{"theme": {"sidebar_rail": "#87dcbf"}}"##).unwrap();
-        std::env::set_var("CMUX_MUX_CONFIG", &path);
+        std::env::set_var("MTYX_MUX_CONFIG", &path);
         let config = load();
-        std::env::remove_var("CMUX_MUX_CONFIG");
+        std::env::remove_var("MTYX_MUX_CONFIG");
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(config.theme.sidebar_rail, Color::Rgb(0x87, 0xdc, 0xbf));
@@ -2385,30 +2385,30 @@ prefix = "ctrl+s"
 
         // Explicit --config wins over env and XDG, even when the file
         // does not exist (the caller logs the missing path).
-        let explicit = Path::new("/tmp/cmux-overlay-explicit-4af0.toml");
-        std::env::set_var("CMUX_LOCAL_CONFIG", "/tmp/cmux-overlay-env-4af0.json");
+        let explicit = Path::new("/tmp/mtyx-overlay-explicit-4af0.toml");
+        std::env::set_var("MTYX_LOCAL_CONFIG", "/tmp/mtyx-overlay-env-4af0.json");
         assert_eq!(local_config_path(Some(explicit)), Some(explicit.to_path_buf()));
 
-        // With no explicit path, $CMUX_LOCAL_CONFIG wins over XDG.
-        assert_eq!(local_config_path(None), Some(PathBuf::from("/tmp/cmux-overlay-env-4af0.json")));
-        std::env::remove_var("CMUX_LOCAL_CONFIG");
+        // With no explicit path, $MTYX_LOCAL_CONFIG wins over XDG.
+        assert_eq!(local_config_path(None), Some(PathBuf::from("/tmp/mtyx-overlay-env-4af0.json")));
+        std::env::remove_var("MTYX_LOCAL_CONFIG");
 
         // XDG mux.local.toml wins over mux.json when both exist.
         let dir = unique_dir("overlay-res");
         let _ = std::fs::remove_dir_all(&dir);
-        let cmux = dir.join("cmux");
-        std::fs::create_dir_all(&cmux).unwrap();
-        std::fs::write(cmux.join("mux.local.toml"), "[theme]\nsidebar_rail = 1\n").unwrap();
-        std::fs::write(cmux.join("mux.json"), "{\"theme\": {\"sidebar_rail\": 2}}").unwrap();
+        let mtyx = dir.join("mattyx");
+        std::fs::create_dir_all(&mtyx).unwrap();
+        std::fs::write(mtyx.join("mux.local.toml"), "[theme]\nsidebar_rail = 1\n").unwrap();
+        std::fs::write(mtyx.join("mux.json"), "{\"theme\": {\"sidebar_rail\": 2}}").unwrap();
         std::env::set_var("XDG_CONFIG_HOME", &dir);
-        assert_eq!(local_config_path(None), Some(cmux.join("mux.local.toml")));
+        assert_eq!(local_config_path(None), Some(mtyx.join("mux.local.toml")));
 
         // mux.json is the fallback when mux.local.toml is absent.
-        let _ = std::fs::remove_file(cmux.join("mux.local.toml"));
-        assert_eq!(local_config_path(None), Some(cmux.join("mux.json")));
+        let _ = std::fs::remove_file(mtyx.join("mux.local.toml"));
+        assert_eq!(local_config_path(None), Some(mtyx.join("mux.json")));
 
         // Nothing present: None, so the attach uses server-side config.
-        let _ = std::fs::remove_file(cmux.join("mux.json"));
+        let _ = std::fs::remove_file(mtyx.join("mux.json"));
         assert_eq!(local_config_path(None), None);
 
         std::env::remove_var("XDG_CONFIG_HOME");

@@ -70,7 +70,7 @@ pub struct CdpKeyEvent<'a> {
 
 fn cdp_debug() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("CMUX_MUX_CDP_DEBUG").is_some())
+    *ON.get_or_init(|| std::env::var_os("MTYX_MUX_CDP_DEBUG").is_some())
 }
 
 #[derive(Clone)]

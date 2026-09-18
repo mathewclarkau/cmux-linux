@@ -1,25 +1,25 @@
-//! `cmux plugin` verb group: manifest-only plugin registry.
+//! `mtyx plugin` verb group: manifest-only plugin registry.
 //!
 //! Implements `list`, `install`, `uninstall`, `enable`, and `disable`
-//! for `cmux-plugin.toml` manifests. This PR does NOT spawn, execute,
+//! for `mtyx-plugin.toml` manifests. This PR does NOT spawn, execute,
 //! or sandbox any plugin code; it only manages on-disk manifest state
 //! and a small JSON registry file. Plugin *execution* (proxying
-//! `cmux <plugin-name> <verb>` calls to a running plugin process,
+//! `mtyx <plugin-name> <verb>` calls to a running plugin process,
 //! WASM/WASI sandboxing) is deferred to a follow-up PR and is not
 //! implemented by anything in this module.
 //!
-//! On-disk layout (under the cmux data directory, which honours
-//! `XDG_DATA_HOME` and falls back to `~/.local/share/cmux`):
+//! On-disk layout (under the mtyx data directory, which honours
+//! `XDG_DATA_HOME` and falls back to `~/.local/share/mattyx`):
 //!
 //! ```text
 //! <base>/
 //!   plugins.json          <- registry: { "plugins": [PluginEntry, ...] }
 //!   plugins/
 //!     <name>/
-//!       cmux-plugin.toml  <- the manifest copied verbatim at install time
+//!       mtyx-plugin.toml  <- the manifest copied verbatim at install time
 //! ```
 //!
-//! Manifest shape (`cmux-plugin.toml`):
+//! Manifest shape (`mtyx-plugin.toml`):
 //!
 //! ```toml
 //! [plugin]
@@ -43,24 +43,24 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 const USAGE: &str = "\
-cmux plugin - manage cmux-plugin.toml manifests (no execution yet)
+mtyx plugin - manage mtyx-plugin.toml manifests (no execution yet)
 
 USAGE:
-  cmux plugin list                       List installed plugins (read-only)
-  cmux plugin install <manifest-path>    Install a plugin from a manifest
-  cmux plugin uninstall <name>           Remove an installed plugin
-  cmux plugin enable <name>              Mark a plugin enabled
-  cmux plugin disable <name>             Mark a plugin disabled
+  mtyx plugin list                       List installed plugins (read-only)
+  mtyx plugin install <manifest-path>    Install a plugin from a manifest
+  mtyx plugin uninstall <name>           Remove an installed plugin
+  mtyx plugin enable <name>              Mark a plugin enabled
+  mtyx plugin disable <name>             Mark a plugin disabled
 
 Shared global flags (accepted before the subcommand):
   --json     Emit machine-readable JSON for `list`.
 
 NOT IMPLEMENTED (deferred to a follow-up PR):
-  Plugin *execution* (proxying `cmux <plugin-name> <verb>` to a running
+  Plugin *execution* (proxying `mtyx <plugin-name> <verb>` to a running
   plugin process, WASM/WASI sandboxing, the permission model) is out of
   scope for this verb group. These verbs only manage manifest state.
 
-The manifest file is `cmux-plugin.toml` with a single `[plugin]` table:
+The manifest file is `mtyx-plugin.toml` with a single `[plugin]` table:
   name   (string, required, non-empty)    plugin id and on-disk dir name
   entry  (string, required, non-empty)    path to the plugin entry artefact
                                           (stored verbatim; not resolved,
@@ -95,7 +95,7 @@ pub fn run(args: &[String]) -> i32 {
     match base_dir() {
         Ok(base) => dispatch(&base, sub, positional, json),
         Err(err) => {
-            eprintln!("cmux plugin: {err}");
+            eprintln!("mtyx plugin: {err}");
             1
         }
     }
@@ -113,7 +113,7 @@ fn dispatch(base: &Path, sub: &str, positional: &[&str], json: bool) -> i32 {
             0
         }
         other => {
-            eprintln!("cmux plugin: unknown subcommand {other:?}\n\n{USAGE}");
+            eprintln!("mtyx plugin: unknown subcommand {other:?}\n\n{USAGE}");
             2
         }
     }
@@ -121,20 +121,20 @@ fn dispatch(base: &Path, sub: &str, positional: &[&str], json: bool) -> i32 {
 
 // ----- paths ---------------------------------------------------------------
 
-/// Resolve the cmux data base directory (`<base>/plugins` and
+/// Resolve the mtyx data base directory (`<base>/plugins` and
 /// `<base>/plugins.json` live under this). Honours `XDG_DATA_HOME` and
-/// falls back to `~/.local/share/cmux`, mirroring the chrome profile
+/// falls back to `~/.local/share/mattyx`, mirroring the chrome profile
 /// resolution in `mux_core::platform`. Pure: no IO.
 fn base_dir() -> Result<PathBuf, String> {
     if let Some(raw) = std::env::var_os("XDG_DATA_HOME") {
         if !raw.is_empty() {
-            return Ok(PathBuf::from(raw).join("cmux"));
+            return Ok(PathBuf::from(raw).join("mattyx"));
         }
     }
     std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
-        .map(|h| PathBuf::from(h).join(".local").join("share").join("cmux"))
-        .ok_or_else(|| "could not resolve cmux data dir (set XDG_DATA_HOME or HOME)".to_string())
+        .map(|h| PathBuf::from(h).join(".local").join("share").join("mattyx"))
+        .ok_or_else(|| "could not resolve mtyx data dir (set XDG_DATA_HOME or HOME)".to_string())
 }
 
 fn plugins_dir(base: &Path) -> PathBuf {
@@ -273,7 +273,7 @@ pub fn validate_capabilities(cap: &Capabilities) -> Result<(), String> {
 /// fields, or semantically empty required fields. Pure: no IO.
 pub fn parse_manifest(content: &str) -> Result<ManifestPlugin, String> {
     let file: ManifestFile =
-        toml::from_str(content).map_err(|err| format!("malformed cmux-plugin.toml: {err}"))?;
+        toml::from_str(content).map_err(|err| format!("malformed mtyx-plugin.toml: {err}"))?;
     let ManifestPlugin { name, entry, verbs, .. } = &file.plugin;
     if name.trim().is_empty() {
         return Err("manifest missing required field [plugin] name".to_string());
@@ -340,7 +340,7 @@ fn load_registry(base: &Path) -> Result<Registry, String> {
 /// Refuses to write if `<base>/plugins.json` already exists and is a
 /// symlink: `fs::write` would follow the symlink and overwrite its
 /// target, which is dangerous here because an attacker with write access
-/// to the cmux data dir could plant such a symlink pointing at a
+/// to the mtyx data dir could plant such a symlink pointing at a
 /// sensitive file. Plugin manifests are a third-party-trust boundary
 /// even though execution is deferred, so the same paranoia applies to
 /// the registry file.
@@ -370,7 +370,7 @@ fn find_entry_mut<'a>(reg: &'a mut Registry, name: &str) -> Option<&'a mut Plugi
 /// Recursive directory removal that refuses to follow symlinks.
 /// `fs::remove_dir_all` will happily walk through a symlink and delete
 /// the target's contents, which is dangerous here: an attacker with
-/// write access to the cmux data dir could plant a symlink inside (or
+/// write access to the mtyx data dir could plant a symlink inside (or
 /// at the root of) a plugin directory pointing at a sensitive file, and
 /// `uninstall` would then delete through it. We walk the tree top-down
 /// using `fs::symlink_metadata` and refuse the whole removal if any
@@ -422,10 +422,10 @@ fn format_list_output(reg: &Registry, json: bool) -> Result<String, String> {
     Ok(out)
 }
 
-// ----- invocation (cmux <plugin> <verb> [args]) -----
+// ----- invocation (mtyx <plugin> <verb> [args]) -----
 
-/// Resolve the cmux data base dir (XDG_DATA_HOME or ~/.local/share/cmux).
-/// Public so `main.rs` can call it from the `cmux <plugin>` argv path.
+/// Resolve the mtyx data base dir (XDG_DATA_HOME or ~/.local/share/mattyx).
+/// Public so `main.rs` can call it from the `mtyx <plugin>` argv path.
 pub fn base_dir_public() -> Result<std::path::PathBuf, String> {
     base_dir()
 }
@@ -442,7 +442,7 @@ pub fn lookup_plugin(name: &str) -> Result<(PluginEntry, std::path::PathBuf), St
         .cloned()
         .ok_or_else(|| format!("plugin {name:?} is not installed"))?;
     if !entry.enabled {
-        return Err(format!("plugin {name:?} is disabled (run `cmux plugin enable {name}`)"));
+        return Err(format!("plugin {name:?} is disabled (run `mtyx plugin enable {name}`)"));
     }
     if !entry.verbs.iter().any(|v| v == "cmux_call") {
         return Err(format!(
@@ -453,7 +453,7 @@ pub fn lookup_plugin(name: &str) -> Result<(PluginEntry, std::path::PathBuf), St
     Ok((entry, dir))
 }
 
-/// Top-level handler for `cmux <plugin> <verb> [args]`. Returns exit
+/// Top-level handler for `mtyx <plugin> <verb> [args]`. Returns exit
 /// code 0 on success, 2 on usage error, 1 on runtime error. Reads the
 /// manifest + the registered capabilities, builds the SocketDispatcher,
 /// and invokes the plugin via crate::plugin_host::invoke.
@@ -465,18 +465,18 @@ pub fn cmd_call(
     let (entry, plugin_dir) = match lookup_plugin(plugin_name) {
         Ok(x) => x,
         Err(err) => {
-            eprintln!("cmux: {err}");
+            eprintln!("mtyx: {err}");
             return 1;
         }
     };
     // Read the manifest from disk (not just the registry copy) so
     // capabilities travel with the install.
-    let manifest_path = plugin_dir.join("cmux-plugin.toml");
+    let manifest_path = plugin_dir.join("mtyx-plugin.toml");
     let manifest_text = match std::fs::read_to_string(&manifest_path) {
         Ok(s) => s,
         Err(err) => {
             eprintln!(
-                "cmux: failed to read manifest {}: {err}",
+                "mtyx: failed to read manifest {}: {err}",
                 manifest_path.display()
             );
             return 1;
@@ -485,7 +485,7 @@ pub fn cmd_call(
     let manifest = match parse_manifest(&manifest_text) {
         Ok(m) => m,
         Err(err) => {
-            eprintln!("cmux: plugin {plugin_name:?} manifest invalid: {err}");
+            eprintln!("mtyx: plugin {plugin_name:?} manifest invalid: {err}");
             return 1;
         }
     };
@@ -493,35 +493,35 @@ pub fn cmd_call(
     if let Some((verb, _)) = args.split_first() {
         if !manifest.verbs.iter().any(|v| v == verb) {
             eprintln!(
-                "cmux: verb {verb:?} is not in plugin {plugin_name:?} allowlist ({:?})",
+                "mtyx: verb {verb:?} is not in plugin {plugin_name:?} allowlist ({:?})",
                 manifest.verbs
             );
             return 2;
         }
     } else {
         eprintln!(
-            "cmux: usage: cmux {plugin_name} <verb> [args...]  (allowed: {:?})",
+            "mtyx: usage: mtyx {plugin_name} <verb> [args...]  (allowed: {:?})",
             manifest.verbs
         );
         return 2;
     }
     let capabilities = effective_capabilities(manifest.capabilities.as_ref());
     if let Err(err) = validate_capabilities(&capabilities) {
-        eprintln!("cmux: plugin {plugin_name:?} capabilities invalid: {err}");
+        eprintln!("mtyx: plugin {plugin_name:?} capabilities invalid: {err}");
         return 1;
     }
     let entry_path = plugin_dir.join(&manifest.entry);
     let engine = match crate::plugin_host::build_engine() {
         Ok(e) => e,
         Err(err) => {
-            eprintln!("cmux: failed to build wasmtime engine: {err}");
+            eprintln!("mtyx: failed to build wasmtime engine: {err}");
             return 1;
         }
     };
     let module = match crate::plugin_host::load_module(&engine, &entry_path) {
         Ok(m) => m,
         Err(err) => {
-            eprintln!("cmux: {err}");
+            eprintln!("mtyx: {err}");
             return 1;
         }
     };
@@ -539,7 +539,7 @@ pub fn cmd_call(
     ) {
         Ok(_stdout) => 0,
         Err(err) => {
-            eprintln!("cmux: plugin {plugin_name:?} failed: {err}");
+            eprintln!("mtyx: plugin {plugin_name:?} failed: {err}");
             1
         }
     }
@@ -551,7 +551,7 @@ fn cmd_list(base: &Path, json: bool) -> i32 {
     let reg = match load_registry(base) {
         Ok(reg) => reg,
         Err(err) => {
-            eprintln!("cmux plugin list: {err}");
+            eprintln!("mtyx plugin list: {err}");
             return 1;
         }
     };
@@ -565,7 +565,7 @@ fn cmd_list(base: &Path, json: bool) -> i32 {
             0
         }
         Err(err) => {
-            eprintln!("cmux plugin list: {err}");
+            eprintln!("mtyx plugin list: {err}");
             1
         }
     }
@@ -573,44 +573,44 @@ fn cmd_list(base: &Path, json: bool) -> i32 {
 
 fn cmd_install(base: &Path, positional: &[&str]) -> i32 {
     let Some(&manifest_path) = positional.first() else {
-        eprintln!("cmux plugin install: missing <manifest-path>\n\n{USAGE}");
+        eprintln!("mtyx plugin install: missing <manifest-path>\n\n{USAGE}");
         return 2;
     };
     if positional.len() > 1 {
-        eprintln!("cmux plugin install: unexpected extra argument {:?}", positional[1]);
+        eprintln!("mtyx plugin install: unexpected extra argument {:?}", positional[1]);
         return 2;
     }
     let content = match fs::read_to_string(manifest_path) {
         Ok(c) => c,
         Err(err) => {
-            eprintln!("cmux plugin install: cannot read {manifest_path:?}: {err}");
+            eprintln!("mtyx plugin install: cannot read {manifest_path:?}: {err}");
             return 1;
         }
     };
     let plugin = match parse_manifest(&content) {
         Ok(p) => p,
         Err(err) => {
-            eprintln!("cmux plugin install: {err}");
+            eprintln!("mtyx plugin install: {err}");
             return 1;
         }
     };
     let mut reg = match load_registry(base) {
         Ok(r) => r,
         Err(err) => {
-            eprintln!("cmux plugin install: {err}");
+            eprintln!("mtyx plugin install: {err}");
             return 1;
         }
     };
     if reg.plugins.iter().any(|p| p.name == plugin.name) {
         eprintln!(
-            "cmux plugin install: a plugin named {:?} is already installed",
+            "mtyx plugin install: a plugin named {:?} is already installed",
             plugin.name
         );
         return 1;
     }
     let plugin_dir = plugins_dir(base).join(&plugin.name);
     // Refuse to install through a symlink: an attacker with write
-    // access to the cmux data dir could have pre-placed a symlink at
+    // access to the mtyx data dir could have pre-placed a symlink at
     // `<base>/plugins/<name>` pointing at a sensitive directory, and
     // `create_dir_all` would silently treat it as a present directory
     // (because the symlink target is a directory), after which the
@@ -619,17 +619,17 @@ fn cmd_install(base: &Path, positional: &[&str]) -> i32 {
     if let Ok(meta) = fs::symlink_metadata(&plugin_dir) {
         if meta.file_type().is_symlink() {
             eprintln!(
-                "cmux plugin install: refusing to install through symlink at {}",
+                "mtyx plugin install: refusing to install through symlink at {}",
                 plugin_dir.display()
             );
             return 1;
         }
     }
     if let Err(err) = fs::create_dir_all(&plugin_dir) {
-        eprintln!("cmux plugin install: failed to create {}: {err}", plugin_dir.display());
+        eprintln!("mtyx plugin install: failed to create {}: {err}", plugin_dir.display());
         return 1;
     }
-    let dest = plugin_dir.join("cmux-plugin.toml");
+    let dest = plugin_dir.join("mtyx-plugin.toml");
     // Defence in depth: also refuse if the manifest slot itself is a
     // symlink planted inside a directory we just created (or a
     // directory we adopted). `fs::write` would follow it and clobber
@@ -644,7 +644,7 @@ fn cmd_install(base: &Path, positional: &[&str]) -> i32 {
             let _ = fs::remove_file(&dest);
             let _ = fs::remove_dir(&plugin_dir);
             eprintln!(
-                "cmux plugin install: refusing to write through symlink at {}",
+                "mtyx plugin install: refusing to write through symlink at {}",
                 dest.display()
             );
             return 1;
@@ -654,7 +654,7 @@ fn cmd_install(base: &Path, positional: &[&str]) -> i32 {
         // Roll back the directory we just made so a failed install does
         // not leave an empty half-registered plugin on disk.
         let _ = remove_dir_safely(&plugin_dir);
-        eprintln!("cmux plugin install: failed to write {}: {err}", dest.display());
+        eprintln!("mtyx plugin install: failed to write {}: {err}", dest.display());
         return 1;
     }
     reg.plugins.push(PluginEntry {
@@ -665,7 +665,7 @@ fn cmd_install(base: &Path, positional: &[&str]) -> i32 {
     });
     if let Err(err) = save_registry(base, &reg) {
         let _ = remove_dir_safely(&plugin_dir);
-        eprintln!("cmux plugin install: {err}");
+        eprintln!("mtyx plugin install: {err}");
         return 1;
     }
     println!("installed plugin {} from {}", plugin.name, Path::new(manifest_path).display());
@@ -674,24 +674,24 @@ fn cmd_install(base: &Path, positional: &[&str]) -> i32 {
 
 fn cmd_uninstall(base: &Path, positional: &[&str]) -> i32 {
     let Some(&name) = positional.first() else {
-        eprintln!("cmux plugin uninstall: missing <name>\n\n{USAGE}");
+        eprintln!("mtyx plugin uninstall: missing <name>\n\n{USAGE}");
         return 2;
     };
     if positional.len() > 1 {
-        eprintln!("cmux plugin uninstall: unexpected extra argument {:?}", positional[1]);
+        eprintln!("mtyx plugin uninstall: unexpected extra argument {:?}", positional[1]);
         return 2;
     }
     let mut reg = match load_registry(base) {
         Ok(r) => r,
         Err(err) => {
-            eprintln!("cmux plugin uninstall: {err}");
+            eprintln!("mtyx plugin uninstall: {err}");
             return 1;
         }
     };
     let before = reg.plugins.len();
     reg.plugins.retain(|p| p.name != name);
     if reg.plugins.len() == before {
-        eprintln!("cmux plugin uninstall: no plugin named {name:?} is installed");
+        eprintln!("mtyx plugin uninstall: no plugin named {name:?} is installed");
         return 1;
     }
     let plugin_dir = plugins_dir(base).join(name);
@@ -700,12 +700,12 @@ fn cmd_uninstall(base: &Path, positional: &[&str]) -> i32 {
         // which would happily delete through an attacker-planted symlink
         // inside (or at the root of) the plugin directory.
         if let Err(err) = remove_dir_safely(&plugin_dir) {
-            eprintln!("cmux plugin uninstall: {}", err);
+            eprintln!("mtyx plugin uninstall: {}", err);
             return 1;
         }
     }
     if let Err(err) = save_registry(base, &reg) {
-        eprintln!("cmux plugin uninstall: {err}");
+        eprintln!("mtyx plugin uninstall: {err}");
         return 1;
     }
     println!("uninstalled plugin {name}");
@@ -715,22 +715,22 @@ fn cmd_uninstall(base: &Path, positional: &[&str]) -> i32 {
 fn cmd_set_enabled(base: &Path, positional: &[&str], enabled: bool) -> i32 {
     let label = if enabled { "enable" } else { "disable" };
     let Some(&name) = positional.first() else {
-        eprintln!("cmux plugin {label}: missing <name>\n\n{USAGE}");
+        eprintln!("mtyx plugin {label}: missing <name>\n\n{USAGE}");
         return 2;
     };
     if positional.len() > 1 {
-        eprintln!("cmux plugin {label}: unexpected extra argument {:?}", positional[1]);
+        eprintln!("mtyx plugin {label}: unexpected extra argument {:?}", positional[1]);
         return 2;
     }
     let mut reg = match load_registry(base) {
         Ok(r) => r,
         Err(err) => {
-            eprintln!("cmux plugin {label}: {err}");
+            eprintln!("mtyx plugin {label}: {err}");
             return 1;
         }
     };
     let Some(entry) = find_entry_mut(&mut reg, name) else {
-        eprintln!("cmux plugin {label}: no plugin named {name:?} is installed");
+        eprintln!("mtyx plugin {label}: no plugin named {name:?} is installed");
         return 1;
     };
     let already = entry.enabled == enabled;
@@ -738,7 +738,7 @@ fn cmd_set_enabled(base: &Path, positional: &[&str], enabled: bool) -> i32 {
         entry.enabled = enabled;
     }
     if let Err(err) = save_registry(base, &reg) {
-        eprintln!("cmux plugin {label}: {err}");
+        eprintln!("mtyx plugin {label}: {err}");
         return 1;
     }
     let state = if enabled { "enabled" } else { "disabled" };
@@ -767,7 +767,7 @@ mod tests {
 
     fn tmp_base(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "cmux-plugin-test-{tag}-{}-{}",
+            "mtyx-plugin-test-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -808,7 +808,7 @@ mod tests {
     #[test]
     fn parse_manifest_malformed_toml() {
         let err = parse_manifest("this is not = = valid toml").unwrap_err();
-        assert!(err.contains("malformed cmux-plugin.toml"), "error: {err}");
+        assert!(err.contains("malformed mtyx-plugin.toml"), "error: {err}");
     }
 
     #[test]
@@ -838,14 +838,14 @@ mod tests {
 
         // Install a valid manifest from a temp file.
         let manifest_dir = std::env::temp_dir().join(format!(
-            "cmux-plugin-manifest-{}",
+            "mtyx-plugin-manifest-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
         fs::create_dir_all(&manifest_dir).unwrap();
-        let manifest_file = manifest_dir.join("cmux-plugin.toml");
+        let manifest_file = manifest_dir.join("mtyx-plugin.toml");
         fs::write(&manifest_file, manifest("fleet", "bin/fleet.wasm", &["deploy", "rollback"]))
             .unwrap();
         let path_str = manifest_file.to_str().unwrap().to_string();
@@ -862,7 +862,7 @@ mod tests {
             entry.verbs,
             vec!["deploy".to_string(), "rollback".to_string()]
         );
-        let dest = plugins_dir(&base).join("fleet").join("cmux-plugin.toml");
+        let dest = plugins_dir(&base).join("fleet").join("mtyx-plugin.toml");
         assert!(dest.exists(), "manifest should be copied to {}", dest.display());
         assert_eq!(
             fs::read_to_string(&dest).unwrap(),
@@ -907,7 +907,7 @@ mod tests {
     #[test]
     fn install_nonexistent_file_is_command_error() {
         let base = tmp_base("nofile");
-        assert_eq!(cmd_install(&base, &["/nonexistent/cmux-plugin.toml"]), 1);
+        assert_eq!(cmd_install(&base, &["/nonexistent/mtyx-plugin.toml"]), 1);
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -915,14 +915,14 @@ mod tests {
     fn install_malformed_manifest_is_command_error() {
         let base = tmp_base("badman");
         let dir = std::env::temp_dir().join(format!(
-            "cmux-plugin-bad-{}",
+            "mtyx-plugin-bad-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
         fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("cmux-plugin.toml");
+        let file = dir.join("mtyx-plugin.toml");
         fs::write(&file, "[plugin]\nname = \"x\"\n").unwrap();
         let path = file.to_str().unwrap().to_string();
         assert_eq!(cmd_install(&base, &[path.as_str()]), 1);
@@ -956,7 +956,7 @@ mod tests {
     }
 
     /// `save_registry` must refuse to write when `<base>/plugins.json`
-    /// is already a symlink: an attacker with write access to the cmux
+    /// is already a symlink: an attacker with write access to the mtyx
     /// data dir could plant such a symlink pointing at a sensitive
     /// file, and `fs::write` would silently follow it. We assert the
     /// error is reported AND the symlink target's contents are
@@ -1003,14 +1003,14 @@ mod tests {
 
         // Stage a real manifest in a separate temp dir.
         let manifest_dir = std::env::temp_dir().join(format!(
-            "cmux-plugin-test-manifest-{}",
+            "mtyx-plugin-test-manifest-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
         fs::create_dir_all(&manifest_dir).unwrap();
-        let manifest_file = manifest_dir.join("cmux-plugin.toml");
+        let manifest_file = manifest_dir.join("mtyx-plugin.toml");
         fs::write(
             &manifest_file,
             manifest("fleet", "bin/fleet.wasm", &["deploy"]),
@@ -1035,7 +1035,7 @@ mod tests {
     }
 
     /// `install` must also refuse when the manifest slot
-    /// `<base>/plugins/<name>/cmux-plugin.toml` is itself a symlink,
+    /// `<base>/plugins/<name>/mtyx-plugin.toml` is itself a symlink,
     /// even if the parent directory is regular. Defence in depth: an
     /// attacker who could replace just the manifest file inside an
     /// otherwise-normal plugin directory must not be able to redirect
@@ -1049,17 +1049,17 @@ mod tests {
         // Pre-place a symlink at the manifest slot.
         let target = base.join("victim.txt");
         fs::write(&target, "do-not-touch").unwrap();
-        std::os::unix::fs::symlink(&target, plugin_dir.join("cmux-plugin.toml")).unwrap();
+        std::os::unix::fs::symlink(&target, plugin_dir.join("mtyx-plugin.toml")).unwrap();
 
         let manifest_dir = std::env::temp_dir().join(format!(
-            "cmux-plugin-test-manifest-{}",
+            "mtyx-plugin-test-manifest-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
         fs::create_dir_all(&manifest_dir).unwrap();
-        let manifest_file = manifest_dir.join("cmux-plugin.toml");
+        let manifest_file = manifest_dir.join("mtyx-plugin.toml");
         fs::write(
             &manifest_file,
             manifest("fleet", "bin/fleet.wasm", &["deploy"]),
@@ -1112,7 +1112,7 @@ mod tests {
         fs::create_dir_all(plugins_dir(&base)).unwrap();
         let plugin_dir = plugins_dir(&base).join("fleet");
         std::os::unix::fs::symlink(&target, &plugin_dir).unwrap();
-        // Seed the registry so the plugin is "installed" from cmux's POV.
+        // Seed the registry so the plugin is "installed" from mtyx's POV.
         let mut reg = Registry::default();
         reg.plugins.push(PluginEntry {
             name: "fleet".to_string(),
@@ -1151,7 +1151,7 @@ mod tests {
         let plugin_dir = plugins_dir(&base).join("fleet");
         fs::create_dir_all(&plugin_dir).unwrap();
         fs::write(
-            plugin_dir.join("cmux-plugin.toml"),
+            plugin_dir.join("mtyx-plugin.toml"),
             manifest("fleet", "bin/fleet.wasm", &["deploy"]),
         )
         .unwrap();
@@ -1160,7 +1160,7 @@ mod tests {
         fs::write(&target, "do-not-touch").unwrap();
         std::os::unix::fs::symlink(&target, plugin_dir.join("evil-link")).unwrap();
 
-        // Seed the registry so the plugin is "installed" from cmux's POV.
+        // Seed the registry so the plugin is "installed" from mtyx's POV.
         let mut reg = Registry::default();
         reg.plugins.push(PluginEntry {
             name: "fleet".to_string(),
@@ -1250,7 +1250,7 @@ mod tests {
 
     /// Issue #42 AC6: the pifactory-fleet example plugin ships at
     /// `mux/spec/plugins/pifactory-fleet/`. This test verifies its
-    /// `cmux-plugin.toml` parses, that the schema values match the
+    /// `mtyx-plugin.toml` parses, that the schema values match the
     /// contract documented in the plugin's README, and that the
     /// entry path resolves relative to the plugin dir.
     ///
@@ -1263,7 +1263,7 @@ mod tests {
         // mux-tui's manifest dir is `<repo>/mux/crates/mux-tui`;
         // the plugin sits at `<repo>/mux/spec/plugins/pifactory-fleet`.
         let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../spec/plugins/pifactory-fleet/cmux-plugin.toml");
+            .join("../../spec/plugins/pifactory-fleet/mtyx-plugin.toml");
         let manifest_path = manifest_path
             .canonicalize()
             .unwrap_or_else(|e| panic!("could not canonicalize {}: {e}", manifest_path.display()));
@@ -1353,7 +1353,7 @@ mod tests {
 
     /// Companion to the above: the plugin's source tree should
     /// contain the build script, the Rust source, and the reference
-    /// shell adapter that document the cmux verbs it wraps.
+    /// shell adapter that document the mtyx verbs it wraps.
     /// Catches accidental deletions of the example plugin's
     /// supporting files.
     #[test]
@@ -1364,7 +1364,7 @@ mod tests {
             .canonicalize()
             .unwrap_or_else(|e| panic!("could not canonicalize {}: {e}", plugin_dir.display()));
         for rel in [
-            "cmux-plugin.toml",
+            "mtyx-plugin.toml",
             "README.md",
             "Cargo.toml",
             "build.sh",

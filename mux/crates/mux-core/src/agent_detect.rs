@@ -22,7 +22,7 @@
 //!
 //! Patterns ship as a bundled JSON file ([`agents.json`]); users extend
 //! the registry at runtime via the `agent-pattern-add` socket command
-//! (`cmux agent-pattern add <name> --pattern <marker>`). Pattern
+//! (`mtyx agent-pattern add <name> --pattern <marker>`). Pattern
 //! semantics are substring/glob (`*` wildcard), deliberately NOT regex:
 //! no runtime crate in the workspace links `regex`, and every marker
 //! the issue names is a literal.
@@ -611,7 +611,7 @@ mod tests {
         // A comm with spaces but no nested parens, and a zero starttime
         // (a process spawned before the kernel booted is impossible, but
         // 0 is a legal field value to round-trip).
-        let stat = "42 (cmux agent d) S 1 42 42 0 -1 4194560 1 0 0 0 1 1 0 0 20 0 1 0 0 4096 200 0 0 0 0 0 0 0";
+        let stat = "42 (mtyx agent d) S 1 42 42 0 -1 4194560 1 0 0 0 1 1 0 0 20 0 1 0 0 4096 200 0 0 0 0 0 0 0";
         assert_eq!(parse_starttime(stat), Some(0), "space-containing comm");
 
         // A plain comm: itrealvalue=0 must NOT be mistaken for starttime.

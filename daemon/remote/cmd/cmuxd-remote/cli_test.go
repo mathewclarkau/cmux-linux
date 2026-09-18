@@ -50,7 +50,7 @@ func makeShortUnixSocketPath(t *testing.T) string {
 		t.Fatalf("mkdtemp: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return filepath.Join(dir, "cmux.sock")
+	return filepath.Join(dir, "mtyx.sock")
 }
 
 // startMockSocket creates a Unix socket that accepts one connection,
@@ -252,7 +252,7 @@ func startMockAuthenticatedTCPSocket(t *testing.T, relayID, relayToken, response
 				defer conn.Close()
 				nonce := "testnonce"
 				challenge, _ := json.Marshal(map[string]any{
-					"protocol": "cmux-relay-auth",
+					"protocol": "mtyx-relay-auth",
 					"version":  1,
 					"relay_id": relayID,
 					"nonce":    nonce,
@@ -402,8 +402,8 @@ func TestCLIPingOverAuthenticatedTCPWithEnv(t *testing.T) {
 	relayToken := strings.Repeat("a1", 32)
 	pingResp, _ := json.Marshal(map[string]any{"id": 1, "ok": true, "result": map[string]any{}})
 	addr := startMockAuthenticatedTCPSocket(t, relayID, relayToken, string(pingResp))
-	t.Setenv("CMUX_RELAY_ID", relayID)
-	t.Setenv("CMUX_RELAY_TOKEN", relayToken)
+	t.Setenv("MTYX_RELAY_ID", relayID)
+	t.Setenv("MTYX_RELAY_TOKEN", relayToken)
 
 	code := runCLI([]string{"--socket", addr, "ping"})
 	if code != 0 {
@@ -423,9 +423,9 @@ func TestCLIPingOverAuthenticatedTCPWithRelayFile(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("CMUX_RELAY_ID", "")
-	t.Setenv("CMUX_RELAY_TOKEN", "")
-	relayDir := filepath.Join(home, ".cmux", "relay")
+	t.Setenv("MTYX_RELAY_ID", "")
+	t.Setenv("MTYX_RELAY_TOKEN", "")
+	relayDir := filepath.Join(home, ".mattyx", "relay")
 	if err := os.MkdirAll(relayDir, 0o700); err != nil {
 		t.Fatalf("mkdir relay dir: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestCLIPingOverAuthenticatedTCPWithRelayFile(t *testing.T) {
 
 func TestDialSocketDetection(t *testing.T) {
 	// Unix socket paths should attempt Unix dial
-	for _, path := range []string{"/tmp/cmux-nonexistent-test-99999.sock", "/var/run/cmux-nonexistent.sock"} {
+	for _, path := range []string{"/tmp/mtyx-nonexistent-test-99999.sock", "/var/run/mtyx-nonexistent.sock"} {
 		conn, err := dialSocket(path, nil)
 		if conn != nil {
 			conn.Close()
@@ -580,8 +580,8 @@ func TestCLIUnknownCommand(t *testing.T) {
 }
 
 func TestCLINoSocket(t *testing.T) {
-	// Without CMUX_SOCKET_PATH set, should fail
-	os.Unsetenv("CMUX_SOCKET_PATH")
+	// Without MTYX_SOCKET_PATH set, should fail
+	os.Unsetenv("MTYX_SOCKET_PATH")
 	code := runCLI([]string{"ping"})
 	if code != 1 {
 		t.Fatalf("missing socket should return 1, got %d", code)
@@ -590,7 +590,7 @@ func TestCLINoSocket(t *testing.T) {
 
 func TestCLISocketEnvVar(t *testing.T) {
 	sockPath, requests := startMockV2SocketWithRequestCapture(t)
-	t.Setenv("CMUX_SOCKET_PATH", sockPath)
+	t.Setenv("MTYX_SOCKET_PATH", sockPath)
 
 	code := runCLI([]string{"ping"})
 	if code != 0 {
@@ -605,7 +605,7 @@ func TestCLISocketEnvVar(t *testing.T) {
 func TestCLIV2FlagMapping(t *testing.T) {
 	// Verify that --workspace gets mapped to workspace_id in params
 	dir := t.TempDir()
-	sockPath := filepath.Join(dir, "cmux.sock")
+	sockPath := filepath.Join(dir, "mtyx.sock")
 
 	receivedParamsCh := make(chan map[string]any, 1)
 	ln, err := net.Listen("unix", sockPath)
@@ -646,18 +646,18 @@ func TestCLIV2FlagMapping(t *testing.T) {
 }
 
 func TestBusyboxArgv0Detection(t *testing.T) {
-	// Verify that when argv[0] base is "cmux", we enter CLI mode
-	base := filepath.Base("cmux")
-	if base != "cmux" {
-		t.Fatalf("expected base 'cmux', got %q", base)
+	// Verify that when argv[0] base is "mtyx", we enter CLI mode
+	base := filepath.Base("mtyx")
+	if base != "mtyx" {
+		t.Fatalf("expected base 'mtyx', got %q", base)
 	}
-	base2 := filepath.Base("/home/user/.cmux/bin/cmux")
-	if base2 != "cmux" {
-		t.Fatalf("expected base 'cmux', got %q", base2)
+	base2 := filepath.Base("/home/user/.mattyx/bin/mtyx")
+	if base2 != "mtyx" {
+		t.Fatalf("expected base 'mtyx', got %q", base2)
 	}
 	base3 := filepath.Base("cmuxd-remote")
-	if base3 == "cmux" {
-		t.Fatalf("cmuxd-remote should not match cmux")
+	if base3 == "mtyx" {
+		t.Fatalf("cmuxd-remote should not match mtyx")
 	}
 }
 
@@ -755,7 +755,7 @@ func TestCLIFocusPanelUsesSurfaceFocus(t *testing.T) {
 
 func TestCLIBrowserOpenUsesOpenSplitAndWorkspaceEnv(t *testing.T) {
 	sockPath, requests := startMockV2SocketWithRequestCapture(t)
-	t.Setenv("CMUX_WORKSPACE_ID", "env-ws")
+	t.Setenv("MTYX_WORKSPACE_ID", "env-ws")
 	code := runCLI([]string{"--socket", sockPath, "--json", "browser", "open", "https://example.com"})
 	if code != 0 {
 		t.Fatalf("browser open should return 0, got %d", code)
@@ -780,7 +780,7 @@ func TestCLIBrowserOpenUsesOpenSplitAndWorkspaceEnv(t *testing.T) {
 
 func TestCLIBrowserGetURLUsesCurrentMethodAndSurfaceEnv(t *testing.T) {
 	sockPath, requests := startMockV2SocketWithRequestCapture(t)
-	t.Setenv("CMUX_SURFACE_ID", "env-sf")
+	t.Setenv("MTYX_SURFACE_ID", "env-sf")
 	code := runCLI([]string{"--socket", sockPath, "--json", "browser", "get-url"})
 	if code != 0 {
 		t.Fatalf("browser get-url should return 0, got %d", code)
@@ -802,7 +802,7 @@ func TestCLIBrowserGetURLUsesCurrentMethodAndSurfaceEnv(t *testing.T) {
 
 func TestCLIBrowserSnapshotUsesSurfaceEnvAndForwardsOptions(t *testing.T) {
 	sockPath, requests := startMockV2SocketWithRequestCapture(t)
-	t.Setenv("CMUX_SURFACE_ID", "env-sf")
+	t.Setenv("MTYX_SURFACE_ID", "env-sf")
 	code := runCLI([]string{
 		"--socket", sockPath, "--json",
 		"browser", "snapshot",
@@ -835,7 +835,7 @@ func TestCLIBrowserSnapshotUsesSurfaceEnvAndForwardsOptions(t *testing.T) {
 
 func TestCLIBrowserWaitUsesSurfaceEnvAndForwardsOptions(t *testing.T) {
 	sockPath, requests := startMockV2SocketWithRequestCapture(t)
-	t.Setenv("CMUX_SURFACE_ID", "env-sf")
+	t.Setenv("MTYX_SURFACE_ID", "env-sf")
 	code := runCLI([]string{
 		"--socket", sockPath, "--json",
 		"browser", "wait",
@@ -872,7 +872,7 @@ func TestCLIBrowserWaitUsesSurfaceEnvAndForwardsOptions(t *testing.T) {
 
 func TestCLIBrowserAutomationPositionals(t *testing.T) {
 	sockPath, requests := startMockV2SocketWithRequestCapture(t)
-	t.Setenv("CMUX_SURFACE_ID", "env-sf")
+	t.Setenv("MTYX_SURFACE_ID", "env-sf")
 	code := runCLI([]string{
 		"--socket", sockPath, "--json",
 		"browser", "fill",
@@ -908,7 +908,7 @@ func TestCLIBrowserAutomationPositionals(t *testing.T) {
 
 func TestCLIBrowserSelectDoesNotMirrorValueToText(t *testing.T) {
 	sockPath, requests := startMockV2SocketWithRequestCapture(t)
-	t.Setenv("CMUX_SURFACE_ID", "env-sf")
+	t.Setenv("MTYX_SURFACE_ID", "env-sf")
 	code := runCLI([]string{
 		"--socket", sockPath, "--json",
 		"browser", "select",
@@ -944,7 +944,7 @@ func TestCLIBrowserSelectDoesNotMirrorValueToText(t *testing.T) {
 
 func TestCLIBrowserEvalUsesPositionalScript(t *testing.T) {
 	sockPath, requests := startMockV2SocketWithRequestCapture(t)
-	t.Setenv("CMUX_SURFACE_ID", "env-sf")
+	t.Setenv("MTYX_SURFACE_ID", "env-sf")
 	code := runCLI([]string{
 		"--socket", sockPath, "--json",
 		"browser", "eval",
@@ -1087,9 +1087,9 @@ func TestParseFlagsCollectsKnownFlagsAndPositionalArgs(t *testing.T) {
 }
 
 func TestCLIEnvVarDefaults(t *testing.T) {
-	// Test that CMUX_WORKSPACE_ID and CMUX_SURFACE_ID are used as defaults
+	// Test that MTYX_WORKSPACE_ID and MTYX_SURFACE_ID are used as defaults
 	dir := t.TempDir()
-	sockPath := filepath.Join(dir, "cmux.sock")
+	sockPath := filepath.Join(dir, "mtyx.sock")
 
 	receivedParamsCh := make(chan map[string]any, 1)
 	ln, err := net.Listen("unix", sockPath)
@@ -1115,10 +1115,10 @@ func TestCLIEnvVarDefaults(t *testing.T) {
 		conn.Close()
 	}()
 
-	os.Setenv("CMUX_WORKSPACE_ID", "env-ws-id")
-	os.Setenv("CMUX_SURFACE_ID", "env-sf-id")
-	defer os.Unsetenv("CMUX_WORKSPACE_ID")
-	defer os.Unsetenv("CMUX_SURFACE_ID")
+	os.Setenv("MTYX_WORKSPACE_ID", "env-ws-id")
+	os.Setenv("MTYX_SURFACE_ID", "env-sf-id")
+	defer os.Unsetenv("MTYX_WORKSPACE_ID")
+	defer os.Unsetenv("MTYX_SURFACE_ID")
 
 	code := runCLI([]string{"--socket", sockPath, "--json", "close-surface"})
 	if code != 0 {
@@ -1285,8 +1285,8 @@ func TestCLIWorkspaceGroupUnknownSubcommand(t *testing.T) {
 
 func TestCLIWorkspaceGroupListForwardsCallerEnvContext(t *testing.T) {
 	sockPath, requests := startMockV2SocketWithRequestCapture(t)
-	t.Setenv("CMUX_WORKSPACE_ID", "env-ws")
-	t.Setenv("CMUX_SURFACE_ID", "env-sf")
+	t.Setenv("MTYX_WORKSPACE_ID", "env-ws")
+	t.Setenv("MTYX_SURFACE_ID", "env-sf")
 	code := runCLI([]string{"--socket", sockPath, "--json", "workspace", "group", "list"})
 	if code != 0 {
 		t.Fatalf("workspace group list should return 0, got %d", code)
@@ -1299,7 +1299,7 @@ func TestCLIWorkspaceGroupListForwardsCallerEnvContext(t *testing.T) {
 
 func TestCLIWorkspaceGroupRemoveStillRequiresExplicitWorkspaceWithEnv(t *testing.T) {
 	sockPath := startMockV2Socket(t)
-	t.Setenv("CMUX_WORKSPACE_ID", "env-ws")
+	t.Setenv("MTYX_WORKSPACE_ID", "env-ws")
 	if code := runCLI([]string{"--socket", sockPath, "workspace", "group", "remove"}); code != 2 {
 		t.Fatalf("remove without --workspace should return 2 even with env set, got %d", code)
 	}

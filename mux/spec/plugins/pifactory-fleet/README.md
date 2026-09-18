@@ -1,27 +1,27 @@
-# pifactory-fleet (cmux plugin example)
+# pifactory-fleet (mtyx plugin example)
 
-Worked-example plugin for cmux-linux's plugin loader. Closes the last
+Worked-example plugin for mattyx's plugin loader. Closes the last
 remaining acceptance criterion of [issue #42][i42]: a real, installable
-plugin that adapts the cmux verbs `scripts/cmux-panel-lib.sh` from the
+plugin that adapts the mtyx verbs `scripts/cmux-panel-lib.sh` from the
 [pifactory][pifactory] repo uses, so a fleet operator can drive
-multi-pane agent dispatch via `cmux pifactory-fleet <verb>` instead of
+multi-pane agent dispatch via `mtyx pifactory-fleet <verb>` instead of
 sourcing the shell library by hand.
 
-[i42]: https://github.com/mathewclarkau/cmux-linux/issues/42
+[i42]: https://github.com/mathewclarkau/mattyx/issues/42
 [pifactory]: https://example.invalid/mathewclarkau/pifactory "local-only repo;
-`scripts/cmux-panel-lib.sh` lives outside cmux-linux"
+`scripts/cmux-panel-lib.sh` lives outside mattyx"
 
 ## What this plugin does
 
 `cmux-panel-lib.sh` is the shell glue pifactory's lead agents call to
 dispatch worker panes (`cmux_dispatch_worker_pane`,
 `cmux_dispatch_worker_pane_interactive`). It is a thin wrapper around
-the cmux CLI verbs `split`, `rename-surface`, `send --text ...` (often
+the mtyx CLI verbs `split`, `rename-surface`, `send --text ...` (often
 `--send-cr`), and `close-workspace`.
 
-`pifactory-fleet` re-exposes the same operations as cmux-plugin verbs:
+`pifactory-fleet` re-exposes the same operations as mtyx-plugin verbs:
 
-| Verb       | Underlying cmux verb(s) | Notes                              |
+| Verb       | Underlying mtyx verb(s) | Notes                              |
 | ---------- | ----------------------- | ---------------------------------- |
 | `ping`     | `identify`              | read-only smoke test               |
 | `status`   | `list-workspaces`       | read-only snapshot                 |
@@ -39,7 +39,7 @@ before reaching the control socket.
 
 ```
 mux/spec/plugins/pifactory-fleet/
-├── cmux-plugin.toml        Manifest read by `cmux plugin install`.
+├── mtyx-plugin.toml        Manifest read by `mtyx plugin install`.
 ├── README.md               This file.
 ├── Cargo.toml              Crate manifest for the WASM adapter source.
 ├── build.sh                Builds src/lib.rs to bin/fleet.wasm.
@@ -49,14 +49,14 @@ mux/spec/plugins/pifactory-fleet/
 │   ├── fleet.wasm          Compiled artifact (commit after running build.sh).
 │   └── fleet.sh            Shell adapter (cmux-panel-lib idiom) for reference.
 ├── lib/
-│   └── panel.sh            Glue stub (mirrors the cmux verbs it wraps).
+│   └── panel.sh            Glue stub (mirrors the mtyx verbs it wraps).
 └── examples/
     └── team-spec.json      Example input for `deploy`.
 ```
 
 `bin/fleet.sh` is **reference material only** — it documents the
 adapter logic in the cmux-panel-lib.sh idiom (one bash function per
-verb, each function shelling out to `cmux <verb>`). The cmux loader
+verb, each function shelling out to `mtyx <verb>`). The mtyx loader
 itself only executes `bin/fleet.wasm`, which is built from
 `src/lib.rs` and implements the same verb set in Rust.
 
@@ -73,15 +73,15 @@ artifact. Build it from this directory with:
 --target-dir target` and copies the resulting `fleet.wasm` into
 `bin/`. Requires:
 
-- `cargo` 1.80+ (wasmtime 27 host crate in cmux-linux MSRVs at 1.80;
+- `cargo` 1.80+ (wasmtime 27 host crate in mattyx MSRVs at 1.80;
   the plugin's own crate MSRVs at 1.75 and builds with the same
-  pinned toolchain as cmux-linux).
+  pinned toolchain as mattyx).
 - The `wasm32-unknown-unknown` rustup target:
   `rustup target add wasm32-unknown-unknown`.
 
 The build is hermetic (no network needed if the registry cache is
-warm). It does not pull in any cmux-linux code; the plugin's WASM
-talks to cmux through the three host imports defined in
+warm). It does not pull in any mattyx code; the plugin's WASM
+talks to mtyx through the three host imports defined in
 `mux/crates/mux-tui/src/plugin_host.rs`:
 
 ```rust
@@ -93,23 +93,23 @@ fn cmux_log(level, ptr, len);  // 0=info, 1=warn, 2=error, other=debug
 ## Install
 
 ```sh
-cmux plugin install ./cmux-plugin.toml
-cmux plugin list                 # should show pifactory-fleet enabled
+mtyx plugin install ./mtyx-plugin.toml
+mtyx plugin list                 # should show pifactory-fleet enabled
 ```
 
 That command copies this directory (minus the build artefacts) into
-`$XDG_DATA_HOME/cmux/plugins/pifactory-fleet/` and appends an entry
-to `$XDG_DATA_HOME/cmux/plugins.json`. The install path validates the
+`$XDG_DATA_HOME/mattyx/plugins/pifactory-fleet/` and appends an entry
+to `$XDG_DATA_HOME/mattyx/plugins.json`. The install path validates the
 manifest, refuses symlinks (see `mux/crates/mux-tui/src/plugin.rs`
 `cmd_install`), and registers the plugin as enabled by default.
 
 ## Invoke
 
 ```sh
-cmux pifactory-fleet ping
-cmux pifactory-fleet status
-cmux pifactory-fleet deploy   workpieces/p1
-cmux pifactory-fleet rollback workpieces/p1
+mtyx pifactory-fleet ping
+mtyx pifactory-fleet status
+mtyx pifactory-fleet deploy   workpieces/p1
+mtyx pifactory-fleet rollback workpieces/p1
 ```
 
 Each invocation is one wasmtime instantiation: the loader mints a
@@ -131,16 +131,16 @@ invocation therefore fails with `StaleId { expected: 0, got: 1 }`.
 verb makes at most one `cmux_call`. The README of a future loader
 fix that increments `expected_request_id` per call can lift this
 restriction without changing the manifest schema. This is tracked
-as a known issue — see `cmux-linux/AGENTS.md` follow-ups.
+as a known issue — see `mattyx/AGENTS.md` follow-ups.
 
 ## Extending
 
 To add a new verb:
 
-1. Add it to `verbs` in `cmux-plugin.toml` (so the loader accepts it
+1. Add it to `verbs` in `mtyx-plugin.toml` (so the loader accepts it
    on the argv path AND so it appears in the cmux_call allowlist).
 2. Add a `cmux_call` branch in `src/lib.rs` that builds the
-   `{"id":0,"verb":"<cmux-verb>","args":{...}}` request.
+   `{"id":0,"verb":"<mtyx-verb>","args":{...}}` request.
 3. Mirror the logic in `bin/fleet.sh` so the shell reference stays
    in sync.
 4. Re-run `./build.sh` and re-install.
@@ -153,10 +153,10 @@ the loader will reject it as `WriteBlocked`. Bump the manifest's
 
 - `mux/crates/mux-tui/tests/cli.rs::plugin_install_list_uninstall_round_trip`
   is the closest existing analogue; it round-trips a hand-rolled
-  `pifactory-fleet`-shaped manifest through `cmux plugin
+  `pifactory-fleet`-shaped manifest through `mtyx plugin
 install/list/uninstall` and asserts the registry state.
 - `mux/crates/mux-tui/src/plugin.rs::tests::example_pifactory_fleet_manifest_parses`
-  (added with this plugin) parses the actual `cmux-plugin.toml` from
+  (added with this plugin) parses the actual `mtyx-plugin.toml` from
   this directory and asserts the schema values match the contract
   documented above. It is a manifest-level test, not a runtime test
   — it does not require the `bin/fleet.wasm` to be built.

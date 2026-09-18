@@ -27,7 +27,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("list") => run_list(args),
         Some("install") => run_install_command(REGISTRY, args),
         _ => {
-            eprintln!("cmux: usage: cmux agents <list|install --all|install --only <agent>> [--uninstall] [--global]");
+            eprintln!("mtyx: usage: mtyx agents <list|install --all|install --only <agent>> [--uninstall] [--global]");
             2
         }
     }
@@ -48,24 +48,24 @@ fn run_install_command(registry: &[AgentSpec], args: &[String]) -> i32 {
                 index += 1;
                 only = args.get(index).map(String::as_str);
                 if only.is_none() {
-                    eprintln!("cmux: --only needs an agent name");
+                    eprintln!("mtyx: --only needs an agent name");
                     return 2;
                 }
             }
             other => {
-                eprintln!("cmux: unknown agents install argument {other:?}");
+                eprintln!("mtyx: unknown agents install argument {other:?}");
                 return 2;
             }
         }
         index += 1;
     }
     if all == only.is_some() {
-        eprintln!("cmux: agents install requires exactly one of --all or --only <agent>");
+        eprintln!("mtyx: agents install requires exactly one of --all or --only <agent>");
         return 2;
     }
     if let Some(name) = only {
         if !is_registered(registry, name) {
-            eprintln!("cmux: unknown agent {name:?}");
+            eprintln!("mtyx: unknown agent {name:?}");
             return 2;
         }
     }
@@ -112,7 +112,7 @@ fn run_list(args: &[String]) -> i32 {
         if arg == "--global" {
             global = true;
         } else {
-            eprintln!("cmux: unknown agents list argument {arg:?}");
+            eprintln!("mtyx: unknown agents list argument {arg:?}");
             return 2;
         }
     }
@@ -173,9 +173,9 @@ fn aider_path(global: bool) -> Option<PathBuf> {
 }
 fn pi_path(global: bool) -> Option<PathBuf> {
     if global {
-        home_join(&[".pi", "agent", "extensions", "cmux.ts"])
+        home_join(&[".pi", "agent", "extensions", "mtyx.ts"])
     } else {
-        Some(PathBuf::from(".pi/extensions/cmux.ts"))
+        Some(PathBuf::from(".pi/extensions/mtyx.ts"))
     }
 }
 fn grok_path(global: bool) -> Option<PathBuf> {
@@ -183,9 +183,9 @@ fn grok_path(global: bool) -> Option<PathBuf> {
 }
 fn opencode_path(global: bool) -> Option<PathBuf> {
     if global {
-        home_join(&[".config", "opencode", "plugin", "cmux.ts"])
+        home_join(&[".config", "opencode", "plugin", "mtyx.ts"])
     } else {
-        Some(PathBuf::from(".opencode").join("plugin").join("cmux.ts"))
+        Some(PathBuf::from(".opencode").join("plugin").join("mtyx.ts"))
     }
 }
 

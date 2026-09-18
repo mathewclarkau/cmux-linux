@@ -62,22 +62,22 @@ pub(crate) enum SaveError {
     Io(std::io::Error),
 }
 
-/// A delimited cmux-managed block. `start` / `end` are the literal
+/// A delimited mtyx-managed block. `start` / `end` are the literal
 /// substrings searched for on each line (e.g. the HTML-comment markers
-/// `<!-- CMUX-START -->` / `<!-- CMUX-END -->`). Carried as a pair so a
+/// `<!-- MTYX-START -->` / `<!-- MTYX-END -->`). Carried as a pair so a
 /// caller can never pass half a pair.
 pub(crate) struct Markers {
     pub start: &'static str,
     pub end: &'static str,
 }
 
-/// The real cmux marker tokens used by `pi_hook.rs`'s `APPEND_SYSTEM.md`
-/// rewriter. **HTML-comment style** — NOT the `<<<CMUX-START>>>` form
+/// The real mtyx marker tokens used by `pi_hook.rs`'s `APPEND_SYSTEM.md`
+/// rewriter. **HTML-comment style** — NOT the `<<<MTYX-START>>>` form
 /// mentioned in the issue brief. Using the wrong tokens here would break
 /// existing installs (the markers already written into users'
 /// `APPEND_SYSTEM.md` files are these HTML-comment ones).
-pub(crate) const CMUX_MARKERS: Markers =
-    Markers { start: "<!-- CMUX-START -->", end: "<!-- CMUX-END -->" };
+pub(crate) const MTYX_MARKERS: Markers =
+    Markers { start: "<!-- MTYX-START -->", end: "<!-- MTYX-END -->" };
 
 /// Read and parse a JSON file at `path`.
 ///
@@ -175,9 +175,9 @@ pub(crate) fn strip_marked_block(content: &str, markers: &Markers) -> String {
 /// `start` to EOF. Only the *first* block is returned; a second
 /// `start..end` block later in the file is ignored (the canonical
 /// choice per the scout report, since a file should only ever hold one
-/// cmux-managed block).
+/// mtyx-managed block).
 ///
-/// This is API surface for "detect what cmux already added" (the issue
+/// This is API surface for "detect what mtyx already added" (the issue
 /// brief's 5-helper list). None of the current installers actually read
 /// the existing block content — they unconditionally strip and
 /// re-append — so this helper has no call site in the 3 edited files
@@ -209,7 +209,7 @@ pub(crate) fn parse_flags(content: &str, markers: &Markers) -> Option<String> {
     Some(inner.trim_end().to_string())
 }
 
-/// Replace the cmux-managed block in `content` with a fresh block
+/// Replace the mtyx-managed block in `content` with a fresh block
 /// wrapping `replacement_inner`, preserving the original
 /// "strip-any-existing-block-from-anywhere, then append a fresh block
 /// at the end" behavior of `pi_hook.rs`'s install path (NOT
@@ -317,7 +317,7 @@ mod tests {
     fn scratch_dir(label: &str) -> PathBuf {
         let n = DIR_COUNTER.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!(
-            "cmux_hook_merge_test_{}_{}_{}",
+            "mtyx_hook_merge_test_{}_{}_{}",
             std::process::id(),
             n,
             label
@@ -366,7 +366,7 @@ mod tests {
         // on-disk JSON uses 2-space pretty indentation.
         let dir = scratch_dir("save_roundtrip");
         let path = dir.join("hooks.json");
-        let cfg = Cfg { hooks: vec!["cmux report-agent".to_string(), "other".to_string()] };
+        let cfg = Cfg { hooks: vec!["mtyx report-agent".to_string(), "other".to_string()] };
         save_pretty(&path, &cfg).expect("save should succeed");
         let on_disk = std::fs::read_to_string(&path).unwrap();
         assert!(
@@ -401,12 +401,12 @@ mod tests {
         // block are returned (marker lines excluded), and text before
         // and after the block is not part of the result.
         let content = "preamble\n\
-            <!-- CMUX-START -->\n\
+            <!-- MTYX-START -->\n\
             line one\n\
             line two\n\
-            <!-- CMUX-END -->\n\
+            <!-- MTYX-END -->\n\
             epilogue\n";
-        let got = parse_flags(content, &CMUX_MARKERS).expect("block present");
+        let got = parse_flags(content, &MTYX_MARKERS).expect("block present");
         assert_eq!(got, "line one\nline two");
     }
 
@@ -415,7 +415,7 @@ mod tests {
         // Error/edge path: no START marker at all -> None, so an
         // installer can decide to append rather than crash.
         let content = "just some text\nno markers here\n";
-        assert_eq!(parse_flags(content, &CMUX_MARKERS), None);
+        assert_eq!(parse_flags(content, &MTYX_MARKERS), None);
     }
 
     // ---- replace_marked_block ----
@@ -428,17 +428,17 @@ mod tests {
         // concatenated; trailing whitespace is trimmed so there is a
         // single newline before the new block (no blank-line drift).
         let content = "before\n\
-            <!-- CMUX-START -->\n\
+            <!-- MTYX-START -->\n\
             stale old skill\n\
-            <!-- CMUX-END -->\n\
+            <!-- MTYX-END -->\n\
             after\n";
-        let got = replace_marked_block(content, &CMUX_MARKERS, "fresh skill");
+        let got = replace_marked_block(content, &MTYX_MARKERS, "fresh skill");
         assert_eq!(
             got,
             "before\nafter\n\
-             <!-- CMUX-START -->\n\
+             <!-- MTYX-START -->\n\
              fresh skill\n\
-             <!-- CMUX-END -->\n"
+             <!-- MTYX-END -->\n"
         );
     }
 
@@ -447,8 +447,8 @@ mod tests {
         // Error/edge path: empty content -> exactly the fresh block with
         // a leading newline (the append-to-empty case). Pins the leading
         // newline so installers don't accidentally drop it.
-        let got = replace_marked_block("", &CMUX_MARKERS, "skill");
-        assert_eq!(got, "\n<!-- CMUX-START -->\nskill\n<!-- CMUX-END -->\n");
+        let got = replace_marked_block("", &MTYX_MARKERS, "skill");
+        assert_eq!(got, "\n<!-- MTYX-START -->\nskill\n<!-- MTYX-END -->\n");
     }
 
     // ---- path_kind / is_user_path ----
@@ -468,7 +468,7 @@ mod tests {
         assert_eq!(path_kind(global, Some(home)), PathKind::Global);
         assert!(is_user_path(global, Some(home)));
 
-        let system = Path::new("/etc/cmux/config.toml");
+        let system = Path::new("/etc/mattyx/config.toml");
         assert_eq!(path_kind(system, Some(home)), PathKind::System);
         assert!(!is_user_path(system, Some(home)));
     }

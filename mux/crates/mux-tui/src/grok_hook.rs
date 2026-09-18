@@ -20,7 +20,7 @@ struct LegacyGrokHook {
     command: String,
 }
 
-const HOOK_FILENAME: &str = "cmux-agent-state.json";
+const HOOK_FILENAME: &str = "mtyx-agent-state.json";
 
 /// Grok Build loads `$GROK_HOME/hooks/*.json` (and `<repo>/.grok/hooks/*.json`)
 /// in the Claude-compatible object schema. The old installer wrote
@@ -45,7 +45,7 @@ fn legacy_config_path(global: bool) -> Option<PathBuf> {
 
 fn report_command(state: &str) -> String {
     format!(
-        "test -n \"$CMUX_MUX_SURFACE\" && cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state {state} --source hook || true"
+        "test -n \"$MTYX_MUX_SURFACE\" && mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state {state} --source hook || true"
     )
 }
 
@@ -87,7 +87,7 @@ fn refuse_symlink(path: &Path) -> Option<i32> {
     None
 }
 
-/// Strip leftover cmux entries from the pre-fix `.grok/hooks.json`. Deletes
+/// Strip leftover mtyx entries from the pre-fix `.grok/hooks.json`. Deletes
 /// the file when nothing else remains. Leaves an unreadable or non-legacy
 /// file alone so we never clobber a user config we don't understand.
 fn clean_legacy(global: bool) -> bool {
@@ -97,7 +97,7 @@ fn clean_legacy(global: bool) -> bool {
     match hook_merge::load_json::<LegacyGrokHooksConfig>(&path) {
         Ok(mut config) => {
             let before = config.hooks.len();
-            config.hooks.retain(|h| !h.command.contains("cmux report-agent"));
+            config.hooks.retain(|h| !h.command.contains("mtyx report-agent"));
             if config.hooks.is_empty() {
                 let _ = fs::remove_file(&path);
                 before > 0
@@ -129,7 +129,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("cmux: usage: cmux grok <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!("mtyx: usage: mtyx grok <install-hooks|install-skill> [--uninstall] [--global]");
             2
         }
     }
@@ -152,7 +152,7 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
         }
         let cleaned_legacy = clean_legacy(global);
         if removed || cleaned_legacy {
-            println!("Successfully removed cmux hooks from {}", path.display());
+            println!("Successfully removed mtyx hooks from {}", path.display());
         } else {
             println!("No Grok hooks file found at {}", path.display());
         }
@@ -182,16 +182,16 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
         }
     }
     clean_legacy(global);
-    println!("Successfully installed cmux hooks into {}", path.display());
+    println!("Successfully installed mtyx hooks into {}", path.display());
     0
 }
 
 fn skill_path(global: bool) -> Option<PathBuf> {
     if global {
         mux_core::platform::home_dir()
-            .map(|h| h.join(".grok").join("skills").join("cmux-orchestration").join("SKILL.md"))
+            .map(|h| h.join(".grok").join("skills").join("mtyx-orchestration").join("SKILL.md"))
     } else {
-        Some(PathBuf::from(".agents").join("skills").join("cmux-orchestration").join("SKILL.md"))
+        Some(PathBuf::from(".agents").join("skills").join("mtyx-orchestration").join("SKILL.md"))
     }
 }
 
@@ -213,9 +213,9 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
                     let _ = fs::remove_dir(grandparent);
                 }
             }
-            println!("Successfully removed cmux skill from {}", path.display());
+            println!("Successfully removed mtyx skill from {}", path.display());
         } else {
-            println!("No cmux skill found at {}", path.display());
+            println!("No mtyx skill found at {}", path.display());
         }
         0
     } else {
@@ -240,7 +240,7 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
             eprintln!("error writing {}: {e}", path.display());
             return 1;
         }
-        println!("Successfully installed cmux skill into {}", path.display());
+        println!("Successfully installed mtyx skill into {}", path.display());
         0
     }
 }
@@ -257,7 +257,7 @@ mod tests {
         let command = pre["command"].as_str().expect("command is a string");
         assert!(command.contains("--source hook"), "{command}");
         assert!(!command.contains("--source grok"), "{command}");
-        assert!(command.contains("test -n \"$CMUX_MUX_SURFACE\""), "{command}");
+        assert!(command.contains("test -n \"$MTYX_MUX_SURFACE\""), "{command}");
         assert_eq!(hooks["hooks"]["Notification"][0]["matcher"], "idle_prompt|permission_prompt");
     }
 
@@ -266,7 +266,7 @@ mod tests {
         let project = config_path(false).expect("project path");
         assert_eq!(
             project,
-            PathBuf::from(".grok").join("hooks").join("cmux-agent-state.json")
+            PathBuf::from(".grok").join("hooks").join("mtyx-agent-state.json")
         );
     }
 

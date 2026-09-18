@@ -227,7 +227,7 @@ func TestNewWorkspaceEnvBadFormat(t *testing.T) {
 // TestNewWorkspaceEnvFile verifies that --env-file reads a file of KEY=VALUE
 // lines (ignoring blank lines and comments) and merges them into the env param.
 func TestNewWorkspaceEnvFile(t *testing.T) {
-	f, err := os.CreateTemp("", "cmux-env-*.env")
+	f, err := os.CreateTemp("", "mtyx-env-*.env")
 	if err != nil {
 		t.Fatal(err)
 	}

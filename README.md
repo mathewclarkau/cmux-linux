@@ -1,4 +1,4 @@
-# cmux-linux
+# mattyx
 
 A Linux-native repurposing of [manaflow-ai/cmux](https://github.com/manaflow-ai/cmux),
 a terminal environment built for running AI coding agents (Claude Code, Codex, etc.)
@@ -22,9 +22,9 @@ carries forward the GPL-3.0-or-later grant — see [`LICENSE`](./LICENSE).
 ### Prebuilt binary
 
 ```bash
-curl -fsSL -o ~/.local/bin/cmux \
-  "https://github.com/mathewclarkau/cmux-linux/releases/latest/download/cmux-linux-$(uname -m)"
-chmod +x ~/.local/bin/cmux
+curl -fsSL -o ~/.local/bin/mtyx \
+  "https://github.com/mathewclarkau/mattyx/releases/latest/download/mattyx-$(uname -m)"
+chmod +x ~/.local/bin/mtyx
 ```
 
 Covers `x86_64` and `aarch64`, no Rust/clang toolchain needed — skip straight to [Run it](#run-it) below.
@@ -44,17 +44,17 @@ Built by [`.github/workflows/release.yml`](./.github/workflows/release.yml) from
   0.16 breaks this build with at least two unrelated stdlib signature changes (`Dir.readFileAlloc`'s new
   `Io`-threaded signature, `std.process.EnvMap` moving) within the first few seconds of the build graph —
   confirmed by patching around both and hitting more.
-- **Go** is only needed for [remote/SSH workspaces](./mux/docs/getting-started.md#remote-ssh-workspaces) — `cmux
+- **Go** is only needed for [remote/SSH workspaces](./mux/docs/getting-started.md#remote-ssh-workspaces) — `mtyx
   ssh <host>` shells out to `go build` on first connection to a given host, to cross-compile the vendored
   `cmuxd-remote` daemon for that host's OS/arch. Everything else builds and runs without Go installed.
 
 #### Clone, build, and put it on your `PATH`
 
 ```bash
-git clone --recurse-submodules https://github.com/mathewclarkau/cmux-linux.git
-cd cmux-linux
+git clone --recurse-submodules https://github.com/mathewclarkau/mattyx.git
+cd mattyx
 ./scripts/bootstrap.sh                                          # fetches zig, builds mux-tui in release mode
-ln -sf "$(pwd)/mux/target/release/cmux" ~/.local/bin/cmux  # requires ~/.local/bin on PATH
+ln -sf "$(pwd)/mux/target/release/mtyx" ~/.local/bin/mtyx  # requires ~/.local/bin on PATH
 ```
 
 Forgot `--recurse-submodules`? `bootstrap.sh` initializes the `ghostty` submodule itself if it's missing, so a
@@ -66,9 +66,9 @@ commit; local changes are layered on top so a fresh clone can always fetch it), 
 ### Run it
 
 ```bash
-cmux                          # start a session named "main" (TUI + control socket)
-cmux --session agents         # start (or attach to) a differently-named session
-cmux attach --session agents  # attach a second TUI to an already-running session
+mtyx                          # start a session named "main" (TUI + control socket)
+mtyx --session agents         # start (or attach to) a differently-named session
+mtyx attach --session agents  # attach a second TUI to an already-running session
 ```
 
 See [`mux/docs/getting-started.md`](./mux/docs/getting-started.md) for headless mode, socket paths, and session
@@ -77,20 +77,20 @@ persistence/restore semantics.
 ## Status
 
 The vendored `mux-tui` builds and runs as-is on Linux (verified on this machine).
-What's missing before this feels like `cmux` rather than a bare multiplexer:
+What's missing before this feels like `mtyx` rather than a bare multiplexer:
 
 1. ~~Git branch / cwd info in the sidebar~~ — done. Every pane tracks a cwd (live
    OSC 7 report when the shell sends one, else the directory it was spawned in —
    see `Surface::cwd()` in `mux-core`), and the sidebar shows the git branch for
    it (`crates/mux-tui/src/git_info.rs`). PR status is not included — it needs
    `gh`/GitHub API access and felt like a separate, heavier addition.
-2. ~~Claude Code hook layer (session tracking, restore)~~ — done. `cmux claude
-   install-hooks` wires `~/.claude/settings.json` to call `cmux claude hook` on
+2. ~~Claude Code hook layer (session tracking, restore)~~ — done. `mtyx claude
+   install-hooks` wires `~/.claude/settings.json` to call `mtyx claude hook` on
    every lifecycle event (merged alongside any hooks already there, safely
    idempotent). It reports agent state over `report-agent`/`list-agents`
    (`crates/mux-tui/src/claude_hook.rs`) and records sessions to
-   `$XDG_STATE_HOME/cmux/claude-sessions.json` for `cmux claude sessions`
-   / `cmux claude resume <session-id>`.
+   `$XDG_STATE_HOME/mattyx/claude-sessions.json` for `mtyx claude sessions`
+   / `mtyx claude resume <session-id>`.
 3. ~~Agent-state notifications (OSC 9/99/777 → desktop notification)~~ — done.
    Every pane's raw output is watched for an OSC 9, OSC 777, or kitty-protocol
    desktop notification (`crates/mux-core/src/notify.rs`); each one sets
@@ -102,7 +102,7 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
 4. ~~Session persistence across daemon restarts~~ — done. Every session
    (headless or local TUI) debounce-writes a snapshot of its workspace/screen/
    pane layout — split shape+ratios, names, each tab's cwd, active selections —
-   to `$XDG_STATE_HOME/cmux/sessions/<session>.json`
+   to `$XDG_STATE_HOME/mattyx/sessions/<session>.json`
    (`crates/mux-core/src/persist.rs`), and replays it on next start with the
    same `--session` name. Closing every workspace deletes the file instead of
    leaving something to resurrect later. Deliberately not restored: a tab's
@@ -110,26 +110,26 @@ What's missing before this feels like `cmux` rather than a bare multiplexer:
    recorded directory; something you had running there needs relaunching.
    Verified via a real kill-and-restart of the compiled binary, not just
    library tests — see `mux/docs/getting-started.md`'s "Session persistence".
-5. ~~Remote/SSH workspaces~~ — done. `cmux ssh <host>` opens a workspace
+5. ~~Remote/SSH workspaces~~ — done. `mtyx ssh <host>` opens a workspace
    backed by upstream's existing Go `cmuxd-remote` daemon (vendored unmodified
    in `daemon/remote/`, already cross-compiles for `linux/{amd64,arm64}`) instead
    of a local shell. `mux-core/src/remote_pty.rs` implements `portable_pty`'s
    `MasterPty`/`SlavePty`/`Child` traits against an SSH-exec'd NDJSON RPC pipe —
    no real local pty involved. The first connection to a host builds/uploads/
    starts `cmuxd-remote` in persistent mode, so it survives both the SSH
-   connection and the local `cmux` process dying; closing the tab detaches
+   connection and the local `mtyx` process dying; closing the tab detaches
    rather than kills, and restarting the session daemon reattaches
    automatically for a workspace's first tab (same mechanism as #4). Verified
    against a real sshd (localhost), including a kill-and-restart of the
    compiled binary that reattached to the still-running remote shell — see
    `mux/docs/getting-started.md`'s "Remote (SSH) workspaces".
 
-### Known environment quirk (not a cmux bug)
+### Known environment quirk (not a mtyx bug)
 
 Every new pane spawns your login shell (`$SHELL`) fresh. If you use zsh with
 Powerlevel10k and haven't completed its setup wizard yet (no `~/.p10k.zsh`),
 that wizard launches in every new pane and blocks on an interactive prompt.
-Run `p10k configure` once in a normal terminal (outside cmux) to fix it
+Run `p10k configure` once in a normal terminal (outside mtyx) to fix it
 for good.
 
 ## Usage
@@ -145,52 +145,52 @@ takes priority over this passive detection.
 
 ### LLM Harness Integrations
 
-`cmux-linux` provides first-class integrations to automatically report agent status (e.g., active, idle, done) for display on sidebar tabs.
+`mattyx` provides first-class integrations to automatically report agent status (e.g., active, idle, done) for display on sidebar tabs.
 
 #### 1. Claude Code
 ```bash
-cmux claude install-hooks        # wire up ~/.claude/settings.json
-cmux claude install-hooks --uninstall
-cmux claude sessions             # recorded sessions: id, cwd, last event
-cmux claude resume <session-id>  # new pane in the recorded cwd, runs claude --resume
+mtyx claude install-hooks        # wire up ~/.claude/settings.json
+mtyx claude install-hooks --uninstall
+mtyx claude sessions             # recorded sessions: id, cwd, last event
+mtyx claude resume <session-id>  # new pane in the recorded cwd, runs claude --resume
 ```
 Once installed, panes running Claude Code show status dots next to the git branch (amber while working, red when blocked, green when done).
 
 #### 2. Antigravity CLI (`agy`)
 ```bash
-cmux antigravity install-hooks            # installs workspace-level hooks in .agents/hooks.json
-cmux antigravity install-hooks --global   # installs global hooks in ~/.gemini/config/hooks.json
-cmux antigravity install-hooks --uninstall
+mtyx antigravity install-hooks            # installs workspace-level hooks in .agents/hooks.json
+mtyx antigravity install-hooks --global   # installs global hooks in ~/.gemini/config/hooks.json
+mtyx antigravity install-hooks --uninstall
 ```
 Triggers state updates automatically during tool execution phases (`PreToolUse`, `PostToolUse`, `Stop`).
 
 #### 3. Codex CLI
 ```bash
-cmux codex install-hooks            # installs hooks in .codex/hooks.json and enables in config.toml
-cmux codex install-hooks --global   # installs hooks in ~/.codex/hooks.json and enables globally
-cmux codex install-hooks --uninstall
+mtyx codex install-hooks            # installs hooks in .codex/hooks.json and enables in config.toml
+mtyx codex install-hooks --global   # installs hooks in ~/.codex/hooks.json and enables globally
+mtyx codex install-hooks --uninstall
 ```
 
 #### 4. Pi Coding Agent (`pi`)
 ```bash
-cmux pi install-hooks            # installs TypeScript extensions into .pi/extensions/cmux.ts
-cmux pi install-hooks --global   # installs extensions globally in ~/.pi/agent/extensions/cmux.ts
-cmux pi install-hooks --uninstall
+mtyx pi install-hooks            # installs TypeScript extensions into .pi/extensions/mtyx.ts
+mtyx pi install-hooks --global   # installs extensions globally in ~/.pi/agent/extensions/mtyx.ts
+mtyx pi install-hooks --uninstall
 ```
 
 #### 5. Aider
 ```bash
-cmux aider install-hooks            # creates a wrapper executable at .bin/aider
-cmux aider install-hooks --global   # creates a wrapper globally at ~/.local/bin/aider
-cmux aider install-hooks --uninstall
+mtyx aider install-hooks            # creates a wrapper executable at .bin/aider
+mtyx aider install-hooks --global   # creates a wrapper globally at ~/.local/bin/aider
+mtyx aider install-hooks --uninstall
 ```
 *Note: For the local wrapper, ensure `.bin/` is prepended to your `$PATH` or call `./.bin/aider` directly.*
 
 #### 6. Grok CLI
 ```bash
-cmux grok install-hooks            # workspace hooks in .grok/hooks/cmux-agent-state.json
-cmux grok install-hooks --global   # global hooks in ~/.grok/hooks/cmux-agent-state.json
-cmux grok install-hooks --uninstall
+mtyx grok install-hooks            # workspace hooks in .grok/hooks/mtyx-agent-state.json
+mtyx grok install-hooks --global   # global hooks in ~/.grok/hooks/mtyx-agent-state.json
+mtyx grok install-hooks --uninstall
 ```
 
 ## Documentation

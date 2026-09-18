@@ -1,6 +1,6 @@
 //! System clipboard helpers for the TUI.
 //!
-//! cmux only *writes* the host clipboard via OSC 52. Reads shell out to
+//! mtyx only *writes* the host clipboard via OSC 52. Reads shell out to
 //! `wl-paste` (Wayland) or `xclip` (X11) so we can paste into browser panes
 //! and inject clipboard images into PTY panes (issue #30 — Claude Code's
 //! own clipboard read often fails inside nested terminal multiplexers).
@@ -30,7 +30,7 @@ pub fn read_text() -> Option<String> {
 /// Wayland, `xclip` for X11). Returns true if a tool succeeded.
 ///
 /// This is a fallback for when OSC 52 (the terminal-protocol clipboard
-/// write) doesn't reach the host terminal — e.g. when cmux is nested
+/// write) doesn't reach the host terminal — e.g. when mtyx is nested
 /// inside another terminal multiplexer, run over SSH, or the host
 /// terminal has `clipboard-write = deny`. OSC 52 is still tried first
 /// by the caller (it works over SSH when the host allows it); this
@@ -101,10 +101,10 @@ pub fn image_paste_payload() -> Option<String> {
 fn paste_dir() -> Option<PathBuf> {
     if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
         if !runtime.is_empty() {
-            return Some(Path::new(&runtime).join("cmux").join("pastes"));
+            return Some(Path::new(&runtime).join("mattyx").join("pastes"));
         }
     }
-    Some(std::env::temp_dir().join("cmux-pastes"))
+    Some(std::env::temp_dir().join("mtyx-pastes"))
 }
 
 fn looks_like_png(bytes: &[u8]) -> bool {

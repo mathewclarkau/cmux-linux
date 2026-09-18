@@ -1,7 +1,7 @@
 //! In-TUI session manager overlay (issue #63, layer L3).
 //!
 //! Opened by leader (Ctrl-b) + `S`, this overlay is a two-column modal:
-//! the left column lists every discovered cmux session (reusing
+//! the left column lists every discovered mtyx session (reusing
 //! [`crate::cli::discover_sessions`], the same path `list-sessions`
 //! walks), and the right column previews the *focused* session's
 //! workspaces, lazy-fetched over a one-shot `list-workspaces` socket RPC
@@ -487,7 +487,7 @@ pub fn prefetch_targets(left_sel: usize, lookahead: usize, len: usize) -> Vec<us
 /// attach path uses. Reuses [`crate::cli::one_shot_rpc`] (the connect →
 /// write → read-line-loop → skip-events path shared with `rename_rpc`), so
 /// the overlay's cross-session preview rides the identical wire path as
-/// `cmux list-workspaces`. Any transport or server error maps to
+/// `mtyx list-workspaces`. Any transport or server error maps to
 /// `Unreachable` so a dead socket renders one column, never a half-open
 /// stream. Runs on a worker thread (all socket I/O off the UI thread);
 /// the result lands via `AppEvent::SessionManagerUpdate`.

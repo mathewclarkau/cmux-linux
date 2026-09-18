@@ -28,7 +28,7 @@ import (
 	"time"
 )
 
-// version is reported by the `version` subcommand. cmux stamps it with
+// version is reported by the `version` subcommand. mtyx stamps it with
 // its own version via `-ldflags "-X main.version=..."` when it
 // cross-compiles this daemon for a remote host (see ssh_bootstrap.rs);
 // "dev" is the fallback for a bare `go build` (issue #71).
@@ -138,7 +138,7 @@ func main() {
 
 func shouldRunCLIForInvocation(argv0 string, args []string) bool {
 	base := filepath.Base(argv0)
-	if base == "cmux" {
+	if base == "mtyx" {
 		return true
 	}
 	if !strings.HasPrefix(base, "cmuxd-remote") || len(args) == 0 {
@@ -336,7 +336,7 @@ type persistentDaemonPaths struct {
 
 const (
 	persistentDaemonAuthMethod    = "daemon.auth"
-	persistentDaemonReadyFDEnv    = "CMUX_REMOTE_DAEMON_READY_FD"
+	persistentDaemonReadyFDEnv    = "MTYX_REMOTE_DAEMON_READY_FD"
 	persistentDaemonAuthTimeout   = 5 * time.Second
 	persistentDaemonSocketDirFile = "socket-dir"
 )
@@ -359,13 +359,13 @@ func persistentDaemonPathsForSlot(rawSlot string) (persistentDaemonPaths, error)
 	if err != nil {
 		return persistentDaemonPaths{}, err
 	}
-	rootBase := strings.TrimSpace(os.Getenv("CMUX_REMOTE_DAEMON_ROOT"))
+	rootBase := strings.TrimSpace(os.Getenv("MTYX_REMOTE_DAEMON_ROOT"))
 	if rootBase == "" {
 		home, homeErr := os.UserHomeDir()
 		if homeErr != nil || strings.TrimSpace(home) == "" {
 			return persistentDaemonPaths{}, errors.New("cannot resolve remote home directory")
 		}
-		rootBase = filepath.Join(home, ".cmux", "daemon")
+		rootBase = filepath.Join(home, ".mattyx", "daemon")
 	}
 	root := filepath.Join(rootBase, persistentDaemonVersionComponent(), slot)
 	socketPath := persistentDaemonSocketPath(root, slot)
@@ -418,7 +418,7 @@ func persistentDaemonSocketPath(root string, slot string) string {
 }
 
 func persistentDaemonSocketBase() (string, bool) {
-	socketBase := strings.TrimSpace(os.Getenv("CMUX_REMOTE_DAEMON_SOCKET_DIR"))
+	socketBase := strings.TrimSpace(os.Getenv("MTYX_REMOTE_DAEMON_SOCKET_DIR"))
 	if socketBase == "" {
 		return "", false
 	}
@@ -870,7 +870,7 @@ func signalPersistentDaemonReady() {
 	if err != nil || fd < 3 {
 		return
 	}
-	file := os.NewFile(uintptr(fd), "cmux-persistent-daemon-ready")
+	file := os.NewFile(uintptr(fd), "mtyx-persistent-daemon-ready")
 	if file == nil {
 		return
 	}

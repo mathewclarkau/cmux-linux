@@ -528,7 +528,7 @@ func defaultWebSocketPTYEnv(shellPath string) []string {
 	setIfMissing("COLORTERM", "truecolor")
 	setIfMissing("TERM_PROGRAM", "ghostty")
 	setIfMissing("SHELL", shellPath)
-	set("CMUX_REMOTE_TRANSPORT", "ws")
+	set("MTYX_REMOTE_TRANSPORT", "ws")
 	if !envHasUTF8Locale(env) {
 		set("LANG", "C.UTF-8")
 		set("LC_CTYPE", "C.UTF-8")
@@ -851,7 +851,7 @@ func newPTYAllocationError(err error) error {
 	}
 	hint := ""
 	if isPermissionDeniedErr(err) {
-		hint = "; the remote devpts denies /dev/ptmx (e.g. mounted ptmxmode=000): remount it writable with `sudo mount -o remount,ptmxmode=0666 /dev/pts` or expose a writable /dev/ptmx so the cmux daemon can open a terminal"
+		hint = "; the remote devpts denies /dev/ptmx (e.g. mounted ptmxmode=000): remount it writable with `sudo mount -o remount,ptmxmode=0666 /dev/pts` or expose a writable /dev/ptmx so the mtyx daemon can open a terminal"
 	}
 	return fmt.Errorf("could not allocate a remote PTY: %w%s%s", err, suffix, hint)
 }

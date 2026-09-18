@@ -1,15 +1,15 @@
 ---
-name: cmux-hotfix-race
-description: Race N specialist agents on the same bug fix in cmux panes; first verified-passing commit wins, the rest are discarded
+name: mtyx-hotfix-race
+description: Race N specialist agents on the same bug fix in mtyx panes; first verified-passing commit wins, the rest are discarded
 argument-hint: <describe the bug/failing test and how many racers you want (default 3)>
 ---
 
-You are running the **hotfix race** pattern in **cmux**: dispatch several agents
+You are running the **hotfix race** pattern in **mtyx**: dispatch several agents
 at the identical bug/task, each in its own isolated copy of the repo, and adopt
 whichever one finishes first with a **verified** fix. This is the IndyDevDan
-cmux "race" pattern (`prompts/15-race-and-notify.md` and the 8-agent variant in
+mtyx "race" pattern (`prompts/15-race-and-notify.md` and the 8-agent variant in
 upstream cmux's demo guide), adapted to this fork's actual primitives — this
-fork has no `cmux notify`/`jump-to-unread` event stream, so winner-detection is a
+fork has no `mtyx notify`/`jump-to-unread` event stream, so winner-detection is a
 poll loop instead of a blocking event wait.
 
 The user's request is:
@@ -21,21 +21,21 @@ verify it, and report back which racer won and what its diff was.
 
 ## 0. Preconditions
 
-Run `env | grep '^CMUX_MUX_'`. You need `CMUX_MUX_SOCKET` (and ideally
-`CMUX_MUX_SURFACE` if you want to split off of your own pane). If you're
-running from OUTSIDE any cmux pane (a headless/Discord/CI agent-context),
-use the `cmux-agent-spawn` pattern first to stand up a session and, if the
+Run `env | grep '^MTYX_MUX_'`. You need `MTYX_MUX_SOCKET` (and ideally
+`MTYX_MUX_SURFACE` if you want to split off of your own pane). If you're
+running from OUTSIDE any mtyx pane (a headless/Discord/CI agent-context),
+use the `mtyx-agent-spawn` pattern first to stand up a session and, if the
 user wants to watch, a visible Ghostty window — see
-`~/Projects/hermes/home/skills/software-development/cmux-agent-spawn/SKILL.md`
+`~/Projects/hermes/home/skills/software-development/mtyx-agent-spawn/SKILL.md`
 if available, or just start one directly:
 
 ```bash
-cmux --headless --session <race-name> &
+mtyx --headless --session <race-name> &
 ```
 
 ## 1. Why each racer needs its OWN isolated copy of the repo
 
-**Do not** run all racers against the same working directory. Upstream cmux's
+**Do not** run all racers against the same working directory. Upstream mtyx's
 own race demo does this (all panes share `--cwd "$PWD"`) because its example
 task ("find the bug, output a diff") never edits the working tree — but a
 *hotfix* race, where each agent is told to actually FIX and commit, means N
@@ -59,9 +59,9 @@ kept around.
 ## 2. Stand up one pane per racer and dispatch identically
 
 ```bash
-cmux new-workspace --session <race-name> --name "Hotfix Race"
+mtyx new-workspace --session <race-name> --name "Hotfix Race"
 # split N-1 more panes off the first pane's id (from list-workspaces), one per racer
-cmux split --session <race-name> --pane <pane-id> --dir right   # or down
+mtyx split --session <race-name> --pane <pane-id> --dir right   # or down
 ```
 
 Collect each pane's surface id from `list-workspaces`, then dispatch the
@@ -72,7 +72,7 @@ TASK='Run: <the exact failing command/test>. It will fail. Find and fix the
 bug (name which files are off-limits, e.g. do not touch the test file). When
 it passes, commit your fix with `git commit -am "fix"` and stop.'
 
-cmux send --session <race-name> --surface <id> --text "cd <worktree-i> && claude -p '$TASK' --dangerously-skip-permissions
+mtyx send --session <race-name> --surface <id> --text "cd <worktree-i> && claude -p '$TASK' --dangerously-skip-permissions
 "
 ```
 
@@ -140,7 +140,7 @@ one is adopted.
 ```bash
 for i in $(seq 1 "$N"); do
   [ "$i" = "$WINNER" ] && continue
-  cmux close-surface --session <race-name> --surface <that racer's surface id>
+  mtyx close-surface --session <race-name> --surface <that racer's surface id>
 done
 ```
 
@@ -150,7 +150,7 @@ otherwise. Once the user's done reviewing:
 ```bash
 git worktree remove --force "../${RACE}-w1" "../${RACE}-w2" ...
 git branch -D racer-1 racer-2 ...   # keep the winner's branch if the user wants to merge it
-ps aux | grep "cmux --headless --session <race-name>" | grep -v grep | awk '{print $2}' | xargs -r kill  # only if you started a dedicated headless daemon for this
+ps aux | grep "mtyx --headless --session <race-name>" | grep -v grep | awk '{print $2}' | xargs -r kill  # only if you started a dedicated headless daemon for this
 ```
 
 ## Verified
@@ -160,20 +160,20 @@ discard) was run live end-to-end on 2026-07-15 against a deliberately
 seeded off-by-one bug: all 3 racers converged on the same correct one-line
 fix, racer 1 committed first (~42s), was crowned winner, its fix was
 re-verified independently (test re-run: PASS), and the other two panes were
-closed. See `~/Projects/hermes/home/skills/software-development/cmux-agent-spawn/SKILL.md`
+closed. See `~/Projects/hermes/home/skills/software-development/mtyx-agent-spawn/SKILL.md`
 and its verification reference for the launch-mechanics half of this (this
 skill assumes that part already works).
 
 ## Related
 
-- [[cmux-orchestration]] (sibling skill in this repo) — general pane/agent/
+- [[mtyx-orchestration]] (sibling skill in this repo) — general pane/agent/
   browser-tab orchestration; this skill is a specific composition of it
   (fan-out identical task → poll → adopt-winner → discard-losers).
-- `~/Projects/hermes/home/skills/software-development/cmux-agent-spawn/SKILL.md` —
-  how to stand up a visible cmux session at all, if you're not already
+- `~/Projects/hermes/home/skills/software-development/mtyx-agent-spawn/SKILL.md` —
+  how to stand up a visible mtyx session at all, if you're not already
   running inside one.
-- `~/Projects/cmux-dan/prompts/15-race-and-notify.md` and
-  `~/Projects/cmux-dan/guide/index.html` (search "Race eight agents") — the
-  source pattern this was adapted from, upstream-cmux flavored (uses `cmux
+- `~/Projects/mtyx-dan/prompts/15-race-and-notify.md` and
+  `~/Projects/mtyx-dan/guide/index.html` (search "Race eight agents") — the
+  source pattern this was adapted from, upstream-mtyx flavored (uses `mtyx
   notify` + `jump-to-unread`, which this fork doesn't have — hence the poll
   loop here instead).

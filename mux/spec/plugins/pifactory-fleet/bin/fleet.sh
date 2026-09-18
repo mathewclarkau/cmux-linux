@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# bin/fleet.sh - Reference shell adapter for the pifactory-fleet cmux
+# bin/fleet.sh - Reference shell adapter for the pifactory-fleet mtyx
 # plugin.
 #
 # This file is the human-readable counterpart to src/lib.rs (which
-# compiles to bin/fleet.wasm and is what the cmux plugin loader
+# compiles to bin/fleet.wasm and is what the mtyx plugin loader
 # actually executes). It documents the adapter logic in the same
 # idiom as scripts/cmux-panel-lib.sh in the pifactory repo:
 # one bash function per plugin verb, each function shelling out to
-# the underlying `cmux <verb>` CLI.
+# the underlying `mtyx <verb>` CLI.
 #
-# It is NOT executed by `cmux pifactory-fleet <verb>` — that path
+# It is NOT executed by `mtyx pifactory-fleet <verb>` — that path
 # runs the WASM adapter. This file exists so a reader who knows the
 # cmux-panel-lib.sh idiom can immediately map the plugin's verbs to
-# the cmux verbs it wraps, and so a future plugin-ecosystem tooling
+# the mtyx verbs it wraps, and so a future plugin-ecosystem tooling
 # (e.g. a hypothetical "shell-script plugin loader") has a starting
 # point.
 #
@@ -23,20 +23,20 @@
 
 set -euo pipefail
 
-CMUX_BIN="${CMUX_BIN:-cmux}"
+MTYX_BIN="${MTYX_BIN:-mtyx}"
 
 # ---- plugin verbs ----
 
 # pifactory_fleet_ping
-# Read-only smoke test. Forwards to `cmux identify`.
+# Read-only smoke test. Forwards to `mtyx identify`.
 pifactory_fleet_ping() {
-    "$CMUX_BIN" --json identify
+    "$MTYX_BIN" --json identify
 }
 
 # pifactory_fleet_status
-# Read-only fleet snapshot. Forwards to `cmux list-workspaces`.
+# Read-only fleet snapshot. Forwards to `mtyx list-workspaces`.
 pifactory_fleet_status() {
-    "$CMUX_BIN" --json list-workspaces
+    "$MTYX_BIN" --json list-workspaces
 }
 
 # pifactory_fleet_deploy <role>
@@ -50,7 +50,7 @@ pifactory_fleet_status() {
 # loader's single-call-per-invocation constraint).
 pifactory_fleet_deploy() {
     local role="${1:-fleet-scout}"
-    "$CMUX_BIN" --json new-workspace --name "$role"
+    "$MTYX_BIN" --json new-workspace --name "$role"
 }
 
 # pifactory_fleet_dispatch <workpiece>
@@ -68,7 +68,7 @@ pifactory_fleet_dispatch() {
     fi
     local name
     name="$(basename "$workpiece")"
-    "$CMUX_BIN" --json new-workspace --name "fleet-$name"
+    "$MTYX_BIN" --json new-workspace --name "fleet-$name"
 }
 
 # pifactory_fleet_rollback <role>
@@ -76,14 +76,14 @@ pifactory_fleet_dispatch() {
 # teardown side of `cmux_dispatch_worker_pane`.
 pifactory_fleet_rollback() {
     local role="${1:-fleet-scout}"
-    "$CMUX_BIN" --json close-workspace --name "$role"
+    "$MTYX_BIN" --json close-workspace --name "$role"
 }
 
 # ---- dispatch ----
 
 # pifactory_fleet_main <verb> [args...]
 # Top-level dispatch for `fleet.sh <verb> [args]` invocations. The
-# cmux plugin loader does NOT call this — it loads fleet.wasm — but
+# mtyx plugin loader does NOT call this — it loads fleet.wasm — but
 # `bash bin/fleet.sh ping` works as a manual smoke test.
 pifactory_fleet_main() {
     local verb="${1:-}"
@@ -106,7 +106,7 @@ pifactory_fleet_main() {
             ;;
         "" | -h | --help | help)
             echo "usage: fleet.sh <verb> [args...]" >&2
-            echo "  ping      identify cmux" >&2
+            echo "  ping      identify mtyx" >&2
             echo "  status    list workspaces" >&2
             echo "  deploy    [<role>]               default: fleet-scout" >&2
             echo "  dispatch  <workpiece>" >&2

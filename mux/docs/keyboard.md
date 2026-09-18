@@ -2,25 +2,25 @@
 
 ## Prefix Model
 
-`cmux` uses a tmux-style prefix. The default prefix is `Ctrl-b`. After the prefix, the next key is interpreted as a mux command. Pressing the prefix twice sends a literal `Ctrl-b` to the active surface.
+`mtyx` uses a tmux-style prefix. The default prefix is `Ctrl-b`. After the prefix, the next key is interpreted as a mux command. Pressing the prefix twice sends a literal `Ctrl-b` to the active surface.
 
 Unknown prefixed keys are swallowed. Unprefixed non-Alt keys go to the active surface. Alt chords that are bound in the key table are modeless commands by default.
 
-### Running tmux inside cmux
+### Running tmux inside mtyx
 
-cmux's default prefix is `Ctrl-b` - the same as tmux's own default. If you run tmux
-inside a cmux pane, cmux's outer prefix always wins: `Ctrl-b d`, for example, detaches
-(or, in a local non-attached session, quits) the *cmux* session, not the inner tmux
-one, since cmux consumes the prefix before tmux ever sees it. Two ways to avoid this:
+mtyx's default prefix is `Ctrl-b` - the same as tmux's own default. If you run tmux
+inside a mtyx pane, mtyx's outer prefix always wins: `Ctrl-b d`, for example, detaches
+(or, in a local non-attached session, quits) the *mtyx* session, not the inner tmux
+one, since mtyx consumes the prefix before tmux ever sees it. Two ways to avoid this:
 
-- **Rebind one side's prefix.** Either give cmux a different prefix in `mux.json`
+- **Rebind one side's prefix.** Either give mtyx a different prefix in `mux.json`
   (`{"keys": {"prefix": "ctrl+a"}}`, see [Configuration](configuration.md)), or rebind
   the *inner* tmux's prefix instead (tmux's own classic advice for nested sessions) -
   either way, the two prefixes stop colliding.
-- **Use cmux's existing double-prefix passthrough** for one-off keystrokes without
+- **Use mtyx's existing double-prefix passthrough** for one-off keystrokes without
   reconfiguring anything: pressing the prefix twice sends a single literal prefix
   keystroke through to the active surface, so `Ctrl-b Ctrl-b d` reaches the inner
-  tmux's `d` binding instead of cmux's.
+  tmux's `d` binding instead of mtyx's.
 
 ## Default Bindings
 
@@ -78,7 +78,7 @@ Set `keys.alt_shortcuts` to `false` to remove the default Alt bindings. This kil
 
 ## Remapping
 
-Keys are read from `~/.config/cmux/mux.json`, or from the file named by `CMUX_MUX_CONFIG`.
+Keys are read from `~/.config/mattyx/mux.json`, or from the file named by `MTYX_MUX_CONFIG`.
 
 Each action accepts a string, an array of strings, or `"none"`. Setting an action replaces all default chords for that action before adding the configured chords. `"none"` leaves the action unbound.
 

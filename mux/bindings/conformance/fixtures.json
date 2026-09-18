@@ -7,7 +7,7 @@
         {
           "type": "command",
           "request": { "id": 1, "cmd": "identify" },
-          "expect": { "id": 1, "ok": true, "data": { "app": "cmux", "protocol": 5 } },
+          "expect": { "id": 1, "ok": true, "data": { "app": "mtyx", "protocol": 5 } },
           "match": "partial"
         }
       ]
@@ -123,7 +123,7 @@
         },
         {
           "type": "command",
-          "request": { "id": 2, "cmd": "send", "surface": "$surface0", "text": "printf 'cmux-conformance-marker\\n'\r" },
+          "request": { "id": 2, "cmd": "send", "surface": "$surface0", "text": "printf 'mtyx-conformance-marker\\n'\r" },
           "expect": { "id": 2, "ok": true },
           "match": "partial"
         },
@@ -131,7 +131,7 @@
           "type": "wait_contains",
           "request": { "id": 3, "cmd": "read-screen", "surface": "$surface0" },
           "path": "data.text",
-          "contains": "cmux-conformance-marker",
+          "contains": "mtyx-conformance-marker",
           "timeout_ms": 10000
         }
       ]

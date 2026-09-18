@@ -1,13 +1,13 @@
 import os, pty, select, socket, json, time, sys, signal, subprocess, re
 
-BIN = os.environ.get("CMUX_MUX_BIN", "target/debug/cmux")
+BIN = os.environ.get("MTYX_MUX_BIN", "target/debug/mtyx")
 SESSION = f"smoke-{os.getpid()}"
 SOCK = None
 CONTROL_SOCKET_RE = re.compile(r"control socket at (.+)$")
 
 def fallback_socket_path():
     base = os.environ.get("XDG_RUNTIME_DIR") or os.environ.get("TMPDIR") or "/tmp"
-    return os.path.join(base, f"cmux-{os.getuid()}", f"{SESSION}.sock")
+    return os.path.join(base, f"mtyx-{os.getuid()}"", f"{SESSION}.sock")
 
 def wait_for_control_socket(server, seconds=15):
     deadline = time.time() + seconds
@@ -111,7 +111,7 @@ SOCK = discover_socket_path()
 pid, fd = pty.fork()
 if pid == 0:
     os.environ["TERM"] = "xterm-256color"
-    os.environ["CMUX_MUX_CDP_URL"] = "http://127.0.0.1:1/"
+    os.environ["MTYX_MUX_CDP_URL"] = "http://127.0.0.1:1/"
     os.environ.pop("NO_COLOR", None)
     os.execv(BIN, [BIN, "--session", SESSION, "--socket", SOCK])
 
@@ -317,7 +317,7 @@ drain(1.0)
 assert probe_answers[10] > 0 and probe_answers[11] > 0, probe_answers
 
 ident = rpc({"id": 1, "cmd": "identify"})
-assert ident["ok"] and ident["data"]["app"] == "cmux", ident
+assert ident["ok"] and ident["data"]["app"] == "mtyx", ident
 assert ident["data"]["protocol"] == 6, ident
 print("identify ok:", ident["data"])
 
