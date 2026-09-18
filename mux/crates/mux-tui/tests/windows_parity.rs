@@ -115,12 +115,14 @@ fn identify_and_list_workspaces_round_trip() {
     let server = HeadlessServer::start("identify");
 
     // Session create is implicit: a headless daemon IS a session; the
-    // identify verb is the canonical "session exists" probe.
+    // identify verb is the canonical "session exists" probe. (--json
+    // prints the reply's data object bare — no ok/data envelope — so
+    // assert on the fields directly.)
     let identify = server.cli(&["--json", "identify"]);
     assert_success(&identify);
     let v: serde_json::Value = serde_json::from_slice(&identify.stdout).unwrap();
-    assert_eq!(v["ok"], serde_json::json!(true));
-    assert!(v["data"]["protocol"].is_number(), "identify should carry protocol: {v}");
+    assert!(v["protocol"].is_number(), "identify should carry protocol: {v}");
+    assert!(v["pid"].is_number(), "identify should carry pid: {v}");
 
     // Workspace create + list.
     let created = server.cli(&["new-workspace", "--name", "parity-ws"]);

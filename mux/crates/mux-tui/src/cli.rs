@@ -2369,7 +2369,8 @@ mod tests {
     #[test]
     fn rename_session_at_renames_via_socket() {
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let dir = PathBuf::from("/tmp").join(format!("mtyx-t11-{}-{stamp}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("mtyx-t11-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let old_sock = dir.join("old.sock");
 
