@@ -654,7 +654,12 @@ fn agent_read_resolves_by_name_and_tails_lines() {
     // not just the echoed command text).
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let screen = wait_for_screen(&server, surface, "ar-c3");
+        // Raw capture (NOT the flattened wait_for_screen text): the
+        // exact-line check is what distinguishes the printf OUTPUT line
+        // from the echoed command text, and a short standalone marker
+        // carries no wrap risk.
+        let out = cli(&server, &["read-screen", "--surface", &surface.to_string()]);
+        let screen = String::from_utf8(out.stdout).unwrap();
         if screen.lines().any(|l| l.trim() == "ar-c3") {
             break;
         }
@@ -945,7 +950,12 @@ fn agent_read_recent_source_includes_scrollback() {
     // TOPMARK + all filler rows are already in the terminal state.
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let screen = wait_for_screen(&server, surface, "BOTMARK-7Q");
+        // Raw capture (NOT the flattened wait_for_screen text): the
+        // exact-line check is what distinguishes the loop's OUTPUT line
+        // from the echoed command text, and a short standalone marker
+        // carries no wrap risk.
+        let out = cli(&server, &["read-screen", "--surface", &surface.to_string()]);
+        let screen = String::from_utf8(out.stdout).unwrap();
         if screen.lines().any(|l| l.trim() == "BOTMARK-7Q") {
             break;
         }
@@ -1805,13 +1815,24 @@ fn stream_preserves_partial_line_across_read_timeout() {
     );
 }
 
+/// Screen text with all line breaks removed, so markers that soft-wrap
+/// across the pane's width still `contains`-match. macOS CI runners have
+/// hostnames long enough that prompt + typed text exceeds 80 columns, and
+/// the raw capture then breaks the marker across two rows (PR #101). The
+/// wrap is a rendering artefact; the flattened text is what the shell
+/// actually received, so matching on it keeps the assertion semantics
+/// identical.
+fn flatten_screen(screen: &str) -> String {
+    screen.chars().filter(|c| *c != '\n' && *c != '\r').collect()
+}
+
 fn wait_for_screen(server: &HeadlessServer, surface: u64, marker: &str) -> String {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut last = String::new();
     while Instant::now() < deadline {
         let output = cli(server, &["read-screen", "--surface", &surface.to_string()]);
         assert_success(&output);
-        last = String::from_utf8(output.stdout).unwrap();
+        last = flatten_screen(&String::from_utf8(output.stdout).unwrap());
         if last.contains(marker) {
             return last;
         }
@@ -3359,7 +3380,7 @@ fn wait_for_screen_at(socket: &std::path::Path, surface: u64, needle: &str) -> S
             std::path::Path::new("/tmp"),
             &["read-screen", "--surface", &surface.to_string()],
         );
-        last = String::from_utf8_lossy(&out.stdout).to_string();
+        last = flatten_screen(&String::from_utf8_lossy(&out.stdout));
         if last.contains(needle) {
             return last;
         }
@@ -4133,7 +4154,7 @@ fn layout_apply_round_trips_topology_and_argv() {
         for &sid in &surfaces {
             let read = cli(&server, &["read-screen", "--surface", &sid.to_string()]);
             if read.status.success()
-                && String::from_utf8_lossy(&read.stdout).contains(&marker)
+                && flatten_screen(&String::from_utf8_lossy(&read.stdout)).contains(&marker)
             {
                 saw = true;
                 break;
