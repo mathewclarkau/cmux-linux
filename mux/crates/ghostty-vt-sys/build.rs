@@ -20,6 +20,7 @@ fn main() {
             e
         )
     });
+    let ghostty_dir = strip_windows_verbatim(ghostty_dir);
 
     println!("cargo:rerun-if-env-changed=MTYX_GHOSTTY_SRC");
     println!("cargo:rerun-if-env-changed=ZIG");
@@ -172,6 +173,32 @@ fn zig_target_for_rust_target(target: &str) -> Option<&'static str> {
         "aarch64-pc-windows-msvc" => Some("aarch64-windows-msvc"),
         _ => None,
     }
+}
+
+/// `std::fs::canonicalize` returns a verbatim (`\\?\`-prefixed) path on
+/// Windows. clang/libclang cannot resolve `#include <ghostty/vt/types.h>`
+/// against a verbatim `-I` dir: header search string-concats the include
+/// name with forward slashes onto the dir, and forward slashes are not
+/// translated inside the NT namespace the verbatim prefix opts into, so
+/// the lookup fails while the main header (all backslashes, from
+/// `Path::join`) opens fine. This is exactly how the zig build succeeded
+/// and bindgen failed with "'ghostty/vt/types.h' file not found" on
+/// windows-latest (PR #101 run 35317130765). Strip both verbatim forms
+/// (drive-local `\\?\D:\...` and `\\?\UNC\server\...`); compiled only
+/// on Windows, so Linux/macOS paths and bindgen args are unchanged.
+fn strip_windows_verbatim(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(text) = path.to_str() {
+            if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+                return PathBuf::from(format!(r"\\{}", rest));
+            }
+            if let Some(rest) = text.strip_prefix(r"\\?\") {
+                return PathBuf::from(rest);
+            }
+        }
+    }
+    path
 }
 
 /// Short, stable, off-repo zig cache dirs for Windows hosts (see the
