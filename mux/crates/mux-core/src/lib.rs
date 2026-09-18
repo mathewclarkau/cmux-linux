@@ -30,6 +30,14 @@ pub mod server;
 #[cfg(windows)]
 pub mod win;
 
+/// Windows: hard-terminate one pid via `TerminateProcess` (the
+/// `kill(pid, SIGKILL)` analogue). cfg-gated re-export so mux-tui's
+/// kill-session path needs no direct windows-sys usage.
+#[cfg(windows)]
+pub fn win_terminate_pid(pid: u32) -> bool {
+    win::terminate_pid(pid)
+}
+
 /// The mtyx version, resolved at build time by `build.rs` and baked
 /// into the binary — it does not depend on git, a manifest, or anything
 /// else being present at run time. Prefer this over

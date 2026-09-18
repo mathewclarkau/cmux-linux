@@ -41,3 +41,8 @@ windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
 ] }
+
+[dev-dependencies]
+# Windows parity integration tests drive ConPTY directly; the same
+# workspace pin the daemon runtime uses.
+portable-pty.workspace = true

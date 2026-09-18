@@ -1439,6 +1439,25 @@ pub(crate) fn run_attach_session_list_json(global: &GlobalArgs) -> i32 {
     }
 }
 
+/// Signal a session daemon: SIGTERM/SIGKILL on unix; on Windows there
+/// is no cross-console graceful signal (a headless daemon has no
+/// console for GenerateConsoleCtrlEvent), so both spellings
+/// hard-terminate via TerminateProcess — `kill-session` on Windows is
+/// effectively always the escalated form. Documented degradation.
+#[cfg(unix)]
+fn signal_session_pid(pid: u32, kill: bool) {
+    let sig = if kill { libc::SIGKILL } else { libc::SIGTERM };
+    let _ = unsafe { libc::kill(pid as libc::pid_t, sig) };
+}
+
+#[cfg(windows)]
+fn signal_session_pid(pid: u32, _kill: bool) {
+    let _ = pid;
+    // mux-core owns the OpenProcess/TerminateProcess plumbing.
+    // Public re-export keeps mux-tui free of direct windows-sys use here.
+    mux_core::win_terminate_pid(pid);
+}
+
 /// Kill the mtyx process owning `socket_path` (SIGTERM, escalate to SIGKILL
 /// after 2s, reap up to 1s more) and remove its `.sock`/`.pid`. Shared by
 /// `run_kill_session` and the picker's kill-focused (Claim 3). Returns true
@@ -1449,9 +1468,7 @@ pub(crate) fn run_attach_session_list_json(global: &GlobalArgs) -> i32 {
 pub(crate) fn kill_session_at(socket_path: &std::path::Path, pid: Option<u32>) -> bool {
     if let Some(pid) = pid {
         if mux_core::server::is_cmux_process(pid) {
-            unsafe {
-                libc::kill(pid as libc::pid_t, libc::SIGTERM);
-            }
+            signal_session_pid(pid, false);
             let deadline = std::time::Instant::now() + Duration::from_secs(2);
             while std::time::Instant::now() < deadline {
                 if !mux_core::server::is_process_alive(pid) {
@@ -1460,9 +1477,7 @@ pub(crate) fn kill_session_at(socket_path: &std::path::Path, pid: Option<u32>) -
                 std::thread::sleep(Duration::from_millis(50));
             }
             if mux_core::server::is_process_alive(pid) {
-                unsafe {
-                    libc::kill(pid as libc::pid_t, libc::SIGKILL);
-                }
+                signal_session_pid(pid, true);
                 let deadline2 = std::time::Instant::now() + Duration::from_secs(1);
                 while std::time::Instant::now() < deadline2 {
                     if !mux_core::server::is_process_alive(pid) {

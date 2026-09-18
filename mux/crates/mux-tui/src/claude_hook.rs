@@ -9,7 +9,10 @@
 //! or fail Claude Code's own turn, so every path here exits 0.
 
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -168,12 +171,7 @@ fn with_locked_store<T>(f: impl FnOnce(&mut Vec<SessionRecord>) -> T) -> Option<
     }
     let mut file =
         std::fs::OpenOptions::new().read(true).write(true).create(true).open(&path).ok()?;
-    let fd = file.as_raw_fd();
-    // SAFETY: fd is a valid, open file descriptor for the lifetime of this
-    // call; flock is released explicitly below and also on process exit.
-    unsafe {
-        libc::flock(fd, libc::LOCK_EX);
-    }
+    lock_store_exclusive(&file);
     let mut contents = String::new();
     let _ = file.read_to_string(&mut contents);
     // Fail loud on a corrupted sessions file: silently wiping it with
@@ -192,9 +190,7 @@ fn with_locked_store<T>(f: impl FnOnce(&mut Vec<SessionRecord>) -> T) -> Option<
                     "mtyx: {} is not valid JSON ({e}); leaving it untouched",
                     path.display()
                 );
-                unsafe {
-                    libc::flock(fd, libc::LOCK_UN);
-                }
+                unlock_store(&file);
                 return None;
             }
         };
@@ -209,10 +205,57 @@ fn with_locked_store<T>(f: impl FnOnce(&mut Vec<SessionRecord>) -> T) -> Option<
         let _ = file.seek(SeekFrom::Start(0));
         let _ = file.write_all(json.as_bytes());
     }
-    unsafe {
-        libc::flock(fd, libc::LOCK_UN);
-    }
+    unlock_store(&file);
     Some(result)
+}
+
+/// flock(2) the session store (LOCK_EX). Windows: LockFileEx over the
+/// whole file, the documented flock analogue. Both are released by
+/// [`unlock_store`] and, on any path, by handle close (process exit).
+#[cfg(unix)]
+fn lock_store_exclusive(file: &std::fs::File) {
+    // SAFETY: fd is a valid, open file descriptor for the lifetime of
+    // this call; flock is released explicitly below and also on exit.
+    unsafe {
+        libc::flock(file.as_raw_fd(), libc::LOCK_EX);
+    }
+}
+
+#[cfg(unix)]
+fn unlock_store(file: &std::fs::File) {
+    unsafe {
+        libc::flock(file.as_raw_fd(), libc::LOCK_UN);
+    }
+}
+
+#[cfg(windows)]
+fn lock_store_exclusive(file: &std::fs::File) {
+    use windows_sys::Win32::Foundation::OVERLAPPED;
+    use windows_sys::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK};
+    // SAFETY: handle is owned by `file` for the lifetime of this call;
+    // the lock spans the whole file and is released by UnlockFileEx
+    // below or handle close (process exit).
+    unsafe {
+        let mut overlapped: OVERLAPPED = std::mem::zeroed();
+        LockFileEx(
+            file.as_raw_handle(),
+            LOCKFILE_EXCLUSIVE_LOCK,
+            0,
+            u32::MAX,
+            u32::MAX,
+            &mut overlapped,
+        );
+    }
+}
+
+#[cfg(windows)]
+fn unlock_store(file: &std::fs::File) {
+    use windows_sys::Win32::Foundation::OVERLAPPED;
+    use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
+    unsafe {
+        let mut overlapped: OVERLAPPED = std::mem::zeroed();
+        UnlockFileEx(file.as_raw_handle(), 0, u32::MAX, u32::MAX, &mut overlapped);
+    }
 }
 
 fn record_session(session_id: &str, cwd: Option<&str>, event: Option<&str>) {

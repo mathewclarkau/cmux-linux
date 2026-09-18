@@ -992,6 +992,7 @@ mod tests {
     /// error is reported AND the symlink target's contents are
     /// untouched.
     #[test]
+    #[cfg(unix)] // std::os::unix::fs::symlink fixture
     fn save_registry_refuses_symlink_at_plugins_json() {
         let base = tmp_base("save_sym");
         // Symlink target the attacker is trying to clobber.
@@ -1020,6 +1021,7 @@ mod tests {
     /// the registry is not populated, and the symlink target is
     /// untouched.
     #[test]
+    #[cfg(unix)] // std::os::unix::fs::symlink fixture
     fn install_refuses_symlink_at_plugin_dir() {
         let base = tmp_base("install_sym_dir");
         fs::create_dir_all(plugins_dir(&base)).unwrap();
@@ -1071,6 +1073,7 @@ mod tests {
     /// otherwise-normal plugin directory must not be able to redirect
     /// the write into a sensitive file.
     #[test]
+    #[cfg(unix)] // std::os::unix::fs::symlink fixture
     fn install_refuses_symlink_at_manifest_dest() {
         let base = tmp_base("install_sym_dest");
         fs::create_dir_all(plugins_dir(&base)).unwrap();
@@ -1131,6 +1134,7 @@ mod tests {
     /// consistent: if the user fixes the symlink and retries, the
     /// plugin still shows in `list`.
     #[test]
+    #[cfg(unix)] // std::os::unix::fs::symlink fixture
     fn uninstall_refuses_symlink_at_plugin_dir() {
         let base = tmp_base("uninstall_sym_dir");
         // Symlink target is a sensitive directory.
@@ -1176,6 +1180,7 @@ mod tests {
     /// on refusal the registry still shows the plugin) and the
     /// symlink target survives.
     #[test]
+    #[cfg(unix)] // std::os::unix::fs::symlink fixture
     fn uninstall_refuses_symlink_inside_plugin_dir() {
         let base = tmp_base("uninstall_sym_inside");
         let plugin_dir = plugins_dir(&base).join("fleet");
@@ -1412,16 +1417,20 @@ mod tests {
             );
         }
         // build.sh and bin/fleet.sh must be executable so a user
-        // running them from a fresh checkout works.
-        use std::os::unix::fs::PermissionsExt;
-        for rel in ["build.sh", "bin/fleet.sh"] {
-            let meta = fs::metadata(plugin_dir.join(rel))
-                .unwrap_or_else(|e| panic!("stat {rel}: {e}"));
-            assert_ne!(
-                meta.permissions().mode() & 0o111,
-                0,
-                "{rel} must be executable (mode & 0o111 should be nonzero)"
-            );
+        // running them from a fresh checkout works (unix exec bit only;
+        // there is no such attribute on Windows checkouts).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for rel in ["build.sh", "bin/fleet.sh"] {
+                let meta = fs::metadata(plugin_dir.join(rel))
+                    .unwrap_or_else(|e| panic!("stat {rel}: {e}"));
+                assert_ne!(
+                    meta.permissions().mode() & 0o111,
+                    0,
+                    "{rel} must be executable (mode & 0o111 should be nonzero)"
+                );
+            }
         }
     }
 

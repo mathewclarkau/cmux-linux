@@ -1,3 +1,7 @@
+#![cfg(unix)] // the pre-parity suite is unix-flavoured end to end:
+// /bin/sh panes, printf probes, symlink fixtures, UnixListener, /proc.
+// Windows coverage lives in tests/windows_parity.rs.
+
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::symlink;
