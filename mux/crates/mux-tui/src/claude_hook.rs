@@ -230,8 +230,8 @@ fn unlock_store(file: &std::fs::File) {
 
 #[cfg(windows)]
 fn lock_store_exclusive(file: &std::fs::File) {
-    use windows_sys::Win32::Foundation::OVERLAPPED;
     use windows_sys::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK};
+    use windows_sys::Win32::System::IO::OVERLAPPED;
     // SAFETY: handle is owned by `file` for the lifetime of this call;
     // the lock spans the whole file and is released by UnlockFileEx
     // below or handle close (process exit).
@@ -250,8 +250,8 @@ fn lock_store_exclusive(file: &std::fs::File) {
 
 #[cfg(windows)]
 fn unlock_store(file: &std::fs::File) {
-    use windows_sys::Win32::Foundation::OVERLAPPED;
     use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
+    use windows_sys::Win32::System::IO::OVERLAPPED;
     unsafe {
         let mut overlapped: OVERLAPPED = std::mem::zeroed();
         UnlockFileEx(file.as_raw_handle(), 0, u32::MAX, u32::MAX, &mut overlapped);

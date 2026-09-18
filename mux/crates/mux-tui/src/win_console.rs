@@ -21,12 +21,12 @@ use std::os::windows::io::AsRawHandle;
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
-use windows_sys::Storage::FileSystem::ReadFile;
-use windows_sys::System::Console::{
+use windows_sys::Win32::Storage::FileSystem::ReadFile;
+use windows_sys::Win32::System::Console::{
     GetConsoleMode, GetStdHandle, CONSOLE_MODE, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
     STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
 };
-use windows_sys::System::Threading::WaitForSingleObject;
+use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
 /// Is stdout attached to a console with VT processing enabled (or are
 /// we inside Windows Terminal, detected via `WT_SESSION`)? Used to
