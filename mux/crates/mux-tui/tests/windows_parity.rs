@@ -256,11 +256,14 @@ fn pane_create_send_and_read_screen() {
     );
     stage(&format!("pane-create: surface {}", surface));
 
-    // Send: portable echo probe, submitted with a real CR.
+    // Send: portable echo probe, submitted with a real CR. `--send-cr`
+    // takes a VALUE (VerbSpec flags are --name value pairs; optional_bool
+    // treats any non-"0"/"false"/"no" value as true) — round 9's bare
+    // `--send-cr` exited 2 with "--send-cr needs a value".
     let marker = "PARITY-MARK-7Q";
     let sent = server.cli(
         "send",
-        &["send", "--surface", &surface, "--text", &format!("echo {}", marker), "--send-cr"],
+        &["send", "--surface", &surface, "--text", &format!("echo {}", marker), "--send-cr", "true"],
     );
     assert_success("send", &sent);
 
@@ -315,6 +318,25 @@ fn claude_hook_installer_round_trip() {
 fn conpty_lifecycle_spawn_write_read_resize_kill() {
     use portable_pty::{CommandBuilder, PtySize};
 
+    /// Terminal emulation for the DSR cursor-position query: when the
+    /// session under test sends `ESC [ 6 n`, answer with a cursor
+    /// position report (`ESC [ 1 ; 1 R`) exactly once per query seen —
+    /// what a real terminal does. Round 9's run 35403740420 saw the
+    /// query as the session's only output and nothing further until
+    /// the deadline, consistent with the session waiting on the reply.
+    fn answer_dsr_queries(
+        writer: &mut Box<dyn std::io::Write + Send>,
+        seen: &str,
+        replies_sent: &mut usize,
+    ) {
+        let queries = seen.matches("\u{1b}[6n").count();
+        if queries > *replies_sent {
+            writer.write_all(b"\x1b[1;1R").expect("conpty: write DSR reply");
+            writer.flush().expect("conpty: flush DSR reply");
+            *replies_sent = queries;
+        }
+    }
+
     // Direct ConPTY lifecycle through portable-pty (the same backend
     // the daemon uses for local panes): spawn the default shell, write
     // a marker, read it back, resize, kill.
@@ -341,17 +363,11 @@ fn conpty_lifecycle_spawn_write_read_resize_kill() {
     let mut reader = pty.master.try_clone_reader().expect("conpty: clone ConPTY reader");
     let mut writer = pty.master.take_writer().expect("conpty: take ConPTY writer");
 
-    let marker = "CONPTY-MARK-7Q";
-    let line = format!("echo {}\r", marker);
-    stage("conpty: write echo line");
-    writer.write_all(line.as_bytes()).expect("conpty: write to ConPTY");
-    writer.flush().expect("conpty: flush ConPTY");
-
-    stage("conpty: read until marker (30s deadline)");
+    stage("conpty: read loop (reader thread + recv_timeout)");
     let (tx, rx) = mpsc::channel::<std::io::Result<Vec<u8>>>();
     // The reader thread is intentionally detached: after the marker is
-    // found (or the deadline hits) it may stay parked in a blocking
-    // read until the master handle drops, and joining it would just
+    // found (or a deadline hits) it may stay parked in a blocking read
+    // until the master handle drops, and joining it would just
     // re-create the unbounded wait this rewrite removes. It exits when
     // the process does.
     std::thread::spawn(move || {
@@ -376,8 +392,61 @@ fn conpty_lifecycle_spawn_write_read_resize_kill() {
         }
     });
 
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // Round-9 lesson: the ONLY output the old run ever saw was
+    // "\u{1b}[6n" — a DSR cursor-position REQUEST aimed at the
+    // terminal — with the pipe open (eof=false) and nothing else. A
+    // dumb pipe that never answers keeps the session waiting; a real
+    // terminal replies to DSR with a cursor-position report. Emulate
+    // that (answer every query exactly once), and give the shell a
+    // startup-settle window before typing into it.
+    let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "<unset>".to_string());
+    stage(&format!("conpty: default prog = ComSpec ({})", comspec));
+
     let mut seen = String::new();
+    let mut replies_sent = 0usize;
+    answer_dsr_queries(&mut writer, &seen, &mut replies_sent);
+
+    // Phase 1: gather startup output (banner/prompt/query traffic)
+    // until it settles — some output seen, then 500 ms of quiet — or a
+    // 5 s cap. Bounded either way.
+    stage("conpty: gather startup output (5s cap)");
+    let startup_deadline = Instant::now() + Duration::from_secs(5);
+    let mut last_recv = Instant::now();
+    while Instant::now() < startup_deadline {
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(Ok(bytes)) if bytes.is_empty() => break, // EOF: fall through, phase 2 will report
+            Ok(Ok(bytes)) => {
+                seen.push_str(&String::from_utf8_lossy(&bytes));
+                last_recv = Instant::now();
+            }
+            Ok(Err(e)) => panic!(
+                "conpty: reader errored during startup: {}; output so far: {:?}",
+                e,
+                seen
+            ),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+        answer_dsr_queries(&mut writer, &seen, &mut replies_sent);
+        if !seen.is_empty() && last_recv.elapsed() > Duration::from_millis(500) {
+            break; // settled
+        }
+    }
+    stage(&format!(
+        "conpty: startup seen {} bytes ({} DSR replies sent)",
+        seen.len(),
+        replies_sent
+    ));
+
+    // Phase 2: the probe. cmd.exe (ComSpec) executes on CR.
+    let marker = "CONPTY-MARK-7Q";
+    let line = format!("echo {}\r", marker);
+    stage("conpty: write echo line");
+    writer.write_all(line.as_bytes()).expect("conpty: write to ConPTY");
+    writer.flush().expect("conpty: flush ConPTY");
+
+    // Phase 3: the marker must come back within 30 s.
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut eof = false;
     while Instant::now() < deadline {
         match rx.recv_timeout(Duration::from_millis(250)) {
@@ -398,12 +467,17 @@ fn conpty_lifecycle_spawn_write_read_resize_kill() {
                 break;
             }
         }
+        // Keep answering any further DSR queries in case the shell
+        // re-asks after receiving the first reply.
+        answer_dsr_queries(&mut writer, &seen, &mut replies_sent);
     }
     assert!(
         seen.contains(marker),
-        "conpty: marker {:?} never arrived within 30s (eof={}); ConPTY output so far: {:?}",
+        "conpty: marker {:?} never arrived within 30s (eof={}, {} DSR replies sent); \
+         ConPTY output so far: {:?}",
         marker,
         eof,
+        replies_sent,
         seen
     );
     stage("conpty: marker seen");
