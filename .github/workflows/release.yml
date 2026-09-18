@@ -14,10 +14,24 @@ jobs:
     strategy:
       matrix:
         include:
+          # zig_os names both the zig tarball segment and the release
+          # asset segment (mtyx-<zig_os>-<arch>); exe_suffix is .exe on
+          # Windows only.
           - os: ubuntu-latest
             arch: x86_64
+            zig_os: linux
+            exe_suffix: ""
           - os: ubuntu-24.04-arm
             arch: aarch64
+            zig_os: linux
+            exe_suffix: ""
+          # macOS leg: Xcode CLT is preinstalled on GitHub macOS
+          # runners (clang + libclang.dylib), so there is no LLVM install
+          # step for this leg. macos-15 is arm64.
+          - os: macos-15
+            arch: aarch64
+            zig_os: macos
+            exe_suffix: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -61,13 +75,25 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           # Anchored to the start of the line so it can only match
           # [workspace.package]'s own key, never a
-          # `foo = { version = "1" }` dependency line.
-          sed -i -E "0,/^version = \".*\"\$/s//version = \"$version\"/" mux/Cargo.toml
+          # `foo = { version = "1" }` dependency line. perl instead of
+          # sed -i because BSD sed (macOS legs) has no `0,/re/` address
+          # form and a different -i syntax; perl -pi is identical on
+          # GNU/Linux, macOS and Windows runners.
+          MTYX_EXPECTED_VERSION="$version" perl -pi -e '
+            if (!$done && /^version = ".*"$/) {
+              $_ = qq(version = "$ENV{MTYX_EXPECTED_VERSION}"\n);
+              $done = 1;
+            }
+          ' mux/Cargo.toml
           grep -qx "version = \"$version\"" mux/Cargo.toml \
             || { echo "::error::failed to sync mux/Cargo.toml to $version"; exit 1; }
           echo "release version: $version"
 
       - name: Install build dependencies
+        # Linux legs only: the apt/llvm.org dance below is meaningless
+        # on macOS (Xcode CLT preinstalled) and Windows (LLVM handled in
+        # its own leg).
+        if: runner.os == 'Linux'
         # ports.ubuntu.com (the arm64 mirror) has been fully unreachable
         # from GitHub's ARM runners (every IPv4/IPv6 address, every
         # retry) across multiple separate CI runs on this repo's
@@ -131,7 +157,7 @@ jobs:
           EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          reported="$(mux/target/release/mtyx --version)"
+          reported="$(mux/target/release/mtyx${{ matrix.exe_suffix }} --version)"
           echo "mtyx reports: $reported"
           if [[ -n "$EXPECTED_VERSION" && "$reported" != "mtyx $EXPECTED_VERSION" ]]; then
             echo "::error::expected 'mtyx $EXPECTED_VERSION', got '$reported'"
@@ -141,13 +167,19 @@ jobs:
       - name: Package binary
         run: |
           mkdir -p dist
-          cp mux/target/release/mtyx "dist/mtyx-linux-${{ matrix.arch }}"
-          chmod +x "dist/mtyx-linux-${{ matrix.arch }}"
+          cp "mux/target/release/mtyx${{ matrix.exe_suffix }}" \
+            "dist/mtyx-${{ matrix.zig_os }}-${{ matrix.arch }}${{ matrix.exe_suffix }}"
+
+      - name: Mark binary executable
+        # Meaningless on Windows (no exec bit); the zip already carries
+        # the right attributes.
+        if: runner.os != 'Windows'
+        run: chmod +x "dist/mtyx-${{ matrix.zig_os }}-${{ matrix.arch }}${{ matrix.exe_suffix }}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mtyx-linux-${{ matrix.arch }}
-          path: dist/mtyx-linux-${{ matrix.arch }}
+          name: mtyx-${{ matrix.zig_os }}-${{ matrix.arch }}
+          path: dist/mtyx-${{ matrix.zig_os }}-${{ matrix.arch }}${{ matrix.exe_suffix }}
 
   release:
     needs: build

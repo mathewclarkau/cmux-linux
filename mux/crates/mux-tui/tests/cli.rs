@@ -4457,7 +4457,7 @@ fn list_workspaces_json(server: &HeadlessServer) -> serde_json::Value {
 }
 
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")] // stats /proc/self for the uid; no /proc on macOS
 mod legacy_socket_fallback {
     use super::*;
     use std::os::unix::fs::MetadataExt;

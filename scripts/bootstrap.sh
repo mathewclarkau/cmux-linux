@@ -1,25 +1,66 @@
 #!/usr/bin/env bash
 # Fetches a pinned zig (build.zig hard-requires 0.15.2; see README) into
 # .tools/ without touching any system zig install, then builds mux-tui.
+# OS table: Linux and macOS fetch a .tar.xz (bsdtar/GNU tar both handle
+# xz natively); Windows fetches a .zip and extracts with unzip when
+# available, else PowerShell Expand-Archive (paths converted via
+# cygpath under Git Bash). The Linux path is byte-identical to the
+# pre-cross-OS version of this script.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ZIG_VERSION="0.15.2"
 TOOLS_DIR="$ROOT/.tools"
+
+# uname -s reports Linux / Darwin; Windows shells report MINGW*, MSYS*
+# or CYGWIN* (Git Bash / MSYS2 / Cygwin). Windows_NT covers any shell
+# that forwards the $OS env var instead of a real uname.
+case "$(uname -s)" in
+  Linux)  ZIG_OS="linux" ;;
+  Darwin) ZIG_OS="macos" ;;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT) ZIG_OS="windows" ;;
+  *) echo "error: unsupported OS $(uname -s)" >&2; exit 1 ;;
+esac
+
 case "$(uname -m)" in
   x86_64) ZIG_ARCH="x86_64" ;;
-  aarch64) ZIG_ARCH="aarch64" ;;
+  aarch64|arm64) ZIG_ARCH="aarch64" ;;
   *) echo "error: unsupported architecture $(uname -m)" >&2; exit 1 ;;
 esac
-ZIG_DIR="$TOOLS_DIR/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}"
-ZIG_TARBALL="zig-${ZIG_ARCH}-linux-${ZIG_VERSION}.tar.xz"
 
-if [ ! -x "$ZIG_DIR/zig" ]; then
+ZIG_DIR="$TOOLS_DIR/zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}"
+if [ "$ZIG_OS" = "windows" ]; then
+  ZIG_TARBALL="zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}.zip"
+  ZIG_BIN="$ZIG_DIR/zig.exe"
+else
+  ZIG_TARBALL="zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}.tar.xz"
+  ZIG_BIN="$ZIG_DIR/zig"
+fi
+
+if [ ! -x "$ZIG_BIN" ]; then
   echo "==> fetching zig $ZIG_VERSION ($ZIG_ARCH) into $ZIG_DIR"
   mkdir -p "$TOOLS_DIR"
   curl -fsSL -o "$TOOLS_DIR/$ZIG_TARBALL" \
     "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_TARBALL}"
-  tar -C "$TOOLS_DIR" -xf "$TOOLS_DIR/$ZIG_TARBALL"
+  case "$ZIG_OS" in
+    windows)
+      # No tar/xz story for zig's .zip: unzip when present (Git Bash
+      # ships it on GitHub runners), else Expand-Archive with Windows
+      # paths (cygpath converts when we are running under an MSYS
+      # lineage shell; plain paths already work under PowerShell).
+      if command -v unzip >/dev/null 2>&1; then
+        unzip -q "$TOOLS_DIR/$ZIG_TARBALL" -d "$TOOLS_DIR"
+      else
+        win_tarball="$(cygpath -w "$TOOLS_DIR/$ZIG_TARBALL" 2>/dev/null || echo "$TOOLS_DIR/$ZIG_TARBALL")"
+        win_tools="$(cygpath -w "$TOOLS_DIR" 2>/dev/null || echo "$TOOLS_DIR")"
+        powershell -NoProfile -Command \
+          "Expand-Archive -LiteralPath '$win_tarball' -DestinationPath '$win_tools' -Force"
+      fi
+      ;;
+    *)
+      tar -C "$TOOLS_DIR" -xf "$TOOLS_DIR/$ZIG_TARBALL"
+      ;;
+  esac
   rm "$TOOLS_DIR/$ZIG_TARBALL"
 fi
 
@@ -53,6 +94,10 @@ else
     exit 1
 fi
 echo "    using: $("$CARGO_BIN" --version)"
-ZIG="$ZIG_DIR/zig" "$CARGO_BIN" "+1.97" build --release -p mux-tui
+ZIG="$ZIG_BIN" "$CARGO_BIN" "+1.97" build --release -p mux-tui
 
-echo "==> built: $ROOT/mux/target/release/mtyx"
+if [ "$ZIG_OS" = "windows" ]; then
+  echo "==> built: $ROOT/mux/target/release/mtyx.exe"
+else
+  echo "==> built: $ROOT/mux/target/release/mtyx"
+fi

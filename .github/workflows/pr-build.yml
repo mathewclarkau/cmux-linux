@@ -21,10 +21,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # zig_os names the zig tarball segment (zig-<arch>-<zig_os>-
+          # 0.15.2) AND the release-asset segment; exe_suffix is .exe on
+          # Windows only.
           - os: ubuntu-latest
             arch: x86_64
+            zig_os: linux
+            exe_suffix: ""
           - os: ubuntu-24.04-arm
             arch: aarch64
+            zig_os: linux
+            exe_suffix: ""
+          # macOS leg: Xcode CLT is preinstalled on GitHub macOS
+          # runners (clang + libclang.dylib), so there is no apt/
+          # LLVM step for this leg. macos-15 is arm64.
+          - os: macos-15
+            arch: aarch64
+            zig_os: macos
+            exe_suffix: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +46,7 @@ jobs:
           submodules: recursive
 
       - name: Install build dependencies
+        if: runner.os == 'Linux'
         # ports.ubuntu.com (the arm64 mirror) has been fully unreachable
         # from GitHub's ARM runners (every IPv4/IPv6 address, every
         # retry) across multiple separate CI runs - not a one-off blip,
@@ -77,7 +92,7 @@ jobs:
           MTYX_GHOSTTY_VT_ZIG_CPU: baseline
         run: |
           ./scripts/bootstrap.sh
-          echo "ZIG=$GITHUB_WORKSPACE/.tools/zig-${{ matrix.arch }}-linux-0.15.2/zig" >> "$GITHUB_ENV"
+          echo "ZIG=$GITHUB_WORKSPACE/.tools/zig-${{ matrix.arch }}-${{ matrix.zig_os }}-0.15.2/zig${{ matrix.exe_suffix }}" >> "$GITHUB_ENV"
 
       # Pin cargo to the Rust 1.97 toolchain via rustup's "+toolchain"
       # syntax. dtolnay/rust-toolchain installs Rust 1.97 under ~/.cargo
