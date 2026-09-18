@@ -1369,7 +1369,13 @@ mod tests {
             .parent()
             .expect("plugin dir is the manifest's parent")
             .join(&plugin.entry);
-        let entry_str = entry_path.to_string_lossy();
+        // Path-normalising comparison: `join` yields backslash separators
+        // (and canonicalize yields a `\\?\` verbatim prefix) on Windows,
+        // so normalise separators before the suffix check instead of
+        // assuming unix path spelling. The resolver itself (cmd_call)
+        // does not canonicalize — the verbatim prefix here comes from
+        // this test's own canonicalize and is irrelevant to the suffix.
+        let entry_str = entry_path.to_string_lossy().replace('\\', "/");
         assert!(
             entry_str.ends_with("bin/fleet.wasm"),
             "entry should resolve under plugin dir's bin/, got {entry_str}"

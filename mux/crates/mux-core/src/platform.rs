@@ -451,7 +451,13 @@ pub fn home_dir() -> Option<PathBuf> {
 
 #[cfg(windows)]
 pub fn home_dir() -> Option<PathBuf> {
-    env_path("USERPROFILE").or_else(|| {
+    // An explicit $HOME wins first: Git Bash / MSYS shells set it, CI
+    // and the hook tests override it, and unix already treats it as
+    // authoritative — honouring it here gives one override mechanism
+    // everywhere (and stops the hook tests from writing the real
+    // %USERPROFILE%\.claude when they point HOME at a temp dir).
+    // Fall through to the native resolution when it is unset/empty.
+    env_path("HOME").or_else(|| env_path("USERPROFILE")).or_else(|| {
         let drive = std::env::var_os("HOMEDRIVE")?;
         let path = std::env::var_os("HOMEPATH")?;
         let mut home = PathBuf::from(drive);
