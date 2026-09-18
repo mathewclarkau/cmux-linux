@@ -35,16 +35,17 @@ fn main() {
     let prefix = out_dir.join("ghostty-vt");
     let target = env::var("TARGET").unwrap();
     let host = env::var("HOST").unwrap();
-    let mut command = Command::new(&zig);
-    command
-        .current_dir(&ghostty_dir)
-        .arg("build")
-        .arg("-Demit-lib-vt=true")
-        .arg("-Demit-xcframework=false")
-        .arg("-Doptimize=ReleaseFast");
+    // Args are collected (not chained onto a Command) so the retry loop
+    // below can rebuild an identical invocation — Command is not Clone.
+    let mut zig_args: Vec<String> = vec![
+        "build".to_string(),
+        "-Demit-lib-vt=true".to_string(),
+        "-Demit-xcframework=false".to_string(),
+        "-Doptimize=ReleaseFast".to_string(),
+    ];
     if target != host {
         if let Some(zig_target) = zig_target_for_rust_target(&target) {
-            command.arg(format!("-Dtarget={zig_target}"));
+            zig_args.push(format!("-Dtarget={zig_target}"));
         }
     }
     // Valgrind's instruction emulation doesn't cover every CPU-native SIMD
@@ -53,13 +54,68 @@ fn main() {
     // "baseline" to match the same workaround ghostty's own build.zig uses
     // for its valgrind step (see `Config.baselineTarget()`).
     if let Ok(cpu) = env::var("MTYX_GHOSTTY_VT_ZIG_CPU") {
-        command.arg(format!("-Dcpu={cpu}"));
+        zig_args.push(format!("-Dcpu={cpu}"));
     }
-    let status = command.arg("--prefix").arg(&prefix).status().unwrap_or_else(|e| {
-        panic!("failed to run `{zig} build` in {}: {e}", ghostty_dir.display())
-    });
-    if !status.success() {
-        panic!("zig build of libghostty-vt failed with {status}");
+    zig_args.push("--prefix".to_string());
+    zig_args.push(prefix.display().to_string());
+
+    // Windows cache placement (PR #101 run 35314291149): zig 0.15.2 on
+    // windows-latest died with "unable to read results of configure phase
+    // from '.zig-cache\tmp\<hex>': FileNotFound". Keep the local cache
+    // short, flat and off the repo path (C:\mtyx-zig-cache, TEMP
+    // fallback), which caps every cache-internal path regardless of
+    // checkout depth. Combined with the one-shot retry below for the
+    // known-transient signature (configure-phase tmp entries vanishing
+    // under AV/Defender scans on fresh caches), both plausible root
+    // causes are covered. Non-Windows hosts keep zig's defaults.
+    let cache_dir_for_retry = if cfg!(windows) {
+        let (local_cache, global_cache) = windows_zig_cache_dirs();
+        zig_args.push("--cache-dir".to_string());
+        zig_args.push(local_cache.display().to_string());
+        zig_args.push("--global-cache-dir".to_string());
+        zig_args.push(global_cache.display().to_string());
+        local_cache
+    } else {
+        ghostty_dir.join(".zig-cache")
+    };
+
+    // Run zig build, capturing output so a transient failure can be
+    // recognised and retried. Output is echoed either way so CI logs
+    // look identical to the streamed version.
+    let mut attempt = 1;
+    loop {
+        // Command is not Clone and output() consumes it; rebuild the
+        // identical invocation per attempt from the collected args.
+        let mut run = Command::new(&zig);
+        run.current_dir(&ghostty_dir).args(&zig_args);
+        let output = run.output().unwrap_or_else(|e| {
+            panic!("failed to run `{zig} build` in {}: {e}", ghostty_dir.display())
+        });
+        use std::io::Write as _;
+        let mut stdout = std::io::stdout();
+        let _ = stdout.write_all(&output.stdout);
+        let _ = stdout.write_all(&output.stderr);
+        let _ = stdout.flush();
+        if output.status.success() {
+            break;
+        }
+        let stderr_text = String::from_utf8_lossy(&output.stderr).into_owned();
+        // "unable to read results of configure phase" is the known
+        // transient signature: a configure-phase tmp directory entry
+        // that vanished between write and read (Defender scan races on
+        // fresh Windows caches, parallel-step tmp cleanup). Clear the
+        // tmp area and retry exactly once; a real failure fails hard on
+        // the second attempt.
+        if attempt == 1 && stderr_text.contains("unable to read results of configure phase") {
+            eprintln!(
+                "mtyx: transient zig configure-phase failure; clearing {} and retrying once",
+                cache_dir_for_retry.join("tmp").display()
+            );
+            let _ = std::fs::remove_dir_all(cache_dir_for_retry.join("tmp"));
+            attempt += 1;
+            continue;
+        }
+        panic!("zig build of libghostty-vt failed with {}", output.status);
     }
 
     println!("cargo:rustc-link-search=native={}", prefix.join("lib").display());
@@ -116,6 +172,29 @@ fn zig_target_for_rust_target(target: &str) -> Option<&'static str> {
         "aarch64-pc-windows-msvc" => Some("aarch64-windows-msvc"),
         _ => None,
     }
+}
+
+/// Short, stable, off-repo zig cache dirs for Windows hosts (see the
+/// comment at the call site). Local and global must be distinct
+/// directories — they share a namespace (tmp/, o/, h/, p/) and zig
+/// documents them as separate caches.
+fn windows_zig_cache_dirs() -> (PathBuf, PathBuf) {
+    // Default Windows ACLs let interactive users create directories
+    // directly at drive roots (runners and dev boxes alike); fall back
+    // to %TEMP% for locked-down environments.
+    let root = PathBuf::from(r"C:\mtyx-zig-cache");
+    if std::fs::create_dir_all(&root).is_err() {
+        let fallback = std::env::temp_dir().join("mtyx-zig-cache");
+        let _ = std::fs::create_dir_all(&fallback);
+        let (local, global) = (fallback.join("local"), fallback.join("global"));
+        let _ = std::fs::create_dir_all(&local);
+        let _ = std::fs::create_dir_all(&global);
+        return (local, global);
+    }
+    let (local, global) = (root.join("local"), root.join("global"));
+    let _ = std::fs::create_dir_all(&local);
+    let _ = std::fs::create_dir_all(&global);
+    (local, global)
 }
 
 /// Run `<cc> -E -Wp,-v -` and return the include paths listed between
