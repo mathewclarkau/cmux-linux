@@ -1,6 +1,6 @@
 # Python Binding Style
 
-Generate a zero-dependency synchronous Python package under `mux/bindings/python/cmux_client/`.
+Generate a zero-dependency synchronous Python package under `mux/bindings/python/mtyx_client/`.
 
 Requirements:
 
@@ -11,7 +11,7 @@ Requirements:
 - Method names are snake_case and map 1:1 to implemented command names.
 - Preserve server error strings in `CommandError`.
 - Distinguish command errors, connection errors, protocol errors, and timeouts.
-- Resolve the default socket as `$TMPDIR/cmux-<uid>/<session>.sock`, with explicit socket path override.
+- Resolve the default socket as `$TMPDIR/mtyx-<uid>/<session>.sock`, with explicit socket path override.
 - Use separate sockets for command requests, subscribe streams, and attach streams.
 - Provide `MuxClient.request(cmd, **params) -> dict` as the raw JSON response entry point.
 - Implement `subscribe()` as an iterator over event objects.
@@ -32,5 +32,5 @@ Public API shape:
 The package must be importable with:
 
 ```python
-from cmux_client import MuxClient
+from mtyx_client import MuxClient
 ```

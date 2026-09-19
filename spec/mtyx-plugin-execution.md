@@ -1,4 +1,4 @@
-# cmux Plugin Execution Mechanism (issue #42, PR 2 of 3)
+# mtyx Plugin Execution Mechanism (issue #42, PR 2 of 3)
 
 ## Status
 
@@ -14,15 +14,15 @@ overnight ship.
 
 - `mux/crates/mux-tui/src/plugin.rs` (989 LOC): manifest parser (`[plugin] name /
   entry / verbs`), JSON registry (`plugins.json` with `Vec<PluginEntry>`), and the
-  five subcommands `cmux plugin {list, install, uninstall, enable, disable}`.
+  five subcommands `mtyx plugin {list, install, uninstall, enable, disable}`.
 - `entry` is stored as an opaque string. **Nothing resolves or executes it.**
 - Symlink-safe writes/removes (security checklist alignment from
-  `cmux-linux/AGENTS.md`).
+  `mattyx/AGENTS.md`).
 - 126 unit + 17 integration tests green. No new deps.
 
 **What's missing**:
 
-- Nothing invokes the plugin. `cmux <plugin-name> <verb>` is currently rejected.
+- Nothing invokes the plugin. `mtyx <plugin-name> <verb>` is currently rejected.
 - The manifest's `entry` field has no concrete resolution rule (binary path? wasm
   path? both?).
 - No capability / sandbox model. PR #51 explicitly left this for a separate PR.
@@ -30,8 +30,8 @@ overnight ship.
 ## Goal
 
 Add the execution layer that turns a registered, enabled plugin into a callable
-verb-extension on `cmux`. Plugin code runs **sandboxed** (WASM/WASI via wasmtime)
-and communicates with cmux over the existing JSON-lines control socket with a
+verb-extension on `mtyx`. Plugin code runs **sandboxed** (WASM/WASI via wasmtime)
+and communicates with mtyx over the existing JSON-lines control socket with a
 **per-plugin scoped auth token** + **verb allowlist** + **capability manifest**.
 
 ## Approach: Option A (WASM/WASI sandbox)
@@ -82,7 +82,7 @@ entry = "bin/fleet.wasm"
 verbs = ["deploy", "rollback"]
 
 [plugin.capabilities]
-# What cmux resources the plugin can access
+# What mtyx resources the plugin can access
 socket = "read"                    # "off" | "read" | "write"
 filesystem = ["/tmp/workpieces"]   # preopen dirs (NOT env-var-substituted)
 env = ["HOME", "USER"]            # explicit allowlist (NOT inherited)
@@ -99,7 +99,7 @@ backwards-compat with PR #51 manifests:
 
 | Capability | Default | Reasoning |
 |---|---|---|
-| `socket` | `"read"` | Plugins can read cmux state but can't mutate it without explicit grant |
+| `socket` | `"read"` | Plugins can read mtyx state but can't mutate it without explicit grant |
 | `filesystem` | `["$PLUGIN_DATA_DIR"]` (the plugin's install dir) | Plugin can read its own data but nothing else |
 | `env` | `[]` (empty) | No environment leakage by default |
 | `network` | `"off"` | Plugins are local by default |
@@ -109,37 +109,37 @@ backwards-compat with PR #51 manifests:
 
 ### How `socket` capability interacts with the control protocol
 
-When `cmux pifactory-fleet deploy` is invoked:
+When `mtyx pifactory-fleet deploy` is invoked:
 
-1. cmux reads `plugins.json`, finds the `pifactory-fleet` entry, verifies
+1. mtyx reads `plugins.json`, finds the `pifactory-fleet` entry, verifies
    `enabled: true` and `verbs` includes `"deploy"`.
-2. cmux reads the manifest's `[plugin.capabilities].socket` field.
-3. cmux **mints a per-call auth token** (random 32 bytes, hex-encoded) that is
+2. mtyx reads the manifest's `[plugin.capabilities].socket` field.
+3. mtyx **mints a per-call auth token** (random 32 bytes, hex-encoded) that is
    scoped to:
    - the plugin's name
    - the specific verb being called
    - the verb allowlist (only the verbs declared in the manifest)
    - the socket capability (`read` blocks mutating verbs, `write` allows them)
-4. cmux spawns the WASM module with `wasmtime` using the manifest's
+4. mtyx spawns the WASM module with `wasmtime` using the manifest's
    `entry` path resolved against the plugin install directory.
-5. cmux passes the auth token to the WASM module via a host import
+5. mtyx passes the auth token to the WASM module via a host import
    (`cmux_token(token: String) -> ()`).
-6. WASM module calls back into cmux via a single host import
-   `cmux_call(request_json: String) -> String`, which cmux validates against
+6. WASM module calls back into mtyx via a single host import
+   `cmux_call(request_json: String) -> String`, which mtyx validates against
    the token + verb allowlist before forwarding to the real control socket.
 
 This means:
 
-- Plugin cannot bypass the auth token (the only way to talk to cmux is through
+- Plugin cannot bypass the auth token (the only way to talk to mtyx is through
   the `cmux_call` host import, which validates every request).
 - Plugin cannot call verbs not in its allowlist (the token only authorises the
   specific verb being executed).
-- Plugin cannot read secrets from cmux's environment (it gets only the
+- Plugin cannot read secrets from mtyx's environment (it gets only the
   `[plugin.capabilities].env` allowlist).
 - Plugin cannot escape its filesystem sandbox (wasmtime WASI preopen directories
   are scoped to the manifest's `filesystem` list).
 
-## WASM host imports (the cmux ↔ plugin ABI)
+## WASM host imports (the mtyx ↔ plugin ABI)
 
 The plugin WASM module gets exactly three host functions. Anything else is a
 load-time failure (wasmtime validates the import list).
@@ -151,10 +151,10 @@ fn cmux_token() -> String;
 // host import: cmux_call — send a JSON request, get a JSON response
 // request shape: { "id": u32, "verb": "list-workspaces", "args": {...} }
 // response shape: { "id": u32, "ok": bool, "data"?: ..., "error"?: string }
-// cmux rejects verbs not in the manifest's allowlist or socket capability
+// mtyx rejects verbs not in the manifest's allowlist or socket capability
 fn cmux_call(request_json: String) -> String;
 
-// host import: cmux_log — plugin writes to cmux's stderr (for diagnostics)
+// host import: cmux_log — plugin writes to mtyx's stderr (for diagnostics)
 fn cmux_log(level: u32, message: String);  // 0=info 1=warn 2=error
 ```
 
@@ -169,11 +169,11 @@ hostnames).
 ## Execution flow
 
 ```
-$ cmux pifactory-fleet deploy <args>
+$ mtyx pifactory-fleet deploy <args>
        │
        ▼
 ┌──────────────────────────────────────────────────┐
-│ cmux CLI dispatcher                              │
+│ mtyx CLI dispatcher                              │
 │  1. read plugins.json, find pifactory-fleet       │
 │  2. verify enabled && "deploy" in verbs allowlist │
 │  3. mint per-call auth token (scoped: name+verb)   │
@@ -199,7 +199,7 @@ $ cmux pifactory-fleet deploy <args>
 ```
 
 If the WASM module panics, exhausts fuel, exceeds wall-clock, or makes an
-unauthorised call, cmux reports the failure on stderr with exit code and
+unauthorised call, mtyx reports the failure on stderr with exit code and
 returns non-zero to the caller.
 
 ## Implementation plan
@@ -212,10 +212,10 @@ This PR is ~600-900 LOC across ~6 files. Estimated shape:
 | `mux/crates/mux-tui/Cargo.toml` | Wire wasmtime |
 | `mux/crates/mux-tui/src/plugin.rs` | Extend manifest parser to recognise `[plugin.capabilities]`; add `cmd_call` subcommand that handles the dispatch flow above |
 | `mux/crates/mux-tui/src/plugin_host.rs` (new) | The wasmtime host import implementations (`cmux_token`, `cmux_call`, `cmux_log`) + the per-call auth token mint + validation |
-| `mux/crates/mux-tui/src/main.rs` | Route `cmux <plugin> <verb>` to `plugin::cmd_call` instead of rejecting; document the new shape in USAGE |
-| `mux/spec/cli.md` | Add the `cmux <plugin> <verb>` entry to the verb table |
+| `mux/crates/mux-tui/src/main.rs` | Route `mtyx <plugin> <verb>` to `plugin::cmd_call` instead of rejecting; document the new shape in USAGE |
+| `mux/spec/cli.md` | Add the `mtyx <plugin> <verb>` entry to the verb table |
 | `mux/spec/commands.md` | Add the dispatch protocol (token mint, validation rules) |
-| `mux/crates/mux-tui/tests/cli.rs` | Integration test: build a tiny wasm32 module in the test that asserts the host-import contract; install it; call `cmux <plugin> <verb>`; assert the response |
+| `mux/crates/mux-tui/tests/cli.rs` | Integration test: build a tiny wasm32 module in the test that asserts the host-import contract; install it; call `mtyx <plugin> <verb>`; assert the response |
 | `mux/spec/security-model.md` (new) | Document the threat model + capability defaults |
 
 ## Test strategy
@@ -234,24 +234,24 @@ Three layers:
    - Build a minimal `tests/fixtures/hello-world-plugin/` that compiles to
      `.wasm` via `cargo build --target wasm32-unknown-unknown` (gated by a
      `RUSTFLAGS` check so the test is skipped if the target isn't installed)
-   - Install the fixture via `cmux plugin install`
-   - Call `cmux <plugin> greet` and assert the stdout contains "hello"
+   - Install the fixture via `mtyx plugin install`
+   - Call `mtyx <plugin> greet` and assert the stdout contains "hello"
 
 If wasm32-unknown-unknown isn't available in CI, the integration test skips
 gracefully — `wasmtime` is the host requirement, not `wasm32-unknown-unknown`.
 
 ## Security model (for the spec/security-model.md doc)
 
-**Trust boundary**: a plugin is third-party code. cmux never trusts the plugin
+**Trust boundary**: a plugin is third-party code. mtyx never trusts the plugin
 binary. Every capability the plugin has is opt-in via the manifest, every
 verb call is scoped to a per-call token, every filesystem access is mediated
 by wasmtime WASI.
 
 **Threats we mitigate**:
 
-1. **Plugin reads secrets from cmux's environment** — mitigated by the
+1. **Plugin reads secrets from mtyx's environment** — mitigated by the
    `[plugin.capabilities].env` allowlist (empty by default).
-2. **Plugin calls mutating cmux verbs it shouldn't** — mitigated by the
+2. **Plugin calls mutating mtyx verbs it shouldn't** — mitigated by the
    per-call auth token scoping to verb allowlist + socket capability.
 3. **Plugin reads/modifies files outside its scope** — mitigated by WASI
    preopen dirs (manifest's `filesystem` list).
@@ -280,17 +280,17 @@ WASM module is a thin adapter that:
 
 1. Reads the JSON args (`workpiece_path`, `team_spec`)
 2. Calls `cmux_call` to dispatch scouts/planners/builders/reviewers via
-   existing cmux verbs (`new-workspace`, `send`, `read-screen`)
+   existing mtyx verbs (`new-workspace`, `send`, `read-screen`)
 3. Returns a JSON summary of dispatched teams
 
 The plugin does NOT implement the agent state machine itself — that stays
 in `scripts/team-dispatch.py` (Python on the host). The WASM module is purely
-a "translate JSON args → cmux verb calls" adapter.
+a "translate JSON args → mtyx verb calls" adapter.
 
-Source repo for the worked example (separate from cmux-linux): the
+Source repo for the worked example (separate from mattyx): the
 pifactory repo's `plugins/cmux-pifactory-fleet/`. Built separately against
 `wasm32-unknown-unknown`, output `bin/fleet.wasm` copied into the plugin
-install dir on `cmux plugin install`.
+install dir on `mtyx plugin install`.
 
 ## Risks and tradeoffs
 
@@ -300,7 +300,7 @@ install dir on `cmux plugin install`.
   1.75.0` per `AGENTS.md`).
 - **CI build cost**: wasmtime adds ~30-60s to a cold `cargo build`. Acceptable
   but should be documented.
-- **First-run UX**: a user running `cmux pifactory-fleet deploy` for the first
+- **First-run UX**: a user running `mtyx pifactory-fleet deploy` for the first
   time on a freshly-installed plugin will see a ~100ms wasmtime load cost.
   Acceptable; cache via `wasmtime::Module::serialize()` to disk.
 - **No native plugins**: commits the user to the WASM authoring path. For the
@@ -323,7 +323,7 @@ install dir on `cmux plugin install`.
 4. **Token scope lifetime**: **per-call**. Mint a fresh 32-byte hex token at
    invocation, discard on return. Per-session tokens are a foot-gun if
    leaked.
-5. **Plugin upgrade semantics**: **PR #51's existing behaviour** — `cmux
+5. **Plugin upgrade semantics**: **PR #51's existing behaviour** — `mtyx
    plugin install` of a duplicate name rejects. (No `--force` flag added
    in this PR; follow-up if needed.)
 6. **Manifest table nesting**: **`[plugin.capabilities]`** (nested under
@@ -338,17 +338,17 @@ install dir on `cmux plugin install`.
 
 ## Cross-references
 
-- Issue #42: <https://github.com/mathewclarkau/cmux-linux/issues/42>
+- Issue #42: <https://github.com/mathewclarkau/mattyx/issues/42>
 - PR #51 (merged): commit `d86b225` "feat(plugin): manifest + registry loader"
 - This PR's commits (in branch `feat/plugin-execution-wasm`):
   - `430bcbd` — spec (this file's earlier version)
   - `49a81fb` — wasmtime execution layer (this PR, part 1)
-  - `749c55d` — `cmux <plugin> <verb>` dispatch in main.rs (this PR, part 2)
+  - `749c55d` — `mtyx <plugin> <verb>` dispatch in main.rs (this PR, part 2)
 - Existing manifest schema: `mux/crates/mux-tui/src/plugin.rs`
 - Host runtime: `mux/crates/mux-tui/src/plugin_host.rs`
-- Existing security checklist: `cmux-linux/AGENTS.md` (no-silent-fallback,
+- Existing security checklist: `mattyx/AGENTS.md` (no-silent-fallback,
   symlink check, JSON-parse propagates, shell-escape arg arrays)
-- herdr plugin ecosystem comparison: `~/Projects/hermes/wiki/concepts/herdr-vs-cmux-linux-comparison.md` (referenced from issue #42)
+- herdr plugin ecosystem comparison: `~/Projects/hermes/wiki/concepts/herdr-vs-mattyx-comparison.md` (referenced from issue #42)
 
 ## Status
 
@@ -366,7 +366,7 @@ What's done:
   + stale-id detection.
 * Fuel + epoch-interruption-based wall-clock caps.
 * `SocketDispatcher` against `mux_core::platform::transport::connect`.
-* `cmux <plugin> <verb> [args]` argv dispatch in main.rs.
+* `mtyx <plugin> <verb> [args]` argv dispatch in main.rs.
 * 152 unit tests passing (16 new in `plugin_host::tests`).
 
 What's NOT in this PR (deliberate follow-ups):

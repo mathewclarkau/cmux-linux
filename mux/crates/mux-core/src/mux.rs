@@ -93,7 +93,7 @@ pub struct Mux {
     session: Mutex<String>,
     /// The daemon's currently-bound control-socket path: the single source
     /// of truth read at shutdown (`cleanup`) and at every surface spawn
-    /// (so panes spawned after a rename inherit the new `CMUX_MUX_SOCKET`).
+    /// (so panes spawned after a rename inherit the new `MTYX_MUX_SOCKET`).
     /// `None` until `server::serve` calls [`set_socket_path`](Self::set_socket_path).
     socket_path: Mutex<Option<PathBuf>>,
     /// Ambient agent-detection settings (issue #78 AC7), pushed from the
@@ -164,14 +164,14 @@ impl Mux {
         *self.session.lock().unwrap() = name;
     }
 
-    /// Update the `CMUX_MUX_SOCKET` entry in a cloned `SurfaceOptions` so a
+    /// Update the `MTYX_MUX_SOCKET` entry in a cloned `SurfaceOptions` so a
     /// newly-spawned pane inherits the daemon's *current* live socket path
     /// (not the stale startup path). Existing panes keep whatever they
     /// inherited at spawn — this is the AC4 lifetime guarantee (issue #63).
     fn refresh_socket_env(&self, opts: &mut SurfaceOptions) {
         if let Some(p) = self.socket_path() {
-            opts.extra_env.retain(|(k, _)| k != "CMUX_MUX_SOCKET");
-            opts.extra_env.push(("CMUX_MUX_SOCKET".into(), p.display().to_string()));
+            opts.extra_env.retain(|(k, _)| k != "MTYX_MUX_SOCKET");
+            opts.extra_env.push(("MTYX_MUX_SOCKET".into(), p.display().to_string()));
         }
     }
 
@@ -401,7 +401,7 @@ impl Mux {
                 // listening, so no subscriber could possibly see this
                 // Status event live - eprintln! is the only way a headless
                 // daemon's restore failures are visible anywhere.
-                eprintln!("cmux: {message}");
+                eprintln!("mtyx: {message}");
                 self.emit(MuxEvent::Status(message));
             }
         }
@@ -1027,7 +1027,7 @@ reattaching to remote session {session_id} on {host} \
     }
 
     /// Issue #76: [`Self::new_tab`] with explicit spawn overrides — the
-    /// agent-start primitive (`cmux new-tab --exec -- <argv>` on the CLI,
+    /// agent-start primitive (`mtyx new-tab --exec -- <argv>` on the CLI,
     /// `command`/`env` fields on the socket command). The optional
     /// `worktree` is appended to the pane's `Pane.worktrees` registry on
     /// attach (issue #77 AC4); passing both `overrides` and a `worktree`
@@ -2902,10 +2902,10 @@ mod tests {
             command: Some(vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
-                "test \"$CMUX_LAYOUT_FLAG\" = yes && printf CMUX_LAYOUT_ARGV_OK; sleep 30"
+                "test \"$MTYX_LAYOUT_FLAG\" = yes && printf MTYX_LAYOUT_ARGV_OK; sleep 30"
                     .to_string(),
             ]),
-            env: BTreeMap::from([("CMUX_LAYOUT_FLAG".to_string(), "yes".to_string())]),
+            env: BTreeMap::from([("MTYX_LAYOUT_FLAG".to_string(), "yes".to_string())]),
         };
         let doc = layout_doc_with(
             "argv",
@@ -2924,7 +2924,7 @@ mod tests {
         let mut saw = false;
         while std::time::Instant::now() < deadline {
             if let Ok(Ok(text)) = surface.try_with_terminal(|t| t.plain_text()) {
-                if text.contains("CMUX_LAYOUT_ARGV_OK") {
+                if text.contains("MTYX_LAYOUT_ARGV_OK") {
                     saw = true;
                     break;
                 }
@@ -2940,7 +2940,7 @@ mod tests {
         let bad_tab = LayoutTab::Pty {
             name: None,
             cwd: None,
-            command: Some(vec!["/nonexistent/cmux-layout-fail".to_string()]),
+            command: Some(vec!["/nonexistent/mtyx-layout-fail".to_string()]),
             env: BTreeMap::new(),
         };
         let doc = layout_doc_with(
@@ -3153,7 +3153,7 @@ mod tests {
     fn temp_git_repo(name: &str) -> std::path::PathBuf {
         use std::time::{SystemTime, UNIX_EPOCH};
         let dir = std::env::temp_dir().join(format!(
-            "cmux-mux-wt-{name}-{}-{}",
+            "mtyx-mux-wt-{name}-{}-{}",
             std::process::id(),
             SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
         ));
@@ -3165,7 +3165,7 @@ mod tests {
             String::from_utf8_lossy(&out.stderr)
         );
         let out = std::process::Command::new("git")
-            .args(["-c", "user.email=cmux@test", "-c", "user.name=cmux"])
+            .args(["-c", "user.email=mtyx@test", "-c", "user.name=mtyx"])
             .args(["commit", "--allow-empty", "-m", "init"])
             .current_dir(&dir)
             .output()
@@ -3341,7 +3341,7 @@ mod tests {
         assert_eq!(cwd.as_deref(), Some(repo.to_string_lossy().as_ref()), "pane cwd unchanged (AC7)");
 
         // Not-in-a-repo also propagates cleanly.
-        let bare = std::env::temp_dir().join(format!("cmux-mux-wt-bare-{}", std::process::id()));
+        let bare = std::env::temp_dir().join(format!("mtyx-mux-wt-bare-{}", std::process::id()));
         std::fs::create_dir_all(&bare).unwrap();
         mux.new_tab(Some(pane), Some(bare.to_string_lossy().into_owned()), None).unwrap();
         let err = mux.pane_worktree_create(pane, "feat-x", None).unwrap_err();

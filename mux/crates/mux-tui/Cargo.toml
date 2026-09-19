@@ -4,8 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "cmux: tmux-like terminal multiplexer TUI backed by libghostty-vt"
+description = "mattyx: tmux-like terminal multiplexer TUI backed by libghostty-vt"
 
+[[bin]]
+name = "mtyx"
+path = "src/main.rs"
+
+# Transition alias: the canonical binary is `mtyx`; `cmux` points at the
+# same entry point so existing workflows keep working untouched.
 [[bin]]
 name = "cmux"
 path = "src/main.rs"
@@ -24,3 +30,21 @@ base64.workspace = true
 libc.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Same raw Win32 bindings mux-core uses (console ctrl handler, VT
+# queries, timed stdin reads, file locking; System::IO for the
+# OVERLAPPED the LockFileEx/UnlockFileEx signatures take). Never
+# resolved or built on other targets.
+windows-sys = { version = "0.61", features = [
+    "Win32_System_Console",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+] }
+
+[dev-dependencies]
+# Windows parity integration tests drive ConPTY directly; the same
+# workspace pin the daemon runtime uses.
+portable-pty.workspace = true

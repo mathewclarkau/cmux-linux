@@ -1,14 +1,14 @@
 # Configuration
 
-`cmux` reads `~/.config/cmux/mux.json`, or `$XDG_CONFIG_HOME/cmux/mux.json` when `XDG_CONFIG_HOME` is set. Set `CMUX_MUX_CONFIG` to use another file; it takes precedence over both. Every documented key is optional. Unknown keys in the typed sections make the raw config invalid, so the TUI logs an error and falls back to defaults.
+`mtyx` reads `~/.config/mattyx/mux.json`, or `$XDG_CONFIG_HOME/mattyx/mux.json` when `XDG_CONFIG_HOME` is set. Set `MTYX_MUX_CONFIG` to use another file; it takes precedence over both. Every documented key is optional. Unknown keys in the typed sections make the raw config invalid, so the TUI logs an error and falls back to defaults.
 
-A TOML config file is also supported: `~/.config/cmux/mux.toml` (or `$XDG_CONFIG_HOME/cmux/mux.toml`) is loaded when `mux.json` is absent. When both files exist, `mux.json` wins (it is the explicit override, kept for tooling compatibility). `CMUX_MUX_CONFIG` may point at either a `.toml` or `.json` file; files with no recognised extension are sniffed by content (a leading `{` means JSON, otherwise TOML). Every documented `mux.json` key has an identical TOML equivalent; see the TOML example below.
+A TOML config file is also supported: `~/.config/mattyx/mux.toml` (or `$XDG_CONFIG_HOME/mattyx/mux.toml`) is loaded when `mux.json` is absent. When both files exist, `mux.json` wins (it is the explicit override, kept for tooling compatibility). `MTYX_MUX_CONFIG` may point at either a `.toml` or `.json` file; files with no recognised extension are sniffed by content (a leading `{` means JSON, otherwise TOML). Every documented `mux.json` key has an identical TOML equivalent; see the TOML example below.
 
 Colors accept `#rrggbb`, `#rgb`, an xterm-256 number, or a numeric string. Workspace colours additionally accept the named presets `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `cyan`, and `grey`/`gray`.
 
 ## Workspaces
 
-Define named workspaces that cmux creates or updates when the server starts. Each entry requires `name`; `color` and `icon` are optional. Icons accept `folder`, `robot`, `eye`, `gear`, `search`, `magnifier`, `lock`, `check`, one Unicode character, or a `\\u{HEX}` escape.
+Define named workspaces that mtyx creates or updates when the server starts. Each entry requires `name`; `color` and `icon` are optional. Icons accept `folder`, `robot`, `eye`, `gear`, `search`, `magnifier`, `lock`, `check`, one Unicode character, or a `\\u{HEX}` escape.
 
 ```toml
 [[workspaces]]
@@ -53,7 +53,7 @@ Bundled presets live in `mux/themes/`. Each `.toml` file supplies values for the
 | `nord` | dark | `mux/themes/nord.toml` |
 | `gruvbox-dark` | dark | `mux/themes/gruvbox-dark.toml` |
 
-Use `cmux theme list` to print available preset names and their bundled paths.
+Use `mtyx theme list` to print available preset names and their bundled paths.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
@@ -100,7 +100,7 @@ Live sidebar dragging also leaves at least 40 columns for pane content.
 
 When `browser.ephemeral` is true, it takes precedence over `browser.user_data_dir`: launched Chrome uses a fresh temporary profile, and the configured directory is not deleted.
 
-The default launched profile is `~/Library/Application Support/cmux/chrome-profile` on macOS. On non-macOS targets it is `$XDG_DATA_HOME/cmux/chrome-profile` when `XDG_DATA_HOME` is set, then `~/.local/share/cmux/chrome-profile`.
+The default launched profile is `~/Library/Application Support/mtyx/chrome-profile` on macOS. On non-macOS targets it is `$XDG_DATA_HOME/mattyx/chrome-profile` when `XDG_DATA_HOME` is set, then `~/.local/share/mattyx/chrome-profile`.
 
 ## Scrollbar
 
@@ -178,7 +178,7 @@ Chord strings can be single characters or a key name with optional `ctrl`, `cont
     "cdp_url": "http://127.0.0.1:9222",
     "discover": true,
     "discover_ports": [9222, 9223],
-    "user_data_dir": "/Users/me/Library/Application Support/cmux/chrome-profile",
+    "user_data_dir": "/Users/me/Library/Application Support/mtyx/chrome-profile",
     "ephemeral": false
   },
   "scrollbar": {
@@ -214,7 +214,7 @@ or `tab_active_bg`) are simply omitted in TOML; omitting a key means "no
 override", matching the JSON absent-key semantics.
 
 ```toml
-# cmux TOML config: the user-facing surface. When both mux.json and
+# mtyx TOML config: the user-facing surface. When both mux.json and
 # mux.toml exist, mux.json wins (it is the explicit override).
 
 [theme]
@@ -243,7 +243,7 @@ chrome_binary = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 cdp_url = "http://127.0.0.1:9222"
 discover = true
 discover_ports = [9222, 9223]
-user_data_dir = "/Users/me/Library/Application Support/cmux/chrome-profile"
+user_data_dir = "/Users/me/Library/Application Support/mtyx/chrome-profile"
 ephemeral = false
 
 [scrollbar]
@@ -269,7 +269,7 @@ detach = "d"
 
 ## Local config overlay (attach)
 
-`cmux attach --apply-local-config` layers the *local* `mux.local.toml`/`mux.json`
+`mtyx attach --apply-local-config` layers the *local* `mux.local.toml`/`mux.json`
 on top of the server-side session config, so the laptop acts as a thin client:
 the server keeps the truth for the workspace tree (panes, browser, session
 name), while the client wins for presentation chrome and key bindings (theme,
@@ -279,9 +279,9 @@ the local file are applied, everything else stays server-side.
 Resolution order for the overlay file:
 
 1. explicit `--config <path>`
-2. `$CMUX_LOCAL_CONFIG`
-3. `~/.config/cmux/mux.local.toml`
-4. `~/.config/cmux/mux.json`
+2. `$MTYX_LOCAL_CONFIG`
+3. `~/.config/mattyx/mux.local.toml`
+4. `~/.config/mattyx/mux.json`
 5. server-side config (no overlay applied)
 
 A local overlay is a typed subset of the full config: `theme`, `tabs`,
@@ -291,10 +291,10 @@ server-side `browser` block copied into the overlay will not be silently
 ignored). When an overlay applies, attach logs:
 
 ```text
-cmux: applying local config from /home/me/.config/cmux/mux.local.toml (overrides 2 keys)
+mtyx: applying local config from /home/me/.config/mattyx/mux.local.toml (overrides 2 keys)
 ```
 
-`cmux attach --show-local-config-resolution` is a dry run: it resolves and loads
+`mtyx attach --show-local-config-resolution` is a dry run: it resolves and loads
 the local file the same way, prints the resolved path plus the override count,
 then exits without attaching. Use it to sanity check which config travels to a
 remote box before connecting.

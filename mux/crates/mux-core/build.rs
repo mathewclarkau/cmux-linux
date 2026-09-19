@@ -1,12 +1,12 @@
-//! Resolves the cmux version that gets baked into the binary (issue #71).
+//! Resolves the mtyx version that gets baked into the binary (issue #71).
 //!
 //! Releases are cut by pushing a `v*` tag; nothing in-tree is bumped by
-//! hand. That is why `cmux --version` reported `0.1.0` for seventeen
+//! hand. That is why `mtyx --version` reported `0.1.0` for seventeen
 //! releases — it read `CARGO_PKG_VERSION`, and no human ever remembered
 //! to edit the manifest. The version now travels with the binary as a
 //! `rustc-env` constant resolved here at build time, in this order:
 //!
-//! 1. `$CMUX_VERSION` — set by `.github/workflows/release.yml` from the
+//! 1. `$MTYX_VERSION` — set by `.github/workflows/release.yml` from the
 //!    pushed tag. Authoritative for a release build.
 //! 2. `git describe --tags` — an exact tag gives `0.17.2`, anything
 //!    downstream gives `0.17.2-14-gabc1234`, so a dev build is never
@@ -38,6 +38,10 @@ fn main() {
     // including this file. Without the git refs below, an incremental
     // rebuild after tagging would happily reuse the stale string, which
     // is the same class of silent drift issue #71 is about.
+    println!("cargo:rerun-if-env-changed=MTYX_VERSION");
+    // cmux-era spelling still honoured (rename compat): a build that
+    // exports the old name must keep resolving the same way, and a
+    // change to either spelling must re-run this script.
     println!("cargo:rerun-if-env-changed=CMUX_VERSION");
     println!("cargo:rerun-if-changed=build.rs");
     if let Some(git_dir) = git_dir() {
@@ -52,11 +56,13 @@ fn main() {
         }
     }
 
-    println!("cargo:rustc-env=CMUX_VERSION={}", resolve_version());
+    println!("cargo:rustc-env=MTYX_VERSION={}", resolve_version());
 }
 
 fn resolve_version() -> String {
-    if let Some(explicit) = env("CMUX_VERSION") {
+    // Rename compat: $MTYX_VERSION wins, but a cmux-era $CMUX_VERSION
+    // still resolves the version when the new name is absent.
+    if let Some(explicit) = env("MTYX_VERSION").or_else(|| env("CMUX_VERSION")) {
         return normalise(&explicit);
     }
     let fallback = || env("CARGO_PKG_VERSION").unwrap_or_else(|| "unknown".to_string());
@@ -123,7 +129,7 @@ fn manifest_dir() -> PathBuf {
 }
 
 /// Treats an empty or whitespace-only value as unset — CI passes an
-/// empty `CMUX_VERSION` on non-tag runs to mean "fall through to git".
+/// empty `MTYX_VERSION` on non-tag runs to mean "fall through to git".
 fn env(key: &str) -> Option<String> {
     match std::env::var(key) {
         Ok(value) if !value.trim().is_empty() => Some(value),

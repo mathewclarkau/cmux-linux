@@ -4,7 +4,7 @@
 //! (a PTY child whose output feeds a libghostty-vt terminal). A workspace
 //! holds screens; each screen is a binary split tree of panes; each pane
 //! holds one or more tabs, and each tab is a [`Surface`]. Frontends (the
-//! bundled TUI, or the cmux app over the control socket) subscribe to
+//! bundled TUI, or the mtyx app over the control socket) subscribe to
 //! [`MuxEvent`]s and read surface state; they never own terminal state
 //! themselves, which is what makes the backend attachable.
 
@@ -25,7 +25,20 @@ pub mod layout;
 pub mod platform;
 pub mod server;
 
-/// The cmux version, resolved at build time by `build.rs` and baked
+/// Windows parity layer (job objects, console APIs, Toolhelp
+/// snapshots). Empty on non-Windows targets.
+#[cfg(windows)]
+pub mod win;
+
+/// Windows: hard-terminate one pid via `TerminateProcess` (the
+/// `kill(pid, SIGKILL)` analogue). cfg-gated re-export so mux-tui's
+/// kill-session path needs no direct windows-sys usage.
+#[cfg(windows)]
+pub fn win_terminate_pid(pid: u32) -> bool {
+    win::terminate_pid(pid)
+}
+
+/// The mtyx version, resolved at build time by `build.rs` and baked
 /// into the binary — it does not depend on git, a manifest, or anything
 /// else being present at run time. Prefer this over
 /// `env!("CARGO_PKG_VERSION")` anywhere a version is reported to a user
@@ -34,7 +47,7 @@ pub mod server;
 ///
 /// Shape is `0.17.2` for a release build, `0.17.2-14-gabc1234` (with an
 /// optional `-dirty`) for a build off a tag.
-pub const VERSION: &str = env!("CMUX_VERSION");
+pub const VERSION: &str = env!("MTYX_VERSION");
 
 pub use browser::normalize_url;
 pub use layout::{

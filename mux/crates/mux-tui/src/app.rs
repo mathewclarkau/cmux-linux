@@ -1043,7 +1043,7 @@ impl App {
                 }
             }
             AppEvent::Mux(MuxEvent::OscNotification { surface, title, body }) => {
-                let label = self.tree.tab_label(surface).unwrap_or_else(|| "cmux".to_string());
+                let label = self.tree.tab_label(surface).unwrap_or_else(|| "mtyx".to_string());
                 crate::desktop_notify::send(&label, &title, &body);
                 Ok(RenderAction::Draw)
             }
@@ -2916,7 +2916,7 @@ impl App {
         drop(_guard);
 
         // Fallback: also write via a system clipboard tool (wl-copy /
-        // xclip). OSC 52 silently fails when cmux is nested inside
+        // xclip). OSC 52 silently fails when mtyx is nested inside
         // another terminal, run over SSH to a host that doesn't forward
         // OSC 52, or the host terminal has clipboard-write=deny. Without
         // this fallback, the "Copied" toast shows but the clipboard is

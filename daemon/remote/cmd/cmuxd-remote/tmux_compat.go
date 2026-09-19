@@ -12,18 +12,18 @@ import (
 	"time"
 )
 
-// runTmuxCompat handles `cmux __tmux-compat <args...>`, translating tmux
-// commands into cmux JSON-RPC calls over the relay socket.
+// runTmuxCompat handles `mtyx __tmux-compat <args...>`, translating tmux
+// commands into mtyx JSON-RPC calls over the relay socket.
 func runTmuxCompat(socketPath string, args []string, refreshAddr func() string) int {
 	command, cmdArgs, err := splitTmuxCmd(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux __tmux-compat: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx __tmux-compat: %v\n", err)
 		return 1
 	}
 
 	rc := &rpcContext{socketPath: socketPath, refreshAddr: refreshAddr}
 	if err := dispatchTmuxCommand(rc, command, cmdArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "cmux __tmux-compat: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx __tmux-compat: %v\n", err)
 		return 1
 	}
 	return 0
@@ -195,7 +195,7 @@ func tmuxFormatContext(rc *rpcContext, workspaceId string, paneId string, surfac
 	}
 
 	ctx := map[string]string{
-		"session_name":      "cmux",
+		"session_name":      "mtyx",
 		"session_id":        "$" + tmuxStableNumericId(canonicalWsId),
 		"session_attached":  "1",
 		"window_id":         "@" + tmuxStableNumericId(canonicalWsId),
@@ -470,7 +470,7 @@ func tmuxSetWindowActive(ctx map[string]string, active bool) {
 func tmuxStableNumericId(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		raw = "cmux"
+		raw = "mtyx"
 	}
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(raw))
@@ -604,11 +604,11 @@ func stringFromAnyGo(value any) string {
 // --- Target resolution ---
 
 func tmuxCallerWorkspaceHandle() string {
-	return strings.TrimSpace(os.Getenv("CMUX_WORKSPACE_ID"))
+	return strings.TrimSpace(os.Getenv("MTYX_WORKSPACE_ID"))
 }
 
 func tmuxCallerSurfaceHandle() string {
-	return strings.TrimSpace(os.Getenv("CMUX_SURFACE_ID"))
+	return strings.TrimSpace(os.Getenv("MTYX_SURFACE_ID"))
 }
 
 func tmuxResolvedCallerWorkspaceId(rc *rpcContext) string {
@@ -643,7 +643,7 @@ func tmuxActiveWorkspaceId(rc *rpcContext) string {
 }
 
 func tmuxCallerPaneHandle() string {
-	for _, key := range []string{"TMUX_PANE", "CMUX_PANE_ID"} {
+	for _, key := range []string{"TMUX_PANE", "MTYX_PANE_ID"} {
 		v := strings.TrimSpace(os.Getenv(key))
 		if v != "" {
 			return strings.TrimPrefix(v, "%")
@@ -1194,7 +1194,7 @@ type tmuxCompatStore struct {
 
 func tmuxCompatStoreURL() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cmuxterm", "tmux-compat-store.json")
+	return filepath.Join(home, ".mattyxterm", "tmux-compat-store.json")
 }
 
 func loadTmuxCompatStore() tmuxCompatStore {
@@ -1364,7 +1364,7 @@ func tmuxWaitForSignalPath(name string) string {
 			sanitized.WriteByte('_')
 		}
 	}
-	return fmt.Sprintf("/tmp/cmux-wait-for-%s.sig", sanitized.String())
+	return fmt.Sprintf("/tmp/mtyx-wait-for-%s.sig", sanitized.String())
 }
 
 // --- Main dispatch ---

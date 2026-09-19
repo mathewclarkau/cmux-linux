@@ -1,4 +1,4 @@
-# cmux-linux — agent + contributor notes
+# mattyx — agent + contributor notes
 
 This file is for AI coding agents (Claude Code, Codex, Pi, Aider, Antigravity) **and** for human contributors. It pins the toolchain and calls out the gotchas you'll hit on a fresh build.
 
@@ -44,11 +44,11 @@ cd mux && cargo build                       # build.rs falls back to `zig` (PATH
 
 ### Versioning (issue #71) — do NOT bump a version by hand
 
-**The pushed `v*` tag is the only source of truth for a release version.** There is no manual bump step; adding one back is a regression. `cmux --version` reported `0.1.0` for seventeen tagged releases precisely because it read `CARGO_PKG_VERSION` and relied on a human remembering.
+**The pushed `v*` tag is the only source of truth for a release version.** There is no manual bump step; adding one back is a regression. `mtyx --version` reported `0.1.0` for seventeen tagged releases precisely because it read `CARGO_PKG_VERSION` and relied on a human remembering.
 
 `mux/crates/mux-core/build.rs` resolves the version at build time and bakes it in as `mux_core::VERSION` (a `rustc-env` constant, so it travels with the binary and needs no git or manifest at run time), in this order:
 
-1. **`$CMUX_VERSION`** — `release.yml` sets it from `GITHUB_REF_NAME` minus the leading `v`. Authoritative for a release.
+1. **`$MTYX_VERSION`** — `release.yml` sets it from `GITHUB_REF_NAME` minus the leading `v`. Authoritative for a release.
 2. **`git describe --tags`** — `0.17.2` on an exact tag, `0.17.2-14-gabc1234` off one, `-dirty` appended for local modifications. This is what dev builds get.
 3. **`CARGO_PKG_VERSION` + `-g<sha>`** — a repo with no tag reachable from `HEAD`. This is the *normal* case in CI, not an edge case: `actions/checkout` grafts a depth-1 clone, so no tag is an ancestor of `HEAD` even when tag refs were fetched.
 4. **`CARGO_PKG_VERSION`** — no-git fallback (source tarball). `version` in `[workspace.package]` is a floor for tiers 3 and 4 only; `release.yml` rewrites it to match the tag before building, so it never needs a manual edit.
@@ -65,11 +65,11 @@ Consequences worth knowing before you touch any of this:
 
 The binary subcommands `antigravity`, `codex`, `grok`, `pi`, `aider` (and the existing `claude` on main) all install hooks by reading a config file (or writing a wrapper/extension), merging in our entries, and writing it back. They share parsing/writing helpers and a `--uninstall`/`--global` flag pair.
 
-**Editing one of these files?** Consider a refactor PR first — there's substantial duplication across them (load-or-default JSON, write-pretty, `--uninstall`/`--global` parse, the `CMUX-START`/`CMUX-END` block rewriter). A `hook_merge` module with `load_or_default<T>`, `save_pretty<T>`, `parse_flags(&[String]) -> (bool, bool)`, and `replace_marked_block(path, start, end, content)` would collapse ~200 lines of duplication.
+**Editing one of these files?** Consider a refactor PR first — there's substantial duplication across them (load-or-default JSON, write-pretty, `--uninstall`/`--global` parse, the `MTYX-START`/`MTYX-END` block rewriter). A `hook_merge` module with `load_or_default<T>`, `save_pretty<T>`, `parse_flags(&[String]) -> (bool, bool)`, and `replace_marked_block(path, start, end, content)` would collapse ~200 lines of duplication.
 
 **Security gotchas these files all share (review checklist):**
 
-- **Agents dispatching into cmux panes should pass `--shell fish` (or `auto`) to `cmux send`** so shell-aware sanitisation resets the pane's input buffer before metacharacter-leading text (issue #35); default stays `raw`/verbatim.
+- **Agents dispatching into mtyx panes should pass `--shell fish` (or `auto`) to `mtyx send`** so shell-aware sanitisation resets the pane's input buffer before metacharacter-leading text (issue #35); default stays `raw`/verbatim.
 
 - **JSON parse errors must propagate, not silently `unwrap_or_default()`.** A schema-drift user config should not be silently overwritten with `Default::default() + our hooks`.
 - **Symlink check before write.** `fs::write` on a symlink path overwrites the *target*, not the symlink. Use `fs::symlink_metadata` to detect, or `OpenOptions::new().custom_flags(libc::O_NOFOLLOW)` to fail open.

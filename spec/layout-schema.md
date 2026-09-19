@@ -1,4 +1,4 @@
-# cmux layout JSON schema (v1)
+# mtyx layout JSON schema (v1)
 
 Issue #76 — `layout export` / `layout apply`: save a workspace's
 workspace + screen + pane-BSP + tab + agent-argv topology to a
@@ -8,26 +8,26 @@ boot it tomorrow" daily-resume workflow).
 The verbs:
 
 ```
-cmux layout-export --workspace <name-or-id> --output fleet.json
-cmux layout-export-all --output-dir ./fleet/          # one file per workspace
-cmux layout-apply --input fleet.json --workspace <name>
+mtyx layout-export --workspace <name-or-id> --output fleet.json
+mtyx layout-export-all --output-dir ./fleet/          # one file per workspace
+mtyx layout-apply --input fleet.json --workspace <name>
 ```
 
 The internal sibling of this format is `persist.rs`'s session snapshot
-(what the daemon writes to `$XDG_STATE_HOME/cmux/sessions/<name>.json`
+(what the daemon writes to `$XDG_STATE_HOME/mattyx/sessions/<name>.json`
 on every tree change). That format deliberately does **not** record tab
 commands; this one does, which is the whole point.
 
 ## Versioning
 
 ```json
-{ "schema_version": 1, "cmux_version": "0.17.2", "workspace": { ... } }
+{ "schema_version": 1, "mtyx_version": "0.17.2", "workspace": { ... } }
 ```
 
 - `schema_version` is the only gate. A file with any other version is
   **rejected loudly** by `layout-apply` (exit 1, error names the file's
   version) — never silently misparsed.
-- `cmux_version` is the exporting build's `mux_core::VERSION`
+- `mtyx_version` is the exporting build's `mux_core::VERSION`
   (informational; never `CARGO_PKG_VERSION` — see issue #71).
 - Additive, optional fields use `#[serde(default)]` liberally, so a
   future v1 writer adding a field stays readable by older v1 readers.
@@ -38,7 +38,7 @@ commands; this one does, which is the whole point.
 ```json
 {
   "schema_version": 1,
-  "cmux_version": "0.17.2",
+  "mtyx_version": "0.17.2",
   "workspace": {
     "name": "fleet",
     "color": "#ff8800",              // optional, "#rrggbb" or a named preset
@@ -84,7 +84,7 @@ ids are session-local and never stable across restarts.
 
 ### Env exclusion list
 
-`env` never contains `CMUX_MUX_SOCKET` or `CMUX_SOCKET_PATH`: those are
+`env` never contains `MTYX_MUX_SOCKET` or `MTYX_SOCKET_PATH`: those are
 auto-injected (and dual-written) into every spawn from the *applying*
 daemon's live socket path. Round-tripping a stale socket path would
 detach the restored fleet, so capture filters them out and apply
@@ -94,7 +94,7 @@ re-derives them.
 
 `PtySurface` records `SurfaceOptions.command` / `extra_env` at spawn
 time. Reading `/proc/<child>/cmdline` back at export time is not enough:
-agents started by *typing into a shell* (`cmux send`) are grandchildren
+agents started by *typing into a shell* (`mtyx send`) are grandchildren
 of the PTY child — the direct child is the shell, and the agent argv is
 unrecoverable. Consequences:
 
@@ -130,13 +130,13 @@ closing the partial workspace.
 - Split geometry (directions + ratios), names (workspace/screen/pane/
   tab), colors, icons, and selections (active screen/pane/tab) restore
   exactly.
-- Ratios are re-clamped to cmux's `[0.05, 0.95]` on apply.
+- Ratios are re-clamped to mtyx's `[0.05, 0.95]` on apply.
 - `layout-apply --workspace <name>` uses the **flag's** name, not the
   document's embedded name — one fleet file can be booted under many
   names. The workspace is created if missing (AC2); applying onto an
   existing name is refused (close it first).
 - Short-lived recorded commands close their pane when they exit — normal
-  cmux pane semantics; long-running agents should self-daemonize or
+  mtyx pane semantics; long-running agents should self-daemonize or
   `exec sleep` as their tail.
 - Browser tabs re-open their URL (the page state itself — logins,
   scroll — is not captured).
@@ -146,7 +146,7 @@ closing the partial workspace.
   anywhere else downgrades to a local shell with a loud
   `MuxEvent::Status` rather than failing silently. If the recorded
   `local_binary_path` is gone or stale, the reattach fails cleanly —
-  reconnect manually via `cmux ssh <host>`.
+  reconnect manually via `mtyx ssh <host>`.
 
 ## Composing with `--apply-local-config` (AC6)
 
@@ -155,8 +155,8 @@ chrome overlay (theme/tabs/sidebar/keys); the layout document is
 *server-side topology*. They compose without any extra flag:
 
 ```
-cmux --socket /path/to/remote.sock layout-apply --input fleet.json --workspace ops
-cmux --socket /path/to/remote.sock attach --apply-local-config
+mtyx --socket /path/to/remote.sock layout-apply --input fleet.json --workspace ops
+mtyx --socket /path/to/remote.sock attach --apply-local-config
 ```
 
 The first command rebuilds the fleet on the remote daemon; the second

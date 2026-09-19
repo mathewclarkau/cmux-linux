@@ -5,9 +5,9 @@ use crate::hook_merge;
 
 fn extension_path(global: bool) -> Option<PathBuf> {
     if global {
-        mux_core::platform::home_dir().map(|h| h.join(".pi").join("agent").join("extensions").join("cmux.ts"))
+        mux_core::platform::home_dir().map(|h| h.join(".pi").join("agent").join("extensions").join("mtyx.ts"))
     } else {
-        Some(PathBuf::from(".pi").join("extensions").join("cmux.ts"))
+        Some(PathBuf::from(".pi").join("extensions").join("mtyx.ts"))
     }
 }
 
@@ -27,7 +27,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("cmux: usage: cmux pi <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!("mtyx: usage: mtyx pi <install-hooks|install-skill> [--uninstall] [--global]");
             2
         }
     }
@@ -45,9 +45,9 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
                 eprintln!("error removing {}: {e}", path.display());
                 return 1;
             }
-            println!("Successfully removed cmux extension from {}", path.display());
+            println!("Successfully removed mtyx extension from {}", path.display());
         } else {
-            println!("No cmux extension found at {}", path.display());
+            println!("No mtyx extension found at {}", path.display());
         }
         0
     } else {
@@ -60,14 +60,14 @@ import { execFile } from "child_process";
 
 export default function cmuxExtension(pi: ExtensionAPI) {
   const report = (state: string) => {
-    const surface = process.env.CMUX_MUX_SURFACE;
+    const surface = process.env.MTYX_MUX_SURFACE;
     if (surface) {
       // Use execFile (arg array) instead of exec (shell string) so the
       // surface id is never passed through a shell parser. Defends
-      // against future callers that may set CMUX_MUX_SURFACE from
+      // against future callers that may set MTYX_MUX_SURFACE from
       // untrusted input.
       execFile(
-        "cmux",
+        "mtyx",
         ["report-agent", "--surface", surface, "--state", state, "--source", "pi"],
         (err) => {
           // Silent error
@@ -90,7 +90,7 @@ export default function cmuxExtension(pi: ExtensionAPI) {
             eprintln!("error writing {}: {e}", path.display());
             return 1;
         }
-        println!("Successfully installed cmux extension into {}", path.display());
+        println!("Successfully installed mtyx extension into {}", path.display());
         0
     }
 }
@@ -122,12 +122,12 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
             }
         };
 
-        // Strip the cmux-managed block (marker lines and inter-block
+        // Strip the mtyx-managed block (marker lines and inter-block
         // content dropped, everything outside kept). strip_marked_block
         // already trim_end()s, matching the old
         // `new_content.trim_end().to_string() + "\n"` exactly.
         let new_content =
-            hook_merge::strip_marked_block(&content, &hook_merge::CMUX_MARKERS) + "\n";
+            hook_merge::strip_marked_block(&content, &hook_merge::MTYX_MARKERS) + "\n";
         if new_content == "\n" {
             let _ = fs::remove_file(&path);
             println!("Removed empty APPEND_SYSTEM.md at {}", path.display());
@@ -136,7 +136,7 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
                 eprintln!("error writing {}: {e}", path.display());
                 return 1;
             }
-            println!("Successfully removed cmux skill from {}", path.display());
+            println!("Successfully removed mtyx skill from {}", path.display());
         }
         0
     } else {
@@ -149,7 +149,7 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
             String::new()
         };
 
-        // Strip any existing cmux block from anywhere in the file, then
+        // Strip any existing mtyx block from anywhere in the file, then
         // append a fresh block at the end (the original strip-then-append
         // behavior, NOT replace-in-place). Trailing whitespace is trimmed
         // before appending so there is a single newline before the block —
@@ -158,7 +158,7 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
         // and avoids blank-line drift on repeated installs.
         let cleaned = hook_merge::replace_marked_block(
             &content,
-            &hook_merge::CMUX_MARKERS,
+            &hook_merge::MTYX_MARKERS,
             crate::skill_content::ORCHESTRATION_SKILL,
         );
 
@@ -166,7 +166,7 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
             eprintln!("error writing {}: {e}", path.display());
             return 1;
         }
-        println!("Successfully installed cmux skill into {}", path.display());
+        println!("Successfully installed mtyx skill into {}", path.display());
         0
     }
 }

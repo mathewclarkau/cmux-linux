@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure cmux browser-frame throughput over the mux control socket."""
+"""Measure mtyx browser-frame throughput over the mux control socket."""
 
 import argparse
 import base64
@@ -13,7 +13,7 @@ import time
 
 
 def default_socket() -> str:
-    return os.path.join(tempfile.gettempdir(), f"cmux-{os.getuid()}", "main.sock")
+    return os.path.join(tempfile.gettempdir(), f"mtyx-{os.getuid()}"", "main.sock")
 
 
 class Rpc:

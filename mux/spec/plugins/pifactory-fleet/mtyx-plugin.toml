@@ -1,6 +1,6 @@
-# cmux-plugin.toml for the pifactory-fleet example plugin.
+# mtyx-plugin.toml for the pifactory-fleet example plugin.
 #
-# Conforms to the cmux-linux plugin manifest schema from PR #56
+# Conforms to the mattyx plugin manifest schema from PR #56
 # (mux/crates/mux-tui/src/plugin.rs). The schema is:
 #
 #   [plugin]
@@ -21,7 +21,7 @@
 #   - "cmux_call" must appear in `verbs` so the loader
 #     (plugin::lookup_plugin) treats this as an executable plugin.
 #   - The remaining verbs in `verbs` are BOTH the plugin's high-level
-#     verbs (the user's `cmux pifactory-fleet <verb>` argv) AND the
+#     verbs (the user's `mtyx pifactory-fleet <verb>` argv) AND the
 #     cmux_call verbs the plugin is allowed to forward to the control
 #     socket. The loader validates them against the per-call token's
 #     verb_allowlist on every cmux_call (plugin_host::validate_and_forward).
@@ -30,8 +30,8 @@
 name = "pifactory-fleet"
 entry = "bin/fleet.wasm"
 
-# High-level verbs the plugin exposes (user types after `cmux pifactory-fleet`):
-#   ping      identify the parent cmux (read-only smoke test)
+# High-level verbs the plugin exposes (user types after `mtyx pifactory-fleet`):
+#   ping      identify the parent mtyx (read-only smoke test)
 #   status    list-workspaces snapshot
 #   deploy    create a fresh fleet: one workspace per role
 #   dispatch  one new-workspace + one send (single cmux_call, see note)

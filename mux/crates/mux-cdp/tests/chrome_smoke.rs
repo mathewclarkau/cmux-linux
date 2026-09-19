@@ -1,13 +1,13 @@
 #[test]
 fn chrome_smoke_is_env_gated() {
-    if std::env::var("CMUX_MUX_BROWSER_TEST").ok().as_deref() != Some("1") {
-        eprintln!("skipping Chrome smoke test; set CMUX_MUX_BROWSER_TEST=1 to run it");
+    if std::env::var("MTYX_MUX_BROWSER_TEST").ok().as_deref() != Some("1") {
+        eprintln!("skipping Chrome smoke test; set MTYX_MUX_BROWSER_TEST=1 to run it");
         return;
     }
 
-    let Some(binary) = std::env::var_os("CMUX_MUX_BROWSER_TEST_CHROME") else {
+    let Some(binary) = std::env::var_os("MTYX_MUX_BROWSER_TEST_CHROME") else {
         eprintln!(
-            "skipping Chrome smoke test; set CMUX_MUX_BROWSER_TEST_CHROME to a Chrome binary"
+            "skipping Chrome smoke test; set MTYX_MUX_BROWSER_TEST_CHROME to a Chrome binary"
         );
         return;
     };

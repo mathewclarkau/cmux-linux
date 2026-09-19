@@ -14,12 +14,12 @@ The command schema is transport-independent. Protocol v5 implements a Unix domai
 The default socket path for a session is:
 
 ```text
-$TMPDIR/cmux-<uid>/<session>.sock
+$TMPDIR/mtyx-<uid>/<session>.sock
 ```
 
-The implementation uses Rust `std::env::temp_dir()` for `$TMPDIR`, appends `cmux-<uid>`, and then appends `<session>.sock`. The TUI exports the resolved path to child surfaces as `CMUX_MUX_SOCKET`.
+The implementation uses Rust `std::env::temp_dir()` for `$TMPDIR`, appends `mtyx-<uid>`, and then appends `<session>.sock`. The TUI exports the resolved path to child surfaces as `MTYX_MUX_SOCKET`.
 
-The `cmux` process accepts `--session <name>` to select the default socket name and `--socket <path>` to override the path.
+The `mtyx` process accepts `--session <name>` to select the default socket name and `--socket <path>` to override the path.
 
 ### Framing And Canonical Envelope
 
@@ -90,7 +90,7 @@ If auth fails, the server responds with `{"ok":false,"error":"invalid token"}` a
 HTTP is opt-in. The server binds localhost by default when enabled:
 
 ```text
-cmux --http 127.0.0.1:0
+mtyx --http 127.0.0.1:0
 ```
 
 The implementation must not bind a non-loopback address unless the user explicitly supplies one. HTTP is disabled unless a bearer token exists or the user passes `--http-insecure-localhost`.

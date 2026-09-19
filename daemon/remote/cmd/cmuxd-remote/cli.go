@@ -114,9 +114,9 @@ func init() {
 	}
 }
 
-// runCLI is the entry point for the "cli" subcommand (or busybox "cmux" invocation).
+// runCLI is the entry point for the "cli" subcommand (or busybox "mtyx" invocation).
 func runCLI(args []string) int {
-	socketPath := os.Getenv("CMUX_SOCKET_PATH")
+	socketPath := os.Getenv("MTYX_SOCKET_PATH")
 
 	// Parse global flags
 	var jsonOutput bool
@@ -125,7 +125,7 @@ func runCLI(args []string) int {
 		switch args[i] {
 		case "--socket":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "cmux: --socket requires a path")
+				fmt.Fprintln(os.Stderr, "mtyx: --socket requires a path")
 				return 2
 			}
 			socketPath = args[i+1]
@@ -161,7 +161,7 @@ doneFlags:
 		refreshAddr = readSocketAddrFile
 	}
 	if socketPath == "" {
-		fmt.Fprintln(os.Stderr, "cmux: CMUX_SOCKET_PATH not set and --socket not provided")
+		fmt.Fprintln(os.Stderr, "mtyx: MTYX_SOCKET_PATH not set and --socket not provided")
 		return 1
 	}
 
@@ -186,7 +186,7 @@ doneFlags:
 
 	// Workspace group subcommands: "workspace-group <sub>" and the canonical
 	// two-word "workspace group <sub>" both map to workspace.group.* methods,
-	// matching the macOS cmux CLI.
+	// matching the macOS mtyx CLI.
 	if cmdName == "workspace-group" {
 		return runWorkspaceGroupRelay(socketPath, cmdArgs, jsonOutput, refreshAddr)
 	}
@@ -194,7 +194,7 @@ doneFlags:
 		if len(cmdArgs) > 0 && cmdArgs[0] == "group" {
 			return runWorkspaceGroupRelay(socketPath, cmdArgs[1:], jsonOutput, refreshAddr)
 		}
-		fmt.Fprintln(os.Stderr, "cmux workspace: only the \"group\" subcommand is supported here. Use list-workspaces, new-workspace, close-workspace, or select-workspace for workspace operations.")
+		fmt.Fprintln(os.Stderr, "mtyx workspace: only the \"group\" subcommand is supported here. Use list-workspaces, new-workspace, close-workspace, or select-workspace for workspace operations.")
 		return 2
 	}
 
@@ -219,7 +219,7 @@ doneFlags:
 
 	spec, ok := commandIndex[cmdName]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "cmux: unknown command %q\n", cmdName)
+		fmt.Fprintf(os.Stderr, "mtyx: unknown command %q\n", cmdName)
 		return 2
 	}
 
@@ -236,7 +236,7 @@ func execV2(socketPath string, spec *commandSpec, args []string, jsonOutput bool
 	if !spec.noParams {
 		parsed, err := parseFlags(args, spec.flagKeys, spec.repeatKeys)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "cmux: %v\n", err)
+			fmt.Fprintf(os.Stderr, "mtyx: %v\n", err)
 			return 2
 		}
 		// Build a set of bool flags for O(1) lookup.
@@ -272,7 +272,7 @@ func execV2(socketPath string, spec *commandSpec, args []string, jsonOutput bool
 					case "false", "0", "no":
 						params[paramKey] = false
 					default:
-						fmt.Fprintf(os.Stderr, "cmux: --%s must be true or false\n", key)
+						fmt.Fprintf(os.Stderr, "mtyx: --%s must be true or false\n", key)
 						return 2
 					}
 				} else {
@@ -299,7 +299,7 @@ func execV2(socketPath string, spec *commandSpec, args []string, jsonOutput bool
 			if spec.positionalKey != "" {
 				params[spec.positionalKey] = strings.Join(parsed.positional, " ")
 			} else {
-				fmt.Fprintf(os.Stderr, "cmux: %s does not accept positional arguments\n", spec.name)
+				fmt.Fprintf(os.Stderr, "mtyx: %s does not accept positional arguments\n", spec.name)
 				return 2
 			}
 		}
@@ -314,7 +314,7 @@ func execV2(socketPath string, spec *commandSpec, args []string, jsonOutput bool
 
 	resp, err := socketRoundTripV2(socketPath, spec.v2Method, params, refreshAddr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx: %v\n", err)
 		return 1
 	}
 
@@ -326,7 +326,7 @@ func execV2(socketPath string, spec *commandSpec, args []string, jsonOutput bool
 	return 0
 }
 
-// runNewWorkspaceRelay handles "cmux new-workspace" with full flag parity to the
+// runNewWorkspaceRelay handles "mtyx new-workspace" with full flag parity to the
 // macOS CLI: --layout (JSON object), --env (repeatable KEY=VALUE), --env-file
 // (file of KEY=VALUE lines), and --command (post-create send+return).
 func runNewWorkspaceRelay(socketPath string, args []string, jsonOutput bool, refreshAddr func() string) int {
@@ -335,11 +335,11 @@ func runNewWorkspaceRelay(socketPath string, args []string, jsonOutput bool, ref
 
 	parsed, err := parseFlags(args, flagKeys, repeatKeys)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux new-workspace: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx new-workspace: %v\n", err)
 		return 2
 	}
 	if len(parsed.positional) > 0 {
-		fmt.Fprintln(os.Stderr, "cmux: new-workspace does not accept positional arguments")
+		fmt.Fprintln(os.Stderr, "mtyx: new-workspace does not accept positional arguments")
 		return 2
 	}
 
@@ -370,7 +370,7 @@ func runNewWorkspaceRelay(socketPath string, args []string, jsonOutput bool, ref
 		case "false", "0", "no":
 			params["focus"] = false
 		default:
-			fmt.Fprintf(os.Stderr, "cmux: --focus must be true or false\n")
+			fmt.Fprintf(os.Stderr, "mtyx: --focus must be true or false\n")
 			return 2
 		}
 	}
@@ -378,7 +378,7 @@ func runNewWorkspaceRelay(socketPath string, args []string, jsonOutput bool, ref
 	if val, ok := parsed.flags["layout"]; ok {
 		var layout any
 		if err := json.Unmarshal([]byte(val), &layout); err != nil {
-			fmt.Fprintf(os.Stderr, "cmux new-workspace: --layout must be valid JSON: %v\n", err)
+			fmt.Fprintf(os.Stderr, "mtyx new-workspace: --layout must be valid JSON: %v\n", err)
 			return 2
 		}
 		params["layout"] = layout
@@ -389,7 +389,7 @@ func runNewWorkspaceRelay(socketPath string, args []string, jsonOutput bool, ref
 	for _, kv := range parsed.repeated["env"] {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok {
-			fmt.Fprintf(os.Stderr, "cmux new-workspace: --env %q must be KEY=VALUE\n", kv)
+			fmt.Fprintf(os.Stderr, "mtyx new-workspace: --env %q must be KEY=VALUE\n", kv)
 			return 2
 		}
 		env[k] = v
@@ -397,7 +397,7 @@ func runNewWorkspaceRelay(socketPath string, args []string, jsonOutput bool, ref
 	if envFile, ok := parsed.flags["env-file"]; ok {
 		data, err := os.ReadFile(envFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "cmux new-workspace: --env-file: %v\n", err)
+			fmt.Fprintf(os.Stderr, "mtyx new-workspace: --env-file: %v\n", err)
 			return 2
 		}
 		for _, line := range strings.Split(string(data), "\n") {
@@ -407,7 +407,7 @@ func runNewWorkspaceRelay(socketPath string, args []string, jsonOutput bool, ref
 			}
 			k, v, ok := strings.Cut(line, "=")
 			if !ok {
-				fmt.Fprintf(os.Stderr, "cmux new-workspace: --env-file line %q must be KEY=VALUE\n", line)
+				fmt.Fprintf(os.Stderr, "mtyx new-workspace: --env-file line %q must be KEY=VALUE\n", line)
 				return 2
 			}
 			env[k] = v
@@ -419,7 +419,7 @@ func runNewWorkspaceRelay(socketPath string, args []string, jsonOutput bool, ref
 
 	resp, err := socketRoundTripV2(socketPath, "workspace.create", params, refreshAddr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx: %v\n", err)
 		return 1
 	}
 
@@ -427,22 +427,22 @@ func runNewWorkspaceRelay(socketPath string, args []string, jsonOutput bool, ref
 	if cmd, ok := parsed.flags["command"]; ok {
 		var result map[string]any
 		if err := json.Unmarshal([]byte(resp), &result); err != nil {
-			fmt.Fprintf(os.Stderr, "cmux new-workspace: --command skipped: could not parse create response: %v\n", err)
+			fmt.Fprintf(os.Stderr, "mtyx new-workspace: --command skipped: could not parse create response: %v\n", err)
 			return 1
 		}
 		surfaceID, _ := result["surface_id"].(string)
 		if surfaceID == "" {
-			fmt.Fprintf(os.Stderr, "cmux new-workspace: --command skipped: workspace.create response missing surface_id\n")
+			fmt.Fprintf(os.Stderr, "mtyx new-workspace: --command skipped: workspace.create response missing surface_id\n")
 			return 1
 		}
 		sendParams := map[string]any{"surface_id": surfaceID, "text": cmd}
 		if _, err := socketRoundTripV2(socketPath, "surface.send_text", sendParams, refreshAddr); err != nil {
-			fmt.Fprintf(os.Stderr, "cmux new-workspace: --command send failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "mtyx new-workspace: --command send failed: %v\n", err)
 			return 1
 		}
 		keyParams := map[string]any{"surface_id": surfaceID, "key": "return"}
 		if _, err := socketRoundTripV2(socketPath, "surface.send_key", keyParams, refreshAddr); err != nil {
-			fmt.Fprintf(os.Stderr, "cmux new-workspace: --command send-key failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "mtyx new-workspace: --command send-key failed: %v\n", err)
 			return 1
 		}
 	}
@@ -458,21 +458,21 @@ func runNewWorkspaceRelay(socketPath string, args []string, jsonOutput bool, ref
 // runRPC sends an arbitrary JSON-RPC method with optional JSON params.
 func runRPC(socketPath string, args []string, jsonOutput bool, refreshAddr func() string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "cmux rpc: requires a method name")
+		fmt.Fprintln(os.Stderr, "mtyx rpc: requires a method name")
 		return 2
 	}
 	method := args[0]
 	var params map[string]any
 	if len(args) > 1 {
 		if err := json.Unmarshal([]byte(args[1]), &params); err != nil {
-			fmt.Fprintf(os.Stderr, "cmux rpc: invalid JSON params: %v\n", err)
+			fmt.Fprintf(os.Stderr, "mtyx rpc: invalid JSON params: %v\n", err)
 			return 2
 		}
 	}
 
 	resp, err := socketRoundTripV2(socketPath, method, params, refreshAddr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx: %v\n", err)
 		return 1
 	}
 	fmt.Println(resp)
@@ -501,24 +501,24 @@ var workspaceGroupFlagKeys = map[string][]string{
 	"focus":         {"group", "window"},
 }
 
-// runWorkspaceGroupRelay handles "cmux workspace group <sub>" (and the
+// runWorkspaceGroupRelay handles "mtyx workspace group <sub>" (and the
 // "workspace-group" alias) by mapping each subcommand to its
-// workspace.group.* v2 method, mirroring the macOS cmux CLI flags.
+// workspace.group.* v2 method, mirroring the macOS mtyx CLI flags.
 func runWorkspaceGroupRelay(socketPath string, args []string, jsonOutput bool, refreshAddr func() string) int {
 	const subcommandHint = "list, create, ungroup, delete, rename, collapse, expand, pin, unpin, add, remove, set-anchor, new-workspace, set-color, set-icon, move, focus"
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "cmux workspace group: requires a subcommand (%s)\n", subcommandHint)
+		fmt.Fprintf(os.Stderr, "mtyx workspace group: requires a subcommand (%s)\n", subcommandHint)
 		return 2
 	}
 	sub := args[0]
 	flagKeys, ok := workspaceGroupFlagKeys[sub]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "cmux workspace group: unknown subcommand %q (%s)\n", sub, subcommandHint)
+		fmt.Fprintf(os.Stderr, "mtyx workspace group: unknown subcommand %q (%s)\n", sub, subcommandHint)
 		return 2
 	}
 
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(os.Stderr, "cmux workspace group %s: %s\n", sub, fmt.Sprintf(format, a...))
+		fmt.Fprintf(os.Stderr, "mtyx workspace group %s: %s\n", sub, fmt.Sprintf(format, a...))
 		return 2
 	}
 
@@ -661,7 +661,7 @@ func runWorkspaceGroupRelay(socketPath string, args []string, jsonOutput bool, r
 	method := "workspace.group." + strings.ReplaceAll(sub, "-", "_")
 	resp, err := socketRoundTripV2(socketPath, method, params, refreshAddr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx: %v\n", err)
 		return 1
 	}
 	if jsonOutput {
@@ -672,10 +672,10 @@ func runWorkspaceGroupRelay(socketPath string, args []string, jsonOutput bool, r
 	return 0
 }
 
-// runBrowserRelay handles "cmux browser <subcommand>" by mapping to browser.* v2 methods.
+// runBrowserRelay handles "mtyx browser <subcommand>" by mapping to browser.* v2 methods.
 func runBrowserRelay(socketPath string, args []string, jsonOutput bool, refreshAddr func() string) int {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "cmux browser: requires a subcommand (%s)\n", browserSubcommandHint())
+		fmt.Fprintf(os.Stderr, "mtyx browser: requires a subcommand (%s)\n", browserSubcommandHint())
 		return 2
 	}
 
@@ -684,14 +684,14 @@ func runBrowserRelay(socketPath string, args []string, jsonOutput bool, refreshA
 
 	spec, ok := browserCommands[sub]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "cmux browser: unknown subcommand %q\n", sub)
+		fmt.Fprintf(os.Stderr, "mtyx browser: unknown subcommand %q\n", sub)
 		return 2
 	}
 
 	params := make(map[string]any)
 	parsed, err := parseFlags(subArgs, spec.flagKeys)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux browser: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx browser: %v\n", err)
 		return 2
 	}
 	for _, key := range spec.flagKeys {
@@ -737,7 +737,7 @@ func runBrowserRelay(socketPath string, args []string, jsonOutput bool, refreshA
 
 	resp, err := socketRoundTripV2(socketPath, spec.method, params, refreshAddr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cmux: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mtyx: %v\n", err)
 		return 1
 	}
 	if jsonOutput {
@@ -814,7 +814,7 @@ func applyWorkspaceEnvFallback(params map[string]any) {
 	if _, ok := params["workspace_id"]; ok {
 		return
 	}
-	if envWs := os.Getenv("CMUX_WORKSPACE_ID"); envWs != "" {
+	if envWs := os.Getenv("MTYX_WORKSPACE_ID"); envWs != "" {
 		params["workspace_id"] = envWs
 	}
 }
@@ -823,7 +823,7 @@ func applySurfaceEnvFallback(params map[string]any) {
 	if _, ok := params["surface_id"]; ok {
 		return
 	}
-	if envSf := os.Getenv("CMUX_SURFACE_ID"); envSf != "" {
+	if envSf := os.Getenv("MTYX_SURFACE_ID"); envSf != "" {
 		params["surface_id"] = envSf
 	}
 }
@@ -958,14 +958,14 @@ func parseFlags(args []string, keys []string, repeatKeys ...[]string) (parsedFla
 	return result, nil
 }
 
-// readSocketAddrFile reads the socket address from ~/.cmux/socket_addr as a fallback
-// when CMUX_SOCKET_PATH is not set. Written by the cmux app after the relay establishes.
+// readSocketAddrFile reads the socket address from ~/.mattyx/socket_addr as a fallback
+// when MTYX_SOCKET_PATH is not set. Written by the mtyx app after the relay establishes.
 func readSocketAddrFile() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".cmux", "socket_addr"))
+	data, err := os.ReadFile(filepath.Join(home, ".mattyx", "socket_addr"))
 	if err != nil {
 		return ""
 	}
@@ -982,7 +982,7 @@ func readRelayAuthFile(socketPath string) *relayAuthState {
 		if err != nil {
 			return nil
 		}
-		data, err := os.ReadFile(filepath.Join(home, ".cmux", "relay", port+".auth"))
+		data, err := os.ReadFile(filepath.Join(home, ".mattyx", "relay", port+".auth"))
 		if err != nil {
 			return nil
 		}
@@ -999,15 +999,15 @@ func readRelayAuthFile(socketPath string) *relayAuthState {
 }
 
 func currentRelayAuth(socketPath string) *relayAuthState {
-	relayID := strings.TrimSpace(os.Getenv("CMUX_RELAY_ID"))
-	relayToken := strings.TrimSpace(os.Getenv("CMUX_RELAY_TOKEN"))
+	relayID := strings.TrimSpace(os.Getenv("MTYX_RELAY_ID"))
+	relayToken := strings.TrimSpace(os.Getenv("MTYX_RELAY_TOKEN"))
 	if relayID != "" && relayToken != "" {
 		return &relayAuthState{RelayID: relayID, RelayToken: relayToken}
 	}
 	return readRelayAuthFile(socketPath)
 }
 
-// dialSocket connects to the cmux socket. If addr contains a colon and doesn't
+// dialSocket connects to the mtyx socket. If addr contains a colon and doesn't
 // start with '/', it's treated as a TCP address (host:port); otherwise Unix socket.
 // For TCP connections, refreshAddr is used only to recover from a stale socket_addr
 // rewrite, not to poll for relay readiness.
@@ -1067,7 +1067,7 @@ func authenticateRelayConn(conn net.Conn, auth *relayAuthState) error {
 	if err := json.Unmarshal([]byte(line), &challenge); err != nil {
 		return fmt.Errorf("invalid relay auth challenge")
 	}
-	if challenge.Protocol != "cmux-relay-auth" || challenge.Version != 1 || challenge.RelayID != auth.RelayID || challenge.Nonce == "" {
+	if challenge.Protocol != "mtyx-relay-auth" || challenge.Version != 1 || challenge.RelayID != auth.RelayID || challenge.Nonce == "" {
 		return fmt.Errorf("relay auth challenge mismatch")
 	}
 
@@ -1179,7 +1179,7 @@ func randomHex(n int) string {
 }
 
 func cliUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: cmux [--socket <path>] [--json] <command> [args...]")
+	fmt.Fprintln(os.Stderr, "Usage: mtyx [--socket <path>] [--json] <command> [args...]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  ping                      Check connectivity")
@@ -1238,10 +1238,10 @@ func cliUsage() {
 	fmt.Fprintln(os.Stderr, "  workspace group <sub>     Manage sidebar workspace groups (list, create, ungroup,")
 	fmt.Fprintln(os.Stderr, "                            delete, rename, collapse, expand, pin, unpin, add, remove,")
 	fmt.Fprintln(os.Stderr, "                            set-anchor, new-workspace, set-color, set-icon, move, focus)")
-	fmt.Fprintln(os.Stderr, "  browser <sub>             Browser commands through the local cmux browser relay")
+	fmt.Fprintln(os.Stderr, "  browser <sub>             Browser commands through the local mtyx browser relay")
 	fmt.Fprintln(os.Stderr, "  claude-teams [args...]    Launch Claude Code in teammate mode")
-	fmt.Fprintln(os.Stderr, "  omo [args...]             Launch OpenCode with cmux integration")
-	fmt.Fprintln(os.Stderr, "  omx [args...]             Launch Oh My Codex with cmux integration")
-	fmt.Fprintln(os.Stderr, "  omc [args...]             Launch Oh My Claude Code with cmux integration")
+	fmt.Fprintln(os.Stderr, "  omo [args...]             Launch OpenCode with mtyx integration")
+	fmt.Fprintln(os.Stderr, "  omx [args...]             Launch Oh My Codex with mtyx integration")
+	fmt.Fprintln(os.Stderr, "  omc [args...]             Launch Oh My Claude Code with mtyx integration")
 	fmt.Fprintln(os.Stderr, "  rpc <method> [json-params] Send arbitrary JSON-RPC")
 }

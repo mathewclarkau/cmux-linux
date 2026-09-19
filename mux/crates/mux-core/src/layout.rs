@@ -31,7 +31,7 @@ impl LayoutResult {
         self.panes.iter().find(|(_, r)| r.contains(x, y)).map(|(id, _)| *id)
     }
 
-    /// Best pane in a direction from `from`, matching the cmux app's
+    /// Best pane in a direction from `from`, matching the mtyx app's
     /// bonsplit neighbor heuristic: greater perpendicular overlap wins,
     /// then smaller axial gap. No wraparound.
     pub fn neighbor(&self, from: PaneId, dx: i32, dy: i32) -> Option<PaneId> {

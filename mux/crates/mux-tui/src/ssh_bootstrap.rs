@@ -1,10 +1,10 @@
-//! `cmux ssh <host>` — creates a workspace backed by a `cmuxd-remote`
+//! `mtyx ssh <host>` — creates a workspace backed by a `cmuxd-remote`
 //! session over SSH (see `mux_core::remote_pty`).
 //!
 //! This is where the Go-toolchain-and-repo-layout knowledge lives, kept
 //! out of `mux-core` on purpose: cross-compile `daemon/remote/` for the
 //! remote's OS/arch, cache the result locally, then ask the *running*
-//! `cmux` session (over the control socket, like every other verb) to
+//! `mtyx` session (over the control socket, like every other verb) to
 //! open a remote workspace with that binary. Uploading it to the remote
 //! host and speaking `cmuxd-remote`'s wire protocol both happen
 //! server-side in `mux_core::remote_pty` — this module only gets a local
@@ -19,7 +19,7 @@ use mux_core::platform::transport;
 use serde_json::{json, Value};
 
 const USAGE: &str =
-    "usage: cmux ssh <host> [--name <workspace-name>] [--session <mux-session>] [--socket <path>]";
+    "usage: mtyx ssh <host> [--name <workspace-name>] [--session <mux-session>] [--socket <path>]";
 
 pub fn run(args: &[String]) -> i32 {
     let mut host = None;
@@ -42,7 +42,7 @@ pub fn run(args: &[String]) -> i32 {
                 i += 2;
             }
             "-h" | "--help" => {
-                eprintln!("cmux: {USAGE}");
+                eprintln!("mtyx: {USAGE}");
                 return 0;
             }
             other if host.is_none() && !other.starts_with("--") => {
@@ -50,13 +50,13 @@ pub fn run(args: &[String]) -> i32 {
                 i += 1;
             }
             other => {
-                eprintln!("cmux: unknown argument {other:?}\n{USAGE}");
+                eprintln!("mtyx: unknown argument {other:?}\n{USAGE}");
                 return 2;
             }
         }
     }
     let Some(host) = host else {
-        eprintln!("cmux: {USAGE}");
+        eprintln!("mtyx: {USAGE}");
         return 2;
     };
 
@@ -66,7 +66,7 @@ pub fn run(args: &[String]) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("cmux: {e}");
+            eprintln!("mtyx: {e}");
             1
         }
     }
@@ -81,7 +81,7 @@ fn connect(
     let local_binary_path = ensure_remote_binary(host)?;
     let mut params = json!({
         "host": host,
-        "slot": "cmux",
+        "slot": "mtyx",
         "session_id": mux_core::remote_pty::generate_session_id(),
         "local_binary_path": local_binary_path.to_string_lossy(),
     });
@@ -101,8 +101,8 @@ fn ensure_remote_binary(host: &str) -> anyhow::Result<PathBuf> {
     let (os, arch) = detect_remote_platform(host)?;
     let cache_path = cache_dir()?.join(format!("cmuxd-remote-{os}-{arch}"));
     if !cache_path.exists() {
-        eprintln!("cmux: building cmuxd-remote for {os}/{arch}...");
-        build_cmuxd_remote(&os, &arch, &cache_path)?;
+        eprintln!("mtyx: building cmuxd-remote for {os}/{arch}...");
+        build_mtyxd_remote(&os, &arch, &cache_path)?;
     }
     Ok(cache_path)
 }
@@ -134,7 +134,7 @@ fn detect_remote_platform(host: &str) -> anyhow::Result<(String, String)> {
     Ok((os.to_string(), arch.to_string()))
 }
 
-fn build_cmuxd_remote(os: &str, arch: &str, out: &Path) -> anyhow::Result<()> {
+fn build_mtyxd_remote(os: &str, arch: &str, out: &Path) -> anyhow::Result<()> {
     if let Some(dir) = out.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -151,12 +151,12 @@ fn build_cmuxd_remote(os: &str, arch: &str, out: &Path) -> anyhow::Result<()> {
         .env("GOARCH", arch)
         .env("CGO_ENABLED", "0")
         .arg("build")
-        // Issue #71: stamp the daemon with the version of the cmux that
+        // Issue #71: stamp the daemon with the version of the mtyx that
         // built it. `main.go` declares `var version = "dev"` purely as
         // the fallback for a bare `go build`; nothing else ever set it,
         // so `cmuxd-remote version` reported "dev" on every host. The
         // daemon is vendored in this repo and built from this checkout,
-        // so cmux's own version is its correct identity.
+        // so mtyx's own version is its correct identity.
         .arg(format!("-ldflags=-X main.version={}", crate::VERSION))
         .arg("-o")
         .arg(out)
@@ -183,7 +183,7 @@ fn cache_dir() -> anyhow::Result<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| mux_core::platform::home_dir().map(|h| h.join(".cache")))
         .ok_or_else(|| anyhow::anyhow!("could not resolve a cache directory ($HOME unset?)"))?;
-    Ok(base.join("cmux"))
+    Ok(base.join("mattyx"))
 }
 
 // ---------- socket client ----------
@@ -192,12 +192,14 @@ fn resolve_socket(explicit: Option<&Path>, session: Option<&str>) -> PathBuf {
     if let Some(path) = explicit {
         return path.to_path_buf();
     }
-    if let Some(path) = std::env::var_os("CMUX_MUX_SOCKET") {
+    if let Some(path) = std::env::var_os("MTYX_MUX_SOCKET") {
         if !path.is_empty() {
             return PathBuf::from(path);
         }
     }
-    mux_core::server::default_socket_path(session.unwrap_or("main"))
+    // Rename compat: fall back to a LIVE cmux-era socket when the
+    // canonical mtyx one is not up (probe only; never creates).
+    mux_core::server::client_socket_path(session.unwrap_or("main"))
 }
 
 fn send_request(socket_path: &Path, cmd: &str, mut params: Value) -> anyhow::Result<Value> {

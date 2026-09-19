@@ -187,7 +187,7 @@ mod tests {
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "cmux-wt-{name}-{}-{}",
+            "mtyx-wt-{name}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -233,8 +233,8 @@ mod tests {
         assert_eq!(path, base.join("wt").join("feat-auth"));
 
         // Absolute patterns are used verbatim after substitution.
-        let abs = resolve_worktree_path(&repo, "/var/tmp/cmux-wt/<repo>-<branch>", "x").unwrap();
-        assert_eq!(abs, Path::new("/var/tmp/cmux-wt/proj-x"));
+        let abs = resolve_worktree_path(&repo, "/var/tmp/mtyx-wt/<repo>-<branch>", "x").unwrap();
+        assert_eq!(abs, Path::new("/var/tmp/mtyx-wt/proj-x"));
         std::fs::remove_dir_all(&base).unwrap();
     }
 

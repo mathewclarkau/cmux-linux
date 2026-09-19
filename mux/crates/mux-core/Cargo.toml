@@ -18,6 +18,19 @@ libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 uds_windows.workspace = true
+# Raw Win32 bindings for the Windows parity layer (job objects, console
+# APIs, Toolhelp snapshots). 0.61 unifies with the version crossterm
+# already pins in Cargo.lock; nothing is downloaded on non-Windows hosts
+# because this section is cfg-gated and never built there.
+windows-sys = { version = "0.61", features = [
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+] }
 
 [dev-dependencies]
 tungstenite.workspace = true

@@ -25,16 +25,16 @@ use crate::{SurfaceId, SurfaceKind, WorkspaceId};
 /// being misparsed (issue #76 AC4/AC7).
 pub const LAYOUT_SCHEMA_VERSION: u32 = 1;
 
-/// Env keys cmux auto-injects (or dual-writes) into every spawn. They
+/// Env keys mtyx auto-injects (or dual-writes) into every spawn. They
 /// are re-derived from the *applying* daemon's live socket path, so they
 /// must never round-trip through an exported file (a stale
-/// `CMUX_MUX_SOCKET` would detach the restored fleet).
-const AUTO_ENV_KEYS: &[&str] = &["CMUX_MUX_SOCKET", "CMUX_SOCKET_PATH"];
+/// `MTYX_MUX_SOCKET` would detach the restored fleet).
+const AUTO_ENV_KEYS: &[&str] = &["MTYX_MUX_SOCKET", "MTYX_SOCKET_PATH"];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LayoutDocument {
     pub schema_version: u32,
-    /// The cmux build that produced the file (`mux_core::VERSION`, never
+    /// The mtyx build that produced the file (`mux_core::VERSION`, never
     /// `CARGO_PKG_VERSION` — see issue #71). Informational; not gated.
     pub cmux_version: String,
     pub workspace: LayoutWorkspace,
@@ -117,7 +117,7 @@ pub struct LayoutPane {
 
 /// One recorded tab. `pty` is the agent-bearing kind: `command` is the
 /// exact argv the tab was spawned with (recorded at spawn time; `None`
-/// for a default login shell), `env` the injected variables minus cmux's
+/// for a default login shell), `env` the injected variables minus mtyx's
 /// auto-injected socket keys.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -165,7 +165,7 @@ impl LayoutDocument {
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.schema_version != LAYOUT_SCHEMA_VERSION {
             bail!(
-                "unsupported layout schema_version {} (this cmux writes {})",
+                "unsupported layout schema_version {} (this mtyx writes {})",
                 self.schema_version,
                 LAYOUT_SCHEMA_VERSION
             );
@@ -374,14 +374,14 @@ mod tests {
     use crate::{Mux, PaneId, SpawnOverrides, SurfaceId, SurfaceOptions};
 
     /// A mux whose default spawn is a quiet, long-lived child (mirrors
-    /// `mux::tests::test_mux`), with cmux's auto-injected socket env keys
+    /// `mux::tests::test_mux`), with mtyx's auto-injected socket env keys
     /// present so capture's exclusion list is exercised.
     fn test_mux() -> Arc<Mux> {
         let opts = SurfaceOptions {
             command: Some(vec!["/bin/cat".to_string()]),
             extra_env: vec![
-                ("CMUX_MUX_SOCKET".into(), "/tmp/cmux-layout-test.sock".into()),
-                ("CMUX_SOCKET_PATH".into(), "/tmp/cmux-layout-test.sock".into()),
+                ("MTYX_MUX_SOCKET".into(), "/tmp/mtyx-layout-test.sock".into()),
+                ("MTYX_SOCKET_PATH".into(), "/tmp/mtyx-layout-test.sock".into()),
                 ("FLEET_TIER".into(), "A".into()),
             ],
             ..Default::default()
@@ -551,8 +551,8 @@ mod tests {
                 );
                 assert_eq!(env.get("FLEET_TIER").map(String::as_str), Some("A"));
                 assert_eq!(env.get("FLEET_WORKER").map(String::as_str), Some("9"));
-                assert!(!env.contains_key("CMUX_MUX_SOCKET"), "auto socket env must not be exported");
-                assert!(!env.contains_key("CMUX_SOCKET_PATH"), "auto socket env must not be exported");
+                assert!(!env.contains_key("MTYX_MUX_SOCKET"), "auto socket env must not be exported");
+                assert!(!env.contains_key("MTYX_SOCKET_PATH"), "auto socket env must not be exported");
                 assert_eq!(cwd.as_deref(), Some("/tmp"));
             }
             other => panic!("expected a pty tab, got {other:?}"),

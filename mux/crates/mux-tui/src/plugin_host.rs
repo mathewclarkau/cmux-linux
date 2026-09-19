@@ -1,7 +1,7 @@
-//! Plugin host: wasmtime runtime + cmux-call host imports.
+//! Plugin host: wasmtime runtime + mtyx-call host imports.
 //!
-//! Implements the execution layer for `cmux plugin install`. Per the
-//! design spec at `spec/cmux-plugin-execution.md`:
+//! Implements the execution layer for `mtyx plugin install`. Per the
+//! design spec at `spec/mtyx-plugin-execution.md`:
 //!
 //!   - Plugin WASM is loaded from the manifest's `entry` path.
 //!   - Three host imports are exposed to the plugin: `cmux_token`,
@@ -11,7 +11,7 @@
 //!     (plugin_name, verb_allowlist, socket_capability).
 //!   - Fuel + wall-clock timeout are enforced.
 //!
-//! This file is the security boundary: every cmux-side effect must go
+//! This file is the security boundary: every mtyx-side effect must go
 //! through `validate_and_forward`, which checks the token against
 //! the plugin's manifest before any state mutation.
 
@@ -30,7 +30,7 @@ use crate::plugin::{self, Capabilities, PluginEntry};
 /// Per-call auth token. Minted by `PluginCall::invoke`, validated by
 /// `validate_and_forward` on every `cmux_call` request.
 ///
-/// A token is a 32-byte random value hex-encoded; the cmux side keeps a
+/// A token is a 32-byte random value hex-encoded; the mtyx side keeps a
 /// `HashMap<token, TokenContext>` keyed by token and removes the entry
 /// after the call completes (or the wall-clock timeout fires).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -80,7 +80,7 @@ pub struct PluginRequest {
     pub args: serde_json::Value,
 }
 
-/// JSON shape cmux returns from `cmux_call`.
+/// JSON shape mtyx returns from `cmux_call`.
 #[derive(Debug, Serialize)]
 pub struct PluginResponse {
     pub id: u64,
@@ -92,7 +92,7 @@ pub struct PluginResponse {
 }
 
 /// Trait the host uses to forward a validated `cmux_call` request to the
-/// real cmux control socket. Production wiring in `main.rs` builds an
+/// real mtyx control socket. Production wiring in `main.rs` builds an
 /// adapter that writes a JSON request to the mux-core socket and reads
 /// the response; tests can supply an in-memory mock.
 pub trait CmuxDispatcher: Send + Sync {
@@ -172,7 +172,7 @@ fn validate_request_shape(req: &PluginRequest, token_ctx: &TokenContext, expecte
     Ok(())
 }
 
-/// Heuristic for which cmux verbs are mutating. Conservative.
+/// Heuristic for which mtyx verbs are mutating. Conservative.
 fn is_mutating_verb(verb: &str) -> bool {
     matches!(
         verb,
@@ -287,7 +287,7 @@ pub fn define_host_imports(linker: &mut Linker<HostState>) -> Result<(), String>
     // duration.
     linker
         .func_wrap(
-            "cmux",
+            "mtyx",
             "token",
             |mut caller: wasmtime::Caller<'_, HostState>| -> u64 {
                 let token = caller.data().token.as_str().to_string();
@@ -303,7 +303,7 @@ pub fn define_host_imports(linker: &mut Linker<HostState>) -> Result<(), String>
     // cmux_log(level: i32, ptr: i32, len: i32) -> ()
     linker
         .func_wrap(
-            "cmux",
+            "mtyx",
             "log",
             |mut caller: wasmtime::Caller<'_, HostState>, level: i32, ptr: i32, len: i32| {
                 let mem = match caller.get_export("memory") {
@@ -336,7 +336,7 @@ pub fn define_host_imports(linker: &mut Linker<HostState>) -> Result<(), String>
     // cmux_call(req_ptr, req_len, out_ptr, out_cap) -> i32 (response length).
     linker
         .func_wrap(
-            "cmux",
+            "mtyx",
             "call",
             |mut caller: wasmtime::Caller<'_, HostState>,
              req_ptr: i32,
@@ -469,9 +469,9 @@ pub fn invoke(
 
     // Project-conventional entrypoint first, fall back to standard WASM `_start`.
     let func_result = instance
-        .get_typed_func::<(), ()>(&mut store, "_cmux_plugin_main")
+        .get_typed_func::<(), ()>(&mut store, "_mtyx_plugin_main")
         .or_else(|_| instance.get_typed_func::<(), ()>(&mut store, "_start"))
-        .map_err(|e| PluginError::InstantiationFailed(format!("missing _cmux_plugin_main or _start: {e}")))
+        .map_err(|e| PluginError::InstantiationFailed(format!("missing _mtyx_plugin_main or _start: {e}")))
         .and_then(|f| {
             f.call(&mut store, ()).map_err(|e| {
                 // In wasmtime 27, `func.call` returns `anyhow::Result`.
@@ -492,7 +492,7 @@ pub fn invoke(
 }
 
 /// Production `CmuxDispatcher` implementation that writes
-/// `cmux_call` requests to the real cmux control socket and reads
+/// `cmux_call` requests to the real mtyx control socket and reads
 /// back the response. Constructed per-invocation so the socket can be
 /// lazy-opened (errors surface as `PluginError::Trap` with the
 /// underlying connect/write/read error).

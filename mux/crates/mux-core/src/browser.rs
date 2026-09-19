@@ -348,7 +348,7 @@ fn scaled_pixels(pane_px_w: u32, pane_px_h: u32, scale: f64) -> (u32, u32) {
 fn runtime_endpoint(
     opts: &SurfaceOptions,
 ) -> anyhow::Result<(String, Option<Chrome>, BrowserSource)> {
-    if let Ok(url) = std::env::var("CMUX_MUX_CDP_URL") {
+    if let Ok(url) = std::env::var("MTYX_MUX_CDP_URL") {
         if !url.trim().is_empty() {
             return Ok((resolve_browser_ws_url(&url)?, None, BrowserSource::External));
         }
@@ -367,7 +367,7 @@ fn runtime_endpoint(
         }
     }
 
-    if std::env::var_os("CMUX_MUX_CDP_DEBUG").is_some() {
+    if std::env::var_os("MTYX_MUX_CDP_DEBUG").is_some() {
         eprintln!(
             "cdp: no external endpoint (discover={}); launching chrome",
             opts.browser_discover
@@ -634,7 +634,7 @@ impl BrowserSurface {
 
     pub fn resize(&self, cols: u16, rows: u16) {
         if let Err(e) = self.try_resize(cols, rows) {
-            eprintln!("cmux: browser resize failed for surface {}: {e}", self.meta.id);
+            eprintln!("mtyx: browser resize failed for surface {}: {e}", self.meta.id);
         }
     }
 
@@ -1283,7 +1283,7 @@ mod tests {
         ready_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
         let opts = SurfaceOptions {
-            chrome_binary: Some("/definitely/missing/cmux-test-chrome".to_string()),
+            chrome_binary: Some("/definitely/missing/mtyx-test-chrome".to_string()),
             browser_discover_ports: vec![port],
             ..Default::default()
         };

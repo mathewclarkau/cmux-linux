@@ -20,7 +20,7 @@ FIXTURES = Path(__file__).resolve().with_name("fixtures.json")
 
 sys.path.insert(0, str(PYTHON_BINDING))
 
-from cmux_mux_client import CommandError, MuxClient, TimeoutError as MuxTimeoutError  # noqa: E402
+from mtyx_mux_client import CommandError, MuxClient, TimeoutError as MuxTimeoutError  # noqa: E402
 
 
 class FixtureFailure(Exception):
@@ -58,7 +58,7 @@ def main() -> int:
 
 
 def start_server() -> Dict[str, Any]:
-    binary = MUX_DIR / "target" / "debug" / "cmux"
+    binary = MUX_DIR / "target" / "debug" / "mtyx"
     if not binary.exists():
         raise SystemExit(f"missing server binary: {binary}; run cargo build -p mux-tui from mux/")
     session = f"binding-conf-{os.getpid()}"

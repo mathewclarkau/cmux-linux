@@ -40,7 +40,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("cmux: usage: cmux antigravity <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!("mtyx: usage: mtyx antigravity <install-hooks|install-skill> [--uninstall] [--global]");
             2
         }
     }
@@ -73,7 +73,7 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
                 return 1;
             }
         };
-        config.hooks.retain(|h| !h.command.contains("cmux report-agent"));
+        config.hooks.retain(|h| !h.command.contains("mtyx report-agent"));
 
         if let Err(e) = hook_merge::save_pretty(&path, &config) {
             match e {
@@ -87,7 +87,7 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
                 }
             }
         }
-        println!("Successfully removed cmux hooks from {}", path.display());
+        println!("Successfully removed mtyx hooks from {}", path.display());
         0
     } else {
         if let Some(parent) = path.parent() {
@@ -113,21 +113,21 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             Err(hook_merge::LoadError::NotFound) => AntigravityHooksConfig::default(),
         };
 
-        // Remove any existing cmux hooks to avoid duplicates
-        config.hooks.retain(|h| !h.command.contains("cmux report-agent"));
+        // Remove any existing mtyx hooks to avoid duplicates
+        config.hooks.retain(|h| !h.command.contains("mtyx report-agent"));
 
         // Add fresh ones
         config.hooks.push(AntigravityHook {
             event: "PreToolUse".to_string(),
-            command: "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state working --source antigravity".to_string(),
+            command: "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state working --source antigravity".to_string(),
         });
         config.hooks.push(AntigravityHook {
             event: "PostToolUse".to_string(),
-            command: "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state idle --source antigravity".to_string(),
+            command: "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state idle --source antigravity".to_string(),
         });
         config.hooks.push(AntigravityHook {
             event: "Stop".to_string(),
-            command: "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state done --source antigravity".to_string(),
+            command: "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state done --source antigravity".to_string(),
         });
 
         if let Err(e) = hook_merge::save_pretty(&path, &config) {
@@ -142,16 +142,16 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
                 }
             }
         }
-        println!("Successfully installed cmux hooks into {}", path.display());
+        println!("Successfully installed mtyx hooks into {}", path.display());
         0
     }
 }
 
 fn skill_path(global: bool) -> Option<PathBuf> {
     if global {
-        mux_core::platform::home_dir().map(|h| h.join(".gemini").join("antigravity-cli").join("skills").join("cmux-orchestration").join("SKILL.md"))
+        mux_core::platform::home_dir().map(|h| h.join(".gemini").join("antigravity-cli").join("skills").join("mtyx-orchestration").join("SKILL.md"))
     } else {
-        Some(PathBuf::from(".agents").join("skills").join("cmux-orchestration").join("SKILL.md"))
+        Some(PathBuf::from(".agents").join("skills").join("mtyx-orchestration").join("SKILL.md"))
     }
 }
 
@@ -173,9 +173,9 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
                     let _ = fs::remove_dir(grandparent);
                 }
             }
-            println!("Successfully removed cmux skill from {}", path.display());
+            println!("Successfully removed mtyx skill from {}", path.display());
         } else {
-            println!("No cmux skill found at {}", path.display());
+            println!("No mtyx skill found at {}", path.display());
         }
         0
     } else {
@@ -186,7 +186,7 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
             eprintln!("error writing {}: {e}", path.display());
             return 1;
         }
-        println!("Successfully installed cmux skill into {}", path.display());
+        println!("Successfully installed mtyx skill into {}", path.display());
         0
     }
 }

@@ -62,7 +62,7 @@ enum LayoutSnapshot {
 /// restore happens inside `mux-core`, with no Go toolchain access of its
 /// own, so reusing the same cached path is the only option; if that file
 /// is gone or stale, `open_remote_pty`'s upload step fails cleanly and
-/// the user reconnects manually via `cmux ssh <host>`.
+/// the user reconnects manually via `mtyx ssh <host>`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RemoteTabSnapshot {
     host: String,
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn shell_quote_handles_spaces_and_single_quotes() {
-        assert_eq!(shell_quote("/home/matc/Projects/cmux-linux"), "'/home/matc/Projects/cmux-linux'");
+        assert_eq!(shell_quote("/home/matc/Projects/mtyx-linux"), "'/home/matc/Projects/mtyx-linux'");
         assert_eq!(shell_quote("/tmp/a b"), "'/tmp/a b'");
         assert_eq!(shell_quote("/tmp/it's"), "'/tmp/it'\\''s'");
     }

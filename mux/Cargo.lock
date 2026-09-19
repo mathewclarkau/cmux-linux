@@ -1186,6 +1186,7 @@ dependencies = [
  "serde_json",
  "tungstenite",
  "uds_windows",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1198,6 +1199,7 @@ dependencies = [
  "ghostty-vt",
  "libc",
  "mux-core",
+ "portable-pty",
  "ratatui",
  "serde",
  "serde_json",
@@ -1205,6 +1207,7 @@ dependencies = [
  "unicode-width 0.2.0",
  "wasmtime",
  "wasmtime-wasi",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -1,8 +1,8 @@
-//! pifactory-fleet: wasm32-unknown-unknown adapter for cmux-linux plugins.
+//! pifactory-fleet: wasm32-unknown-unknown adapter for mattyx plugins.
 //!
 //! This is the runtime artifact for the pifactory-fleet example plugin
 //! shipped at `mux/spec/plugins/pifactory-fleet/`. It compiles to
-//! `bin/fleet.wasm` (via `build.sh`) and the cmux loader
+//! `bin/fleet.wasm` (via `build.sh`) and the mtyx loader
 //! (`mux/crates/mux-tui/src/plugin_host.rs`) instantiates it with the
 //! manifest's `fuel`, `memory_mib`, and `max_runtime_ms` budgets.
 //!
@@ -12,11 +12,11 @@
 //! calling operator, not by the plugin. This mirrors the
 //! `cmux_dispatch_worker_pane*` family of helpers in
 //! `scripts/cmux-panel-lib.sh` (the pifactory repo's shell glue),
-//! which is itself a thin shell wrapper around the cmux CLI verbs.
+//! which is itself a thin shell wrapper around the mtyx CLI verbs.
 //!
 //! ## ABI
 //!
-//! The cmux loader exposes three host imports (see
+//! The mtyx loader exposes three host imports (see
 //! `mux/crates/mux-tui/src/plugin_host.rs::define_host_imports`):
 //!
 //! ```text
@@ -57,14 +57,14 @@
 use core::panic::PanicInfo;
 use core::ptr;
 
-// ---------- cmux host imports ----------
+// ---------- mtyx host imports ----------
 
 extern "C" {
     /// Returns a packed pointer/length to the per-call auth token
     /// bytes. The plugin does NOT need to free the memory; the host
     /// does after the call.
     fn cmux_token() -> u64;
-    /// Sends a JSON request to cmux through the dispatcher. Returns
+    /// Sends a JSON request to mtyx through the dispatcher. Returns
     /// the response byte length on success (>=0), or -1 on error
     /// (out-of-cap, invalid JSON, validation failure, etc.). On a
     /// validation failure the host writes a structured error response
@@ -297,7 +297,7 @@ fn log_info_bytes(ptr: *const u8, len: usize) {
     unsafe { cmux_log(0, ptr as i32, len as i32) }
 }
 
-/// Read the cmux per-call auth token into `out`. The host mints a
+/// Read the mtyx per-call auth token into `out`. The host mints a
 /// fresh token at every plugin invocation (see
 /// `plugin_host::mint_token`) and validates every cmux_call against
 /// it; the plugin doesn't *need* the token (the host validates
@@ -317,7 +317,7 @@ fn read_token_into(out: &mut [u8; 64]) -> usize {
 
 // ---------- entrypoint ----------
 
-/// Plugin entrypoint. The cmux loader tries `_cmux_plugin_main`
+/// Plugin entrypoint. The mtyx loader tries `_cmux_plugin_main`
 /// first (project convention) and falls back to `_start` if absent
 /// (`mux/crates/mux-tui/src/plugin_host.rs::invoke`). Exporting
 /// `_cmux_plugin_main` matches what the README documents.
@@ -328,7 +328,7 @@ fn read_token_into(out: &mut [u8; 64]) -> usize {
 #[no_mangle]
 pub extern "C" fn _cmux_plugin_main() {
     // Surface the per-call token to cmux_log so a developer
-    // running the plugin outside of `cmux` can confirm token mint
+    // running the plugin outside of `mtyx` can confirm token mint
     // is firing. The token itself is 32 hex chars; the loader
     // produces it from `mint_token()` and discards it after this
     // call returns.

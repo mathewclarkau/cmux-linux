@@ -140,7 +140,7 @@ func TestTmuxShellCommandText(t *testing.T) {
 
 func TestTmuxWaitForSignalPath(t *testing.T) {
 	path := tmuxWaitForSignalPath("test-signal")
-	if !strings.HasPrefix(path, "/tmp/cmux-wait-for-") {
+	if !strings.HasPrefix(path, "/tmp/mtyx-wait-for-") {
 		t.Errorf("unexpected path prefix: %s", path)
 	}
 	if !strings.HasSuffix(path, ".sig") {
@@ -187,25 +187,25 @@ func TestTmuxVersion(t *testing.T) {
 
 func TestTmuxDisplayReporterFormatFields(t *testing.T) {
 	origHome := os.Getenv("HOME")
-	origWorkspace := os.Getenv("CMUX_WORKSPACE_ID")
-	origSurface := os.Getenv("CMUX_SURFACE_ID")
+	origWorkspace := os.Getenv("MTYX_WORKSPACE_ID")
+	origSurface := os.Getenv("MTYX_SURFACE_ID")
 	origPane := os.Getenv("TMUX_PANE")
 	os.Setenv("HOME", t.TempDir())
-	os.Setenv("CMUX_WORKSPACE_ID", "workspace:1")
-	os.Setenv("CMUX_SURFACE_ID", "surface:1")
+	os.Setenv("MTYX_WORKSPACE_ID", "workspace:1")
+	os.Setenv("MTYX_SURFACE_ID", "surface:1")
 	leaderPaneToken := "%" + tmuxStableNumericId("33333333-3333-4333-8333-333333333333")
 	os.Setenv("TMUX_PANE", leaderPaneToken)
 	defer func() {
 		os.Setenv("HOME", origHome)
 		if origWorkspace != "" {
-			os.Setenv("CMUX_WORKSPACE_ID", origWorkspace)
+			os.Setenv("MTYX_WORKSPACE_ID", origWorkspace)
 		} else {
-			os.Unsetenv("CMUX_WORKSPACE_ID")
+			os.Unsetenv("MTYX_WORKSPACE_ID")
 		}
 		if origSurface != "" {
-			os.Setenv("CMUX_SURFACE_ID", origSurface)
+			os.Setenv("MTYX_SURFACE_ID", origSurface)
 		} else {
-			os.Unsetenv("CMUX_SURFACE_ID")
+			os.Unsetenv("MTYX_SURFACE_ID")
 		}
 		if origPane != "" {
 			os.Setenv("TMUX_PANE", origPane)
@@ -261,8 +261,8 @@ func TestTmuxDisplayReporterFormatFields(t *testing.T) {
 	}
 
 	assertTmuxFieldMatch(t, values["session_id"], `^\$[0-9]+$`, "session_id")
-	if values["session_name"] != "cmux" {
-		t.Fatalf("session_name = %q, want cmux", values["session_name"])
+	if values["session_name"] != "mtyx" {
+		t.Fatalf("session_name = %q, want mtyx", values["session_name"])
 	}
 	assertTmuxFieldMatch(t, values["window_index"], `^[0-9]+$`, "window_index")
 	assertTmuxFieldMatch(t, values["window_id"], `^@[0-9]+$`, "window_id")
@@ -414,9 +414,9 @@ func TestCreateOMOShimDir(t *testing.T) {
 func TestConfigureAgentEnvironment(t *testing.T) {
 	// Save and restore env vars
 	envKeys := []string{
-		"CMUX_CLAUDE_TEAMS_CMUX_BIN", "PATH", "TMUX", "TMUX_PANE",
-		"TERM", "CMUX_SOCKET_PATH", "TERM_PROGRAM",
-		"CMUX_WORKSPACE_ID", "CMUX_SURFACE_ID",
+		"MTYX_CLAUDE_TEAMS_MTYX_BIN", "PATH", "TMUX", "TMUX_PANE",
+		"TERM", "MTYX_SOCKET_PATH", "TERM_PROGRAM",
+		"MTYX_WORKSPACE_ID", "MTYX_SURFACE_ID",
 		"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "COLORTERM",
 	}
 	saved := make(map[string]string)
@@ -445,9 +445,9 @@ func TestConfigureAgentEnvironment(t *testing.T) {
 			paneId:      "pane-456",
 			surfaceId:   "surf-789",
 		},
-		tmuxPathPrefix: "cmux-claude-teams",
-		cmuxBinEnvVar:  "CMUX_CLAUDE_TEAMS_CMUX_BIN",
-		termEnvVar:     "CMUX_CLAUDE_TEAMS_TERM",
+		tmuxPathPrefix: "mtyx-claude-teams",
+		mtyxBinEnvVar:  "MTYX_CLAUDE_TEAMS_MTYX_BIN",
+		termEnvVar:     "MTYX_CLAUDE_TEAMS_TERM",
 		extraEnv: map[string]string{
 			"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
 		},
@@ -468,19 +468,19 @@ func TestConfigureAgentEnvironment(t *testing.T) {
 		t.Errorf("TMUX_PANE = %q, want %s", os.Getenv("TMUX_PANE"), wantPane)
 	}
 	// Verify socket path
-	if os.Getenv("CMUX_SOCKET_PATH") != "127.0.0.1:54321" {
-		t.Errorf("CMUX_SOCKET_PATH = %q", os.Getenv("CMUX_SOCKET_PATH"))
+	if os.Getenv("MTYX_SOCKET_PATH") != "127.0.0.1:54321" {
+		t.Errorf("MTYX_SOCKET_PATH = %q", os.Getenv("MTYX_SOCKET_PATH"))
 	}
 	// Verify COLORTERM is set for truecolor support
 	if os.Getenv("COLORTERM") != "truecolor" {
 		t.Errorf("COLORTERM = %q, want truecolor", os.Getenv("COLORTERM"))
 	}
 	// Verify workspace/surface IDs
-	if os.Getenv("CMUX_WORKSPACE_ID") != "ws-abc" {
-		t.Errorf("CMUX_WORKSPACE_ID = %q", os.Getenv("CMUX_WORKSPACE_ID"))
+	if os.Getenv("MTYX_WORKSPACE_ID") != "ws-abc" {
+		t.Errorf("MTYX_WORKSPACE_ID = %q", os.Getenv("MTYX_WORKSPACE_ID"))
 	}
-	if os.Getenv("CMUX_SURFACE_ID") != "surf-789" {
-		t.Errorf("CMUX_SURFACE_ID = %q", os.Getenv("CMUX_SURFACE_ID"))
+	if os.Getenv("MTYX_SURFACE_ID") != "surf-789" {
+		t.Errorf("MTYX_SURFACE_ID = %q", os.Getenv("MTYX_SURFACE_ID"))
 	}
 	// Verify extra env
 	if os.Getenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS") != "1" {

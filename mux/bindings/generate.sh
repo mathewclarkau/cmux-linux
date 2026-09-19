@@ -32,9 +32,9 @@ assemble_prompt() {
   fi
 
   {
-    echo "# cmux $lang binding generation"
+    echo "# mtyx $lang binding generation"
     echo
-    echo "You are generating the $lang binding for cmux."
+    echo "You are generating the $lang binding for mtyx."
     echo
     echo "Rules:"
     echo "- Emit files only under $out_dir/."

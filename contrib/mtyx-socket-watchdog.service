@@ -1,5 +1,5 @@
 # Optional systemd --user unit for environments that prefer a supervised
-# companion over the in-process `cmux socket-watchdog` spawn (issue #27).
+# companion over the in-process `mtyx socket-watchdog` spawn (issue #27).
 #
 # The headless daemon already auto-spawns a detached watchdog on start, so
 # most users do not need this unit. Install it only if you want systemd to
@@ -8,19 +8,19 @@
 #
 # Example (per session):
 #   systemctl --user import-environment
-#   systemctl --user set-environment CMUX_WATCH_PID=12345 CMUX_WATCH_SOCKET=/run/user/$UID/cmux-$UID/main.sock
-#   systemctl --user start cmux-socket-watchdog@main.service
+#   systemctl --user set-environment MTYX_WATCH_PID=12345 MTYX_WATCH_SOCKET=/run/user/$UID/mtyx-/main.sock
+#   systemctl --user start mtyx-socket-watchdog@main.service
 #
 # Or rely on the daemon's built-in spawn and leave this file as documentation.
 
 [Unit]
-Description=cmux socket watchdog for %i
-Documentation=https://github.com/mathewclarkau/cmux-linux/issues/27
+Description=mtyx socket watchdog for %i
+Documentation=https://github.com/mathewclarkau/mattyx/issues/27
 
 [Service]
 Type=simple
-# Expect CMUX_WATCH_PID and CMUX_WATCH_SOCKET in the environment.
-ExecStart=/usr/bin/env cmux socket-watchdog --pid ${CMUX_WATCH_PID} --socket ${CMUX_WATCH_SOCKET}
+# Expect MTYX_WATCH_PID and MTYX_WATCH_SOCKET in the environment.
+ExecStart=/usr/bin/env mtyx socket-watchdog --pid ${MTYX_WATCH_PID} --socket ${MTYX_WATCH_SOCKET}
 Restart=on-failure
 RestartSec=1
 

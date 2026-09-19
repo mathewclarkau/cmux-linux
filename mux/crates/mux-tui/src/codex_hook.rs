@@ -45,7 +45,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("cmux: usage: cmux codex <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!("mtyx: usage: mtyx codex <install-hooks|install-skill> [--uninstall] [--global]");
             2
         }
     }
@@ -78,7 +78,7 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             }
         };
         for hooks_list in config.hooks.values_mut() {
-            hooks_list.retain(|h| !h.command.contains("cmux report-agent"));
+            hooks_list.retain(|h| !h.command.contains("mtyx report-agent"));
         }
         // Retain only events that still have hooks
         config.hooks.retain(|_, v| !v.is_empty());
@@ -95,7 +95,7 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
                 }
             }
         }
-        println!("Successfully removed cmux hooks from {}", hooks_path.display());
+        println!("Successfully removed mtyx hooks from {}", hooks_path.display());
         0
     } else {
         if let Some(parent) = hooks_path.parent() {
@@ -168,21 +168,21 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             Err(hook_merge::LoadError::NotFound) => CodexHooksConfig::default(),
         };
 
-        // Clear existing cmux hooks
+        // Clear existing mtyx hooks
         for hooks_list in config.hooks.values_mut() {
-            hooks_list.retain(|h| !h.command.contains("cmux report-agent"));
+            hooks_list.retain(|h| !h.command.contains("mtyx report-agent"));
         }
 
         let new_hooks = vec![
-            ("PreToolUse", "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state working --source codex"),
-            ("PostToolUse", "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state idle --source codex"),
-            ("Stop", "cmux report-agent --surface \"$CMUX_MUX_SURFACE\" --state done --source codex"),
+            ("PreToolUse", "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state working --source codex"),
+            ("PostToolUse", "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state idle --source codex"),
+            ("Stop", "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state done --source codex"),
         ];
 
         for (event, command) in new_hooks {
             config.hooks.entry(event.to_string()).or_insert_with(Vec::new).push(CodexHook {
                 command: command.to_string(),
-                status_message: Some("Reporting state to cmux".to_string()),
+                status_message: Some("Reporting state to mtyx".to_string()),
             });
         }
 
@@ -198,16 +198,16 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
                 }
             }
         }
-        println!("Successfully installed cmux hooks into {}", hooks_path.display());
+        println!("Successfully installed mtyx hooks into {}", hooks_path.display());
         0
     }
 }
 
 fn skill_path(global: bool) -> Option<PathBuf> {
     if global {
-        mux_core::platform::home_dir().map(|h| h.join(".codex").join("skills").join("cmux-orchestration").join("SKILL.md"))
+        mux_core::platform::home_dir().map(|h| h.join(".codex").join("skills").join("mtyx-orchestration").join("SKILL.md"))
     } else {
-        Some(PathBuf::from(".agents").join("skills").join("cmux-orchestration").join("SKILL.md"))
+        Some(PathBuf::from(".agents").join("skills").join("mtyx-orchestration").join("SKILL.md"))
     }
 }
 
@@ -229,9 +229,9 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
                     let _ = fs::remove_dir(grandparent);
                 }
             }
-            println!("Successfully removed cmux skill from {}", path.display());
+            println!("Successfully removed mtyx skill from {}", path.display());
         } else {
-            println!("No cmux skill found at {}", path.display());
+            println!("No mtyx skill found at {}", path.display());
         }
         0
     } else {
@@ -242,7 +242,7 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
             eprintln!("error writing {}: {e}", path.display());
             return 1;
         }
-        println!("Successfully installed cmux skill into {}", path.display());
+        println!("Successfully installed mtyx skill into {}", path.display());
         0
     }
 }

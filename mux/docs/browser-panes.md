@@ -8,14 +8,14 @@ Browser panes need a local CDP endpoint or a launchable Chrome/Chromium-family b
 
 Endpoint selection order:
 
-1. `CMUX_MUX_CDP_URL`
+1. `MTYX_MUX_CDP_URL`
 2. `browser.cdp_url` in `mux.json`
 3. Discovery on `browser.discover_ports` when `browser.discover` is true
 4. A launched Chrome using `browser.chrome_binary` or binary discovery in `mux-cdp`
 
 Binary discovery checks configured paths, known macOS and Linux Chrome-family paths, then `PATH` names such as `google-chrome`, `chromium`, `brave-browser`, and `microsoft-edge`.
 
-Set `CMUX_MUX_CDP_DEBUG` to print browser runtime debug messages to stderr.
+Set `MTYX_MUX_CDP_DEBUG` to print browser runtime debug messages to stderr.
 
 ## Creating Panes
 
@@ -41,11 +41,11 @@ Left click, drag, release, and wheel events inside browser content are forwarded
 
 ## Profiles and Lifecycle
 
-Browser panes share one browser runtime per mux session. Closing a browser tab closes only its target. Mux shutdown kills Chrome only when cmux launched it.
+Browser panes share one browser runtime per mux session. Closing a browser tab closes only its target. Mux shutdown kills Chrome only when mtyx launched it.
 
-Launched Chrome uses a persistent cmux profile unless `browser.ephemeral` is true. `browser.user_data_dir` overrides the persistent profile path. When ephemeral mode is true, Chrome uses a temporary profile that is deleted on shutdown and ignores `browser.user_data_dir`.
+Launched Chrome uses a persistent mtyx profile unless `browser.ephemeral` is true. `browser.user_data_dir` overrides the persistent profile path. When ephemeral mode is true, Chrome uses a temporary profile that is deleted on shutdown and ignores `browser.user_data_dir`.
 
-The default launched profile is `~/Library/Application Support/cmux/chrome-profile` on macOS. On non-macOS targets it is `$XDG_DATA_HOME/cmux/chrome-profile` when `XDG_DATA_HOME` is set, then `~/.local/share/cmux/chrome-profile`.
+The default launched profile is `~/Library/Application Support/mtyx/chrome-profile` on macOS. On non-macOS targets it is `$XDG_DATA_HOME/mattyx/chrome-profile` when `XDG_DATA_HOME` is set, then `~/.local/share/mattyx/chrome-profile`.
 
 ## Limitations
 

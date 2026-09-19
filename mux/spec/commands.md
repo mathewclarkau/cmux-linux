@@ -1,6 +1,6 @@
 # Command Contract
 
-This file specifies the JSON command contract for the cmux protocol. Implemented commands match protocol v6 in `mux/crates/mux-core/src/server.rs`. Proposed commands are future protocol v7 design.
+This file specifies the JSON command contract for the mtyx protocol. Implemented commands match protocol v6 in `mux/crates/mux-core/src/server.rs`. Proposed commands are future protocol v7 design.
 
 ## Notation
 
@@ -94,14 +94,14 @@ The `dead` pane variant is serialized by the v5 server only if the tree referenc
 | status | implemented |
 | since  | protocol 5  |
 
-Returns process and protocol metadata for the connected mux server. Clients use this command to verify that the socket endpoint is cmux and to check feature compatibility.
+Returns process and protocol metadata for the connected mux server. Clients use this command to verify that the socket endpoint is mtyx and to check feature compatibility.
 
 Params: none.
 
 Result:
 
 ```text
-object{app:"cmux",version:string,protocol:uint32,session:string,pid:uint32}
+object{app:"mtyx",version:string,protocol:uint32,session:string,pid:uint32}
 ```
 
 Errors:
@@ -116,7 +116,7 @@ CLI mapping:
 | ------------ | ------------------------------------------------------ |
 | Verb         | `identify`                                             |
 | Flags        | none                                                   |
-| Plain stdout | `cmux session=<session> protocol=<protocol> pid=<pid>` |
+| Plain stdout | `mtyx session=<session> protocol=<protocol> pid=<pid>` |
 | JSON stdout  | exact result object                                    |
 | Exit codes   | common                                                 |
 
@@ -124,7 +124,7 @@ Example:
 
 ```json
 {"id":1,"cmd":"identify"}
-{"id":1,"ok":true,"data":{"app":"cmux","version":"0.1.0","protocol":5,"session":"main","pid":12345}}
+{"id":1,"ok":true,"data":{"app":"mtyx","version":"0.1.0","protocol":5,"session":"main","pid":12345}}
 ```
 
 ### list-workspaces
@@ -176,7 +176,7 @@ Example:
 | status | implemented           |
 | since  | protocol 6            |
 
-Returns the server process's resolved presentation chrome (theme, tabs, sidebar, keys) so a thin-client `cmux attach --apply-local-config` can fetch it and layer the laptop's local `Overlay` on top of the _server_ config rather than replacing it with the laptop's own `config::load()` (issue #40). Browser and scrollbar are server-side truth and intentionally omitted: the server keeps them, the attach client does not spawn browsers or scrollbars locally. The shape matches `mux-tui`'s `Config::resolved_chrome_value`; a client rebuilds a base `Config` from it via `Config::from_server_chrome` and then applies the local `Overlay`. A server that has registered no chrome (e.g. a `mux-core`-only host with no TUI) returns an empty object `{}`.
+Returns the server process's resolved presentation chrome (theme, tabs, sidebar, keys) so a thin-client `mtyx attach --apply-local-config` can fetch it and layer the laptop's local `Overlay` on top of the _server_ config rather than replacing it with the laptop's own `config::load()` (issue #40). Browser and scrollbar are server-side truth and intentionally omitted: the server keeps them, the attach client does not spawn browsers or scrollbars locally. The shape matches `mux-tui`'s `Config::resolved_chrome_value`; a client rebuilds a base `Config` from it via `Config::from_server_chrome` and then applies the local `Overlay`. A server that has registered no chrome (e.g. a `mux-core`-only host with no TUI) returns an empty object `{}`.
 
 Params: none.
 
@@ -227,7 +227,7 @@ CLI mapping:
 | JSON stdout  | exact result object                                                                 |
 | Exit codes   | common                                                                              |
 
-The same verb is invoked internally by `cmux attach --apply-local-config`, which fetches the chrome, rebuilds a base `Config`, layers the local `Overlay`, and starts the TUI. `cmux attach --print-resolved-config` (issue #40) prints the _merged_ chrome (server base + local overlay) as JSON without attaching, for inspecting layering without a live terminal.
+The same verb is invoked internally by `mtyx attach --apply-local-config`, which fetches the chrome, rebuilds a base `Config`, layers the local `Overlay`, and starts the TUI. `mtyx attach --print-resolved-config` (issue #40) prints the _merged_ chrome (server base + local overlay) as JSON without attaching, for inspecting layering without a live terminal.
 
 Example:
 
@@ -1163,7 +1163,7 @@ CLI mapping:
 
 The CLI requires either `--color` or `--colour`; an empty alias value (`--colour ""`) sends `colour:null` to clear the colour, and any non-empty value is sent through for server validation.
 
-The positional shorthand `cmux workspace-color <name> <color>` updates a workspace by exact name, creating it first when absent.
+The positional shorthand `mtyx workspace-color <name> <color>` updates a workspace by exact name, creating it first when absent.
 
 ### set-status
 
@@ -1758,7 +1758,7 @@ Example:
 | status | implemented           |
 | since  | protocol 6            |
 
-Returns the server process's resolved presentation chrome (the keys relevant to a thin-client `Overlay`: theme, tabs, sidebar, keys) so a `cmux attach --apply-local-config` client can layer its local overlay on top of the _server's_ config rather than replacing it with the laptop's own (issue #40). Browser and scrollbar are server-side truth and are intentionally not part of the payload. The shape matches what `mux-tui`'s `Config::resolved_chrome_value()` emits and `Config::from_server_chrome()` consumes, so the client round-trips it back through the same `apply_*` resolution helpers `load()` uses.
+Returns the server process's resolved presentation chrome (the keys relevant to a thin-client `Overlay`: theme, tabs, sidebar, keys) so a `mtyx attach --apply-local-config` client can layer its local overlay on top of the _server's_ config rather than replacing it with the laptop's own (issue #40). Browser and scrollbar are server-side truth and are intentionally not part of the payload. The shape matches what `mux-tui`'s `Config::resolved_chrome_value()` emits and `Config::from_server_chrome()` consumes, so the client round-trips it back through the same `apply_*` resolution helpers `load()` uses.
 
 The server publishes this from its own `config::load()` at startup; if it has not registered any chrome (for example a `mux-core`-only host with no TUI), it returns an empty object `{}` and the client falls back to its local config.
 
@@ -1795,7 +1795,7 @@ CLI mapping:
 
 | Item         | Value                                                                                                                            |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| Verb         | `get-resolved-config` (also consumed internally by `cmux attach --print-resolved-config` and `cmux attach --apply-local-config`) |
+| Verb         | `get-resolved-config` (also consumed internally by `mtyx attach --print-resolved-config` and `mtyx attach --apply-local-config`) |
 | Flags        | n/a                                                                                                                              |
 | Plain stdout | n/a                                                                                                                              |
 | JSON stdout  | n/a                                                                                                                              |
@@ -1810,30 +1810,30 @@ Example:
 
 ## Local Verb Groups (no wire protocol)
 
-These verb groups run entirely in the `cmux` client binary; they do not
+These verb groups run entirely in the `mtyx` client binary; they do not
 send JSON commands over the control socket and have no entry in the
 protocol command set. They are documented here so the surface has one
-home for every `cmux <verb> ...` invocation.
+home for every `mtyx <verb> ...` invocation.
 
 ### plugin
 
 | Field  | Value                                             |
 | ------ | ------------------------------------------------- |
-| name   | `plugin` (verb group: `cmux plugin <subcommand>`) |
+| name   | `plugin` (verb group: `mtyx plugin <subcommand>`) |
 | status | implemented (manifest + registry only)            |
 | since  | local client surface, issue #42 scoped first PR   |
 
-Manages `cmux-plugin.toml` manifests and a small JSON registry under the
-cmux data directory (`$XDG_DATA_HOME/cmux`, or `~/.local/share/cmux`
+Manages `mtyx-plugin.toml` manifests and a small JSON registry under the
+mtyx data directory (`$XDG_DATA_HOME/mattyx`, or `~/.local/share/mattyx`
 by default). Layout:
 
 ```text
 <base>/plugins.json          registry: {"plugins":[{name,enabled,entry,verbs}, ...]}
 <base>/plugins/<name>/         one directory per installed plugin
-                cmux-plugin.toml   manifest copied verbatim at install time
+                mtyx-plugin.toml   manifest copied verbatim at install time
 ```
 
-Manifest (`cmux-plugin.toml`):
+Manifest (`mtyx-plugin.toml`):
 
 | Field            | Type             | Required | Notes                                                                                                             |
 | ---------------- | ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -1855,13 +1855,13 @@ Errors:
 
 | Error                                       | Condition                                                        |
 | ------------------------------------------- | ---------------------------------------------------------------- |
-| `malformed cmux-plugin.toml: ...`           | manifest is not valid TOML or a required field is missing/empty  |
+| `malformed mtyx-plugin.toml: ...`           | manifest is not valid TOML or a required field is missing/empty  |
 | `a plugin named "..." is already installed` | `install` against a name already in the registry (AC5 collision) |
 | `no plugin named "..." is installed`        | `uninstall`/`enable`/`disable` against an unknown name           |
 | `plugin name "..." must not be a path`      | `install` where `name` contains a separator or is `.`/`..`       |
 
 NOT IMPLEMENTED (deferred to a follow-up PR): plugin _execution_
-(proxying `cmux <plugin-name> <verb>` to a running plugin process,
+(proxying `mtyx <plugin-name> <verb>` to a running plugin process,
 WASM/WASI sandboxing, the permission model) is out of scope for this
 PR. These verbs only manage manifest state and must not be read as
 implying that any plugin code runs.
@@ -1870,7 +1870,7 @@ implying that any plugin code runs.
 
 | Field     | Value                                             |
 | --------- | ------------------------------------------------- |
-| name      | `agents` (verb group: `cmux agents <subcommand>`) |
+| name      | `agents` (verb group: `mtyx agents <subcommand>`) |
 | status    | implemented                                       |
 | transport | local filesystem only; no control-socket request  |
 
@@ -2326,7 +2326,7 @@ Example:
 {"id":108,"ok":true,"data":{"surface":1,"state":"working","source":"socket","session":"abc","agent":null,"message":null,"updated_at_ms":1710000000000}}
 ```
 
-Issue #75 defaults: on the CLI, `--surface` falls back to `$CMUX_MUX_SURFACE` (set for every pane child, so an agent can self-report from inside its pane without knowing its id) and `--source` defaults to `socket`, keeping hook reports the authority — an in-pane socket self-report is rejected (state unchanged, exit 0) while a hook report is in effect. A report omitting `--agent` keeps the pane's established name; omitting `--message` clears the message.
+Issue #75 defaults: on the CLI, `--surface` falls back to `$MTYX_MUX_SURFACE` (set for every pane child, so an agent can self-report from inside its pane without knowing its id) and `--source` defaults to `socket`, keeping hook reports the authority — an in-pane socket self-report is rejected (state unchanged, exit 0) while a hook report is in effect. A report omitting `--agent` keeps the pane's established name; omitting `--message` clears the message.
 
 ### agent-read
 
@@ -2381,7 +2381,7 @@ Example:
 | status | implemented   |
 | since  | protocol 6 (issue #75; additive) |
 
-Types literal text into a pane addressed by agent name or surface id, WITHOUT a trailing CR — the caller submits separately (e.g. `cmux send --surface <id> --text "" --send-cr 1`). Same shell-aware sanitisation as `send` (`shell`, default `raw`).
+Types literal text into a pane addressed by agent name or surface id, WITHOUT a trailing CR — the caller submits separately (e.g. `mtyx send --surface <id> --text "" --send-cr 1`). Same shell-aware sanitisation as `send` (`shell`, default `raw`).
 
 Params:
 
@@ -2460,7 +2460,7 @@ Example:
 | status | implemented              |
 | since  | protocol 6               |
 
-Creates a git worktree for `branch` rooted at the pane's repository, records it on the pane, and `cd`s the pane's active tab into it (issue #77 AC1). The worktree path pattern is `<repo>/../<repo>.<branch>/` by default; a `[[worktree_pattern]]` entry in `mux.toml`/`mux.json` overrides it (the issue text names this config block `cmux.toml`; cmux reads `mux.toml`/`mux.json` via `CMUX_MUX_CONFIG` or `~/.config/cmux/`). `/` in a branch name maps to `-` in the directory component. On any failure the error propagates (`ok:false`, CLI exit 1) and the pane is untouched — cwd unchanged, no record kept (AC7).
+Creates a git worktree for `branch` rooted at the pane's repository, records it on the pane, and `cd`s the pane's active tab into it (issue #77 AC1). The worktree path pattern is `<repo>/../<repo>.<branch>/` by default; a `[[worktree_pattern]]` entry in `mux.toml`/`mux.json` overrides it (the issue text names this config block `mtyx.toml`; mtyx reads `mux.toml`/`mux.json` via `MTYX_MUX_CONFIG` or `~/.config/mattyx/`). `/` in a branch name maps to `-` in the directory component. On any failure the error propagates (`ok:false`, CLI exit 1) and the pane is untouched — cwd unchanged, no record kept (AC7).
 
 The record is session-scoped: a daemon restart loses the registry (the on-disk worktrees remain and stay visible to `git worktree list`). `pane worktree remove` after a restart reports "no worktree for branch …".
 
@@ -2603,7 +2603,7 @@ Example:
 {"id":203,"ok":true,"data":{}}
 ```
 
-The three-word alias (`cmux pane worktree create|list|remove ...`) is rewritten to the flat verb at argv level in `main.rs`; the wire protocol only ever carries the flat kebab-case form (the issue documents the three-word spelling; every other cmux verb is flat).
+The three-word alias (`mtyx pane worktree create|list|remove ...`) is rewritten to the flat verb at argv level in `main.rs`; the wire protocol only ever carries the flat kebab-case form (the issue documents the three-word spelling; every other mtyx verb is flat).
 
 ### new-remote-workspace
 
@@ -2613,7 +2613,7 @@ The three-word alias (`cmux pane worktree create|list|remove ...`) is rewritten 
 | status | implemented            |
 | since  | protocol 6             |
 
-Creates a workspace whose single tab is a remote shell reached through `cmuxd-remote` over SSH (see `docs/protocol.md`'s "Remote Workspaces" section and `mux-core/src/remote_pty.rs`) instead of a local pty. The caller is responsible for having already built/uploaded a `cmuxd-remote` binary for the target's OS/arch and passing its local path; the bundled `cmux ssh <host>` CLI does this and is the intended entry point, not this command directly.
+Creates a workspace whose single tab is a remote shell reached through `cmuxd-remote` over SSH (see `docs/protocol.md`'s "Remote Workspaces" section and `mux-core/src/remote_pty.rs`) instead of a local pty. The caller is responsible for having already built/uploaded a `cmuxd-remote` binary for the target's OS/arch and passing its local path; the bundled `mtyx ssh <host>` CLI does this and is the intended entry point, not this command directly.
 
 Params:
 
@@ -2653,7 +2653,7 @@ CLI mapping:
 Example:
 
 ```json
-{"id":60,"cmd":"new-remote-workspace","host":"myhost","slot":"cmux","session_id":"cmux-...","local_binary_path":"/home/me/.cache/cmux/cmuxd-remote-linux-amd64","name":"work"}
+{"id":60,"cmd":"new-remote-workspace","host":"myhost","slot":"mtyx","session_id":"mtyx-...","local_binary_path":"/home/me/.cache/mattyx/cmuxd-remote-linux-amd64","name":"work"}
 {"id":60,"ok":true,"data":{"surface":7}}
 ```
 
@@ -2773,7 +2773,7 @@ Errors:
 | `bad kind <k>`               | Kind not process/screen                         |
 | `bad confidence <c>`         | Confidence not high/medium/low                 |
 
-CLI mapping: noun form `cmux agent-pattern add <name> --pattern <marker> [--kind process|screen] [--confidence high|medium|low] [--case-insensitive]` (translated to this verb, the `workspace-color` precedent); no output on success.
+CLI mapping: noun form `mtyx agent-pattern add <name> --pattern <marker> [--kind process|screen] [--confidence high|medium|low] [--case-insensitive]` (translated to this verb, the `workspace-color` precedent); no output on success.
 
 ### agent-pattern-list
 
@@ -2783,7 +2783,7 @@ CLI mapping: noun form `cmux agent-pattern add <name> --pattern <marker> [--kind
 | status | implemented           |
 | since  | protocol 6            |
 
-Lists the effective pattern registry: the bundled top-6 patterns (embedded from `mux-core/src/agent_detect/agents.json`; cannot be removed) plus user adds. Params: none. Result: `object{patterns: array<object{name, kind, pattern, confidence, case_insensitive}>}`. CLI: `cmux agent-pattern list` → one `<name> <kind> <confidence> <pattern>` row per pattern.
+Lists the effective pattern registry: the bundled top-6 patterns (embedded from `mux-core/src/agent_detect/agents.json`; cannot be removed) plus user adds. Params: none. Result: `object{patterns: array<object{name, kind, pattern, confidence, case_insensitive}>}`. CLI: `mtyx agent-pattern list` → one `<name> <kind> <confidence> <pattern>` row per pattern.
 
 ### agent-pattern-remove
 
@@ -2793,11 +2793,11 @@ Lists the effective pattern registry: the bundled top-6 patterns (embedded from 
 | status | implemented             |
 | since  | protocol 6              |
 
-Removes every user-added pattern named `name`. Bundled patterns cannot be removed. Params: `name: string` (required). Result: empty object. Errors: `no user pattern for agent <name> ...` when nothing matched. CLI: `cmux agent-pattern remove <name>`; no output on success.
+Removes every user-added pattern named `name`. Bundled patterns cannot be removed. Params: `name: string` (required). Result: empty object. Errors: `no user pattern for agent <name> ...` when nothing matched. CLI: `mtyx agent-pattern remove <name>`; no output on success.
 
 ## Proposed Hooks Config
 
-Hooks are proposed protocol v6 config, not a socket command. They are declared in `~/.config/cmux/mux.json` under `hooks`.
+Hooks are proposed protocol v6 config, not a socket command. They are declared in `~/.config/mattyx/mux.json` under `hooks`.
 
 Schema:
 
@@ -2832,16 +2832,16 @@ Common environment:
 
 | Env var                  | Meaning                                     |
 | ------------------------ | ------------------------------------------- |
-| `CMUX_MUX_SESSION`       | Session name                                |
-| `CMUX_MUX_SOCKET`        | Unix socket path when available             |
-| `CMUX_MUX_EVENT`         | Hook event name                             |
-| `CMUX_MUX_SURFACE`       | Surface id when the event is surface-scoped |
-| `CMUX_MUX_WORKSPACE`     | Workspace id when known                     |
-| `CMUX_MUX_SCREEN`        | Screen id when known                        |
-| `CMUX_MUX_PANE`          | Pane id when known                          |
-| `CMUX_MUX_AGENT_STATE`   | Agent state for agent hooks                 |
-| `CMUX_MUX_AGENT_SOURCE`  | Agent source for agent hooks                |
-| `CMUX_MUX_AGENT_SESSION` | Upstream agent session id when reported     |
+| `MTYX_MUX_SESSION`       | Session name                                |
+| `MTYX_MUX_SOCKET`        | Unix socket path when available             |
+| `MTYX_MUX_EVENT`         | Hook event name                             |
+| `MTYX_MUX_SURFACE`       | Surface id when the event is surface-scoped |
+| `MTYX_MUX_WORKSPACE`     | Workspace id when known                     |
+| `MTYX_MUX_SCREEN`        | Screen id when known                        |
+| `MTYX_MUX_PANE`          | Pane id when known                          |
+| `MTYX_MUX_AGENT_STATE`   | Agent state for agent hooks                 |
+| `MTYX_MUX_AGENT_SOURCE`  | Agent source for agent hooks                |
+| `MTYX_MUX_AGENT_SESSION` | Upstream agent session id when reported     |
 
 Hook event mapping:
 

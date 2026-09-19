@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::time::{Duration, Instant};
+#[cfg(unix)]
+use std::time::Instant;
+use std::time::Duration;
 
 use mux_core::{Rect, SurfaceId};
 
@@ -117,6 +119,11 @@ pub fn detect_cell_pixels(query_fallback: bool) -> (u16, u16) {
 }
 
 fn ioctl_cell_pixels() -> Option<(u16, u16)> {
+    cell_pixels_ioctl()
+}
+
+#[cfg(unix)]
+fn cell_pixels_ioctl() -> Option<(u16, u16)> {
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
     let ok = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) } == 0;
     if !ok || ws.ws_col == 0 || ws.ws_row == 0 || ws.ws_xpixel == 0 || ws.ws_ypixel == 0 {
@@ -125,6 +132,33 @@ fn ioctl_cell_pixels() -> Option<(u16, u16)> {
     let w = (ws.ws_xpixel / ws.ws_col).max(1);
     let h = (ws.ws_ypixel / ws.ws_row).max(1);
     Some((w, h))
+}
+
+/// Windows TIOCGWINSZ analogue: the console font's cell size in pixels
+/// (`GetCurrentConsoleFont`). Degradation, documented: under ConPTY the
+/// reported font is a placeholder and this commonly returns nothing,
+/// in which case the caller falls through to the `CSI 14t` query and
+/// then the 8x16 default — same ladder as unix.
+#[cfg(windows)]
+fn cell_pixels_ioctl() -> Option<(u16, u16)> {
+    use windows_sys::Win32::System::Console::{
+        GetCurrentConsoleFont, GetStdHandle, CONSOLE_FONT_INFO, STD_OUTPUT_HANDLE,
+    };
+    unsafe {
+        let handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        if handle.is_null() {
+            return None;
+        }
+        let mut info: CONSOLE_FONT_INFO = std::mem::zeroed();
+        if GetCurrentConsoleFont(handle, 0, &mut info) == 0 {
+            return None;
+        }
+        let (w, h) = (info.dwFontSize.X, info.dwFontSize.Y);
+        if w <= 0 || h <= 0 {
+            return None;
+        }
+        Some((w as u16, h as u16))
+    }
 }
 
 fn query_cell_pixels() -> Option<(u16, u16)> {
@@ -147,6 +181,20 @@ fn query_cell_pixels() -> Option<(u16, u16)> {
 }
 
 fn read_stdin_for(timeout: Duration) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        read_stdin_for_unix(timeout)
+    }
+    #[cfg(windows)]
+    {
+        // Same stop condition as the unix loop: the reply we await for
+        // graphics probing is DA1 (see find_da1).
+        crate::win_console::read_stdin_until(timeout, &|bytes| find_da1(bytes).is_some())
+    }
+}
+
+#[cfg(unix)]
+fn read_stdin_for_unix(timeout: Duration) -> Vec<u8> {
     let start = Instant::now();
     let mut out = Vec::new();
     while start.elapsed() < timeout {

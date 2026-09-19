@@ -6,12 +6,12 @@
 # place.
 #
 # Requires:
-#   - cargo (1.75+; tested against the cmux-linux toolchain pin of 1.97)
+#   - cargo (1.75+; tested against the mattyx toolchain pin of 1.97)
 #   - the `wasm32-unknown-unknown` rustup target
 #     (`rustup target add wasm32-unknown-unknown`)
 #
 # Does NOT require:
-#   - the cmux-linux build toolchain (no zig vendored here — this
+#   - the mattyx build toolchain (no zig vendored here — this
 #     crate is freestanding and does not link against mux-tui or
 #     wasmtime at compile time; the wasmtime side is the host)
 #   - network access, after the first build (cargo caches in
@@ -59,7 +59,7 @@ else
 fi
 
 # Build into a target/ subdir so we don't pollute the user's
-# workspace-wide target/ (this crate is NOT in the cmux-linux
+# workspace-wide target/ (this crate is NOT in the mattyx
 # workspace, so a sibling target/ is the only choice anyway).
 echo "build.sh: compiling src/lib.rs -> bin/fleet.wasm"
 cargo build \

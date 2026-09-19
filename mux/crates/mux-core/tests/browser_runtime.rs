@@ -1,3 +1,5 @@
+#![cfg(unix)] // exercises unix PTY, /proc and AF_UNIX machinery
+
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::os::unix::net::UnixStream;
@@ -288,7 +290,7 @@ fn socket_browser_attach_streams_frames_input_and_cell_pixels() {
     let mux = Mux::new("browser-socket-test", opts);
     let socket_path = std::env::temp_dir()
         .join(format!(
-            "cmux-browser-socket-test-{}-{}",
+            "mtyx-browser-socket-test-{}-{}",
             std::process::id(),
             SOCKET_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ))

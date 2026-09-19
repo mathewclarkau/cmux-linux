@@ -1,3 +1,5 @@
+#![cfg(unix)] // exercises unix PTY, /proc and AF_UNIX machinery
+
 //! Exercises `mux-core`'s remote-pty support (`remote_pty.rs`) against a
 //! real SSH target. Needs infrastructure this crate's default `cargo test`
 //! can't assume (a reachable sshd, key-based auth already set up, and a
@@ -5,8 +7,8 @@
 //! silent no-op unless both env vars are set:
 //!
 //! ```text
-//! CMUX_MUX_TEST_SSH_HOST=localhost \
-//! CMUX_MUX_TEST_REMOTE_BIN=/path/to/cmuxd-remote \
+//! MTYX_MUX_TEST_SSH_HOST=localhost \
+//! MTYX_MUX_TEST_REMOTE_BIN=/path/to/cmuxd-remote \
 //! cargo test -p mux-core --test remote_pty_e2e
 //! ```
 
@@ -27,8 +29,8 @@ fn wait_for<T>(mut f: impl FnMut() -> Option<T>, timeout: Duration) -> Option<T>
 }
 
 fn remote_spec(session_id: &str) -> Option<RemoteSpec> {
-    let host = std::env::var("CMUX_MUX_TEST_SSH_HOST").ok()?;
-    let bin = std::env::var("CMUX_MUX_TEST_REMOTE_BIN").ok()?;
+    let host = std::env::var("MTYX_MUX_TEST_SSH_HOST").ok()?;
+    let bin = std::env::var("MTYX_MUX_TEST_REMOTE_BIN").ok()?;
     Some(RemoteSpec {
         host,
         slot: format!("mux-mux-test-{}", std::process::id()),
@@ -44,7 +46,7 @@ fn screen_text(surface: &mux_core::Surface) -> String {
 #[test]
 fn remote_workspace_runs_a_real_command_over_ssh() {
     let Some(spec) = remote_spec("e2e-fresh") else {
-        eprintln!("skipping remote_pty_e2e: set CMUX_MUX_TEST_SSH_HOST/CMUX_MUX_TEST_REMOTE_BIN");
+        eprintln!("skipping remote_pty_e2e: set MTYX_MUX_TEST_SSH_HOST/MTYX_MUX_TEST_REMOTE_BIN");
         return;
     };
     let mux = Mux::new("remote-e2e-fresh", SurfaceOptions::default());
@@ -68,7 +70,7 @@ fn remote_workspace_runs_a_real_command_over_ssh() {
 #[test]
 fn remote_session_survives_detach_and_reattach_across_a_new_mux() {
     let Some(spec) = remote_spec("e2e-persist") else {
-        eprintln!("skipping remote_pty_e2e: set CMUX_MUX_TEST_SSH_HOST/CMUX_MUX_TEST_REMOTE_BIN");
+        eprintln!("skipping remote_pty_e2e: set MTYX_MUX_TEST_SSH_HOST/MTYX_MUX_TEST_REMOTE_BIN");
         return;
     };
 
@@ -113,7 +115,7 @@ static PERSIST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[test]
 fn remote_workspace_survives_the_automatic_persist_and_restore_flow() {
     let Some(spec) = remote_spec("e2e-auto-persist") else {
-        eprintln!("skipping remote_pty_e2e: set CMUX_MUX_TEST_SSH_HOST/CMUX_MUX_TEST_REMOTE_BIN");
+        eprintln!("skipping remote_pty_e2e: set MTYX_MUX_TEST_SSH_HOST/MTYX_MUX_TEST_REMOTE_BIN");
         return;
     };
     let _guard = PERSIST_ENV_LOCK.lock().unwrap();

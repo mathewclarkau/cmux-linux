@@ -134,7 +134,7 @@ func TestPersistentStdioProxyKeepsPumpingWhileDaemonStaysOpen(t *testing.T) {
 
 func listenUnixForPersistentProxyTest(t *testing.T) (net.Listener, string) {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "cmux-proxy-test-*")
+	dir, err := os.MkdirTemp("/tmp", "mtyx-proxy-test-*")
 	if err != nil {
 		t.Fatalf("create unix socket dir: %v", err)
 	}

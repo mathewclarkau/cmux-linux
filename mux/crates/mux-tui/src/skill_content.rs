@@ -1,32 +1,32 @@
 pub const ORCHESTRATION_SKILL: &str = r#"---
-name: cmux-orchestration
-description: Orchestrate cmux panes, agents, and browser tabs from a natural-language layout request
+name: mtyx-orchestration
+description: Orchestrate mtyx panes, agents, and browser tabs from a natural-language layout request
 argument-hint: <describe the panes, agents, and browser tabs you want, in plain English>
 ---
 
-You are orchestrating **cmux**, the terminal multiplexer this Claude Code session
+You are orchestrating **mtyx**, the terminal multiplexer this Claude Code session
 is (probably) running inside of. The user's request is:
 
 $ARGUMENTS
 
-Turn that request into real panes/tabs by driving the `cmux` CLI with the `bash`
+Turn that request into real panes/tabs by driving the `mtyx` CLI with the `bash`
 tool. Do not just describe a plan — actually create the layout, launch the agent(s),
 and report back what you built (pane/surface ids, what's running where).
 
 ## 0. Preconditions
 
-Run `env | grep '^CMUX_MUX_'`. You need both `CMUX_MUX_SOCKET` and `CMUX_MUX_SURFACE`
-set — every pane spawned by a running `cmux` session gets these automatically.
+Run `env | grep '^MTYX_MUX_'`. You need both `MTYX_MUX_SOCKET` and `MTYX_MUX_SURFACE`
+set — every pane spawned by a running `mtyx` session gets these automatically.
 If either is missing, stop and tell the user this only works from inside a pane of a
-live `cmux` session (`cmux` to start one, or `cmux attach --session <name>`
+live `mtyx` session (`mtyx` to start one, or `mtyx attach --session <name>`
 to join one already running) — there's nothing to orchestrate otherwise.
 
-`cmux <verb> ...` reads `CMUX_MUX_SOCKET` itself, so you don't need `--socket` on
+`mtyx <verb> ...` reads `MTYX_MUX_SOCKET` itself, so you don't need `--socket` on
 any command below.
 
 ## 1. Find out where you are
 
-Run `cmux list-workspaces`. It prints the whole tree: workspaces → screens →
+Run `mtyx list-workspaces`. It prints the whole tree: workspaces → screens →
 panes → tabs (surfaces), one line each, e.g.:
 
 ```
@@ -34,42 +34,42 @@ pane id=2 screen=3 name=null active_tab=0
 tab surface=1 pane=2 kind=pty browser_source=null name=null title="" cols=80 rows=24
 ```
 
-Find the tab whose `surface=` matches `$CMUX_MUX_SURFACE` — its `pane=` is the pane
+Find the tab whose `surface=` matches `$MTYX_MUX_SURFACE` — its `pane=` is the pane
 you (this Claude session) are running in. That's your anchor for "left"/"here"/"this
 pane" in the user's request; other panes are laid out relative to it with `split`.
 
 ## 2. CLI cheat sheet (exact flags — nothing else is accepted)
 
 ```
-cmux split --pane <pane> --dir right|down [--cols N --rows N]
+mtyx split --pane <pane> --dir right|down [--cols N --rows N]
     → creates a new pane (splitting the given one) with a fresh shell tab.
       Prints the new surface id. There is no --cwd; cd inside it via `send`.
 
-cmux new-tab --pane <pane> [--cwd <dir>] [--cols N --rows N]
+mtyx new-tab --pane <pane> [--cwd <dir>] [--cols N --rows N]
     → new shell tab in an existing pane (not a new pane/split). Prints surface id.
 
-cmux new-browser-tab --url <url> --pane <pane> [--cols N --rows N]
+mtyx new-browser-tab --url <url> --pane <pane> [--cols N --rows N]
     → new browser tab in a pane. Prints surface id.
 
-cmux send --surface <id> --text "<text>"
+mtyx send --surface <id> --text "<text>"
     → types literal text into a pty surface. Include your own trailing \n to
       submit a shell command, e.g.: --text $'cd /some/dir && claude "do the thing"\n'
       Does NOT work on browser surfaces (see below).
 
-cmux read-screen --surface <id>
+mtyx read-screen --surface <id>
     → dumps a pty surface's visible screen text. Browser surfaces reject this
       with "browser surface does not support PTY/VT socket commands" — don't
       try to introspect a browser tab's content this way, it's expected to fail.
 
-cmux browser-reload --surface <id>
+mtyx browser-reload --surface <id>
     → reloads/refreshes a browser tab.
 
-cmux close-surface --surface <id>
+mtyx close-surface --surface <id>
     → closes one tab/surface (pane/screen/workspace stay if other tabs remain).
 
-cmux list-agents [--state working|blocked|idle|done]
+mtyx list-agents [--state working|blocked|idle|done]
     → shows Claude Code hook-reported agent state per surface, if the hook is
-      installed (`cmux claude install-hooks`). Useful to check whether an
+      installed (`mtyx claude install-hooks`). Useful to check whether an
       agent you launched is still working vs. waiting on you.
 ```
 
@@ -92,7 +92,7 @@ cmux list-agents [--state working|blocked|idle|done]
 
 You can reload/refresh a browser tab in-place using:
 
-    cmux browser-reload --surface <browser-surface-id>
+    mtyx browser-reload --surface <browser-surface-id>
 
 For watching the agent's working directory for changes, prefer:
 
@@ -115,5 +115,5 @@ say so and what you'd try next — don't claim success you didn't verify.
 "#;
 
 pub const HOTFIX_RACE_SKILL: &str = include_str!(
-    "../../../../.agents/skills/cmux-hotfix-race/SKILL.md"
+    "../../../../.agents/skills/mtyx-hotfix-race/SKILL.md"
 );

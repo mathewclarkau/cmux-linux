@@ -1,15 +1,18 @@
-//! `cmux claude ...` — Claude Code hook integration.
+//! `mtyx claude ...` — Claude Code hook integration.
 //!
-//! `install-hooks` points Claude Code's own hook config at `cmux claude
+//! `install-hooks` points Claude Code's own hook config at `mtyx claude
 //! hook`. Claude invokes that on every lifecycle event with a JSON payload
 //! on stdin; `hook` reports agent state over the pane's own control socket
-//! (found via `$CMUX_MUX_SOCKET`/`$CMUX_MUX_SURFACE`, set on every pty
+//! (found via `$MTYX_MUX_SOCKET`/`$MTYX_MUX_SURFACE`, set on every pty
 //! child — see `Surface::spawn` in mux-core) and records the session in a
 //! local store that `sessions`/`resume` read back. A hook must never block
 //! or fail Claude Code's own turn, so every path here exits 0.
 
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -34,7 +37,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("resume") => run_resume(args.get(1).map(String::as_str)),
         _ => {
             eprintln!(
-                "cmux: usage: cmux claude <hook|install-hooks [--uninstall]|install-skill [--uninstall] [--global]|sessions|resume [session-id]>"
+                "mtyx: usage: mtyx claude <hook|install-hooks [--uninstall]|install-skill [--uninstall] [--global]|sessions|resume [session-id]>"
             );
             2
         }
@@ -56,7 +59,7 @@ fn run_hook() -> i32 {
     let payload: HookPayload = match serde_json::from_str(&input) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("cmux: malformed hook payload from stdin: {e}");
+            eprintln!("mtyx: malformed hook payload from stdin: {e}");
             return 1;
         }
     };
@@ -89,7 +92,7 @@ fn agent_state_for_event(event: &str) -> Option<&'static str> {
 }
 
 fn surface_id() -> Option<u64> {
-    std::env::var("CMUX_MUX_SURFACE").ok()?.parse().ok()
+    std::env::var("MTYX_MUX_SURFACE").ok()?.parse().ok()
 }
 
 // ---------- socket client ----------
@@ -98,7 +101,7 @@ fn surface_id() -> Option<u64> {
 // (the new surface id), which the `cli` module only ever prints.
 
 fn socket_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("CMUX_MUX_SOCKET") {
+    if let Some(path) = std::env::var_os("MTYX_MUX_SOCKET") {
         if !path.is_empty() {
             return PathBuf::from(path);
         }
@@ -125,7 +128,7 @@ fn send_request(cmd: &str, mut params: Value) -> Option<Value> {
 }
 
 // ---------- session store ----------
-// `$XDG_STATE_HOME/cmux/claude-sessions.json`, most-recent-first,
+// `$XDG_STATE_HOME/mattyx/claude-sessions.json`, most-recent-first,
 // deduplicated by session_id, capped at MAX_SESSIONS. Locked with flock
 // for the read-modify-write since multiple panes' hooks can fire
 // concurrently.
@@ -145,7 +148,7 @@ fn store_path() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| mux_core::platform::home_dir().map(|home| home.join(".local").join("state")))
         .unwrap_or_else(|| PathBuf::from("/tmp"));
-    base.join("cmux").join("claude-sessions.json")
+    base.join("mattyx").join("claude-sessions.json")
 }
 
 fn now_ms() -> u64 {
@@ -168,12 +171,7 @@ fn with_locked_store<T>(f: impl FnOnce(&mut Vec<SessionRecord>) -> T) -> Option<
     }
     let mut file =
         std::fs::OpenOptions::new().read(true).write(true).create(true).open(&path).ok()?;
-    let fd = file.as_raw_fd();
-    // SAFETY: fd is a valid, open file descriptor for the lifetime of this
-    // call; flock is released explicitly below and also on process exit.
-    unsafe {
-        libc::flock(fd, libc::LOCK_EX);
-    }
+    lock_store_exclusive(&file);
     let mut contents = String::new();
     let _ = file.read_to_string(&mut contents);
     // Fail loud on a corrupted sessions file: silently wiping it with
@@ -189,12 +187,10 @@ fn with_locked_store<T>(f: impl FnOnce(&mut Vec<SessionRecord>) -> T) -> Option<
             Ok(v) => v,
             Err(e) => {
                 eprintln!(
-                    "cmux: {} is not valid JSON ({e}); leaving it untouched",
+                    "mtyx: {} is not valid JSON ({e}); leaving it untouched",
                     path.display()
                 );
-                unsafe {
-                    libc::flock(fd, libc::LOCK_UN);
-                }
+                unlock_store(&file);
                 return None;
             }
         };
@@ -209,10 +205,57 @@ fn with_locked_store<T>(f: impl FnOnce(&mut Vec<SessionRecord>) -> T) -> Option<
         let _ = file.seek(SeekFrom::Start(0));
         let _ = file.write_all(json.as_bytes());
     }
-    unsafe {
-        libc::flock(fd, libc::LOCK_UN);
-    }
+    unlock_store(&file);
     Some(result)
+}
+
+/// flock(2) the session store (LOCK_EX). Windows: LockFileEx over the
+/// whole file, the documented flock analogue. Both are released by
+/// [`unlock_store`] and, on any path, by handle close (process exit).
+#[cfg(unix)]
+fn lock_store_exclusive(file: &std::fs::File) {
+    // SAFETY: fd is a valid, open file descriptor for the lifetime of
+    // this call; flock is released explicitly below and also on exit.
+    unsafe {
+        libc::flock(file.as_raw_fd(), libc::LOCK_EX);
+    }
+}
+
+#[cfg(unix)]
+fn unlock_store(file: &std::fs::File) {
+    unsafe {
+        libc::flock(file.as_raw_fd(), libc::LOCK_UN);
+    }
+}
+
+#[cfg(windows)]
+fn lock_store_exclusive(file: &std::fs::File) {
+    use windows_sys::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK};
+    use windows_sys::Win32::System::IO::OVERLAPPED;
+    // SAFETY: handle is owned by `file` for the lifetime of this call;
+    // the lock spans the whole file and is released by UnlockFileEx
+    // below or handle close (process exit).
+    unsafe {
+        let mut overlapped: OVERLAPPED = std::mem::zeroed();
+        LockFileEx(
+            file.as_raw_handle(),
+            LOCKFILE_EXCLUSIVE_LOCK,
+            0,
+            u32::MAX,
+            u32::MAX,
+            &mut overlapped,
+        );
+    }
+}
+
+#[cfg(windows)]
+fn unlock_store(file: &std::fs::File) {
+    use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
+    use windows_sys::Win32::System::IO::OVERLAPPED;
+    unsafe {
+        let mut overlapped: OVERLAPPED = std::mem::zeroed();
+        UnlockFileEx(file.as_raw_handle(), 0, u32::MAX, u32::MAX, &mut overlapped);
+    }
 }
 
 fn record_session(session_id: &str, cwd: Option<&str>, event: Option<&str>) {
@@ -256,7 +299,7 @@ fn run_sessions() -> i32 {
 fn run_resume(session_id: Option<&str>) -> i32 {
     let records = load_sessions();
     let Some(session_id) = session_id else {
-        eprintln!("cmux: usage: cmux claude resume <session-id>");
+        eprintln!("mtyx: usage: mtyx claude resume <session-id>");
         if !records.is_empty() {
             eprintln!("recorded sessions:");
             for record in &records {
@@ -266,7 +309,7 @@ fn run_resume(session_id: Option<&str>) -> i32 {
         return 2;
     };
     let Some(record) = records.iter().find(|r| r.session_id.starts_with(session_id)) else {
-        eprintln!("cmux: no recorded session matching {session_id:?}");
+        eprintln!("mtyx: no recorded session matching {session_id:?}");
         return 1;
     };
 
@@ -275,18 +318,18 @@ fn run_resume(session_id: Option<&str>) -> i32 {
         new_tab_params["cwd"] = json!(cwd);
     }
     let Some(data) = send_request("new-tab", new_tab_params) else {
-        eprintln!("cmux: failed to create a pane (is a session running?)");
+        eprintln!("mtyx: failed to create a pane (is a session running?)");
         return 1;
     };
     let Some(surface) = data.get("surface").and_then(Value::as_u64) else {
-        eprintln!("cmux: new-tab did not return a surface id");
+        eprintln!("mtyx: new-tab did not return a surface id");
         return 1;
     };
 
     let resume_command = format!("claude --resume {}\n", record.session_id);
     let send_params = json!({ "surface": surface, "text": resume_command });
     if send_request("send", send_params).is_none() {
-        eprintln!("cmux: created pane {surface} but failed to launch claude --resume");
+        eprintln!("mtyx: created pane {surface} but failed to launch claude --resume");
         return 1;
     }
     println!("{surface}");
@@ -318,20 +361,20 @@ fn claude_settings_path() -> Option<PathBuf> {
 fn hook_command() -> String {
     let bin = std::env::current_exe()
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "cmux".to_string());
+        .unwrap_or_else(|_| "mtyx".to_string());
     format!("{bin} claude hook")
 }
 
 fn run_install_hooks(uninstall: bool) -> i32 {
     let Some(path) = claude_settings_path() else {
-        eprintln!("cmux: could not resolve $HOME to find ~/.claude/settings.json");
+        eprintln!("mtyx: could not resolve $HOME to find ~/.claude/settings.json");
         return 1;
     };
     let mut settings: Value = if path.exists() {
         match std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()) {
             Some(value) => value,
             None => {
-                eprintln!("cmux: {} exists but is not valid JSON; not touching it", path.display());
+                eprintln!("mtyx: {} exists but is not valid JSON; not touching it", path.display());
                 return 1;
             }
         }
@@ -339,14 +382,14 @@ fn run_install_hooks(uninstall: bool) -> i32 {
         json!({})
     };
     if !settings.is_object() {
-        eprintln!("cmux: {} does not contain a JSON object at the top level", path.display());
+        eprintln!("mtyx: {} does not contain a JSON object at the top level", path.display());
         return 1;
     }
 
     let command = hook_command();
     let hooks = settings.as_object_mut().unwrap().entry("hooks").or_insert_with(|| json!({}));
     if !hooks.is_object() {
-        eprintln!("cmux: {}'s \"hooks\" key is not an object; not touching it", path.display());
+        eprintln!("mtyx: {}'s \"hooks\" key is not an object; not touching it", path.display());
         return 1;
     }
     let hooks = hooks.as_object_mut().unwrap();
@@ -356,7 +399,7 @@ fn run_install_hooks(uninstall: bool) -> i32 {
     // still recognizes and replaces its own previously-installed entry
     // instead of accumulating a duplicate that points at a since-deleted
     // path. `antigravity_hook.rs`/`codex_hook.rs`/`pi_hook.rs` already use
-    // an equivalent substring match (`contains("cmux report-agent")`) for
+    // an equivalent substring match (`contains("mtyx report-agent")`) for
     // the same reason.
     const HOOK_MARKER: &str = "claude hook";
     let is_our_hook = |cmd: &str| cmd.ends_with(HOOK_MARKER);
@@ -385,7 +428,7 @@ fn run_install_hooks(uninstall: bool) -> i32 {
             let entries = hooks.entry(event.to_string()).or_insert_with(|| json!([]));
             let Some(entries) = entries.as_array_mut() else {
                 eprintln!(
-                    "cmux: {}'s hooks.{event} is not an array; leaving it alone",
+                    "mtyx: {}'s hooks.{event} is not an array; leaving it alone",
                     path.display()
                 );
                 continue;
@@ -410,16 +453,16 @@ fn run_install_hooks(uninstall: bool) -> i32 {
 
     if let Some(dir) = path.parent() {
         if let Err(err) = std::fs::create_dir_all(dir) {
-            eprintln!("cmux: failed to create {}: {err}", dir.display());
+            eprintln!("mtyx: failed to create {}: {err}", dir.display());
             return 1;
         }
     }
     let Ok(pretty) = serde_json::to_string_pretty(&settings) else {
-        eprintln!("cmux: failed to serialize {}", path.display());
+        eprintln!("mtyx: failed to serialize {}", path.display());
         return 1;
     };
     if let Err(err) = std::fs::write(&path, pretty + "\n") {
-        eprintln!("cmux: failed to write {}: {err}", path.display());
+        eprintln!("mtyx: failed to write {}: {err}", path.display());
         return 1;
     }
 
@@ -436,14 +479,14 @@ fn skill_path(global: bool) -> Option<PathBuf> {
         mux_core::platform::home_dir().map(|h| {
             h.join(".claude")
                 .join("skills")
-                .join("cmux-orchestration")
+                .join("mtyx-orchestration")
                 .join("SKILL.md")
         })
     } else {
         Some(
             PathBuf::from(".claude")
                 .join("skills")
-                .join("cmux-orchestration")
+                .join("mtyx-orchestration")
                 .join("SKILL.md"),
         )
     }
@@ -467,9 +510,9 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
                     let _ = std::fs::remove_dir(grandparent);
                 }
             }
-            println!("Successfully removed cmux skill from {}", path.display());
+            println!("Successfully removed mtyx skill from {}", path.display());
         } else {
-            println!("No cmux skill found at {}", path.display());
+            println!("No mtyx skill found at {}", path.display());
         }
         0
     } else {
@@ -494,7 +537,7 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
             eprintln!("error writing {}: {e}", path.display());
             return 1;
         }
-        println!("Successfully installed cmux skill into {}", path.display());
+        println!("Successfully installed mtyx skill into {}", path.display());
         0
     }
 }
@@ -596,7 +639,7 @@ mod tests {
         // Regression test: reinstalling after the binary moved/was renamed
         // (a different absolute path, same `claude hook` command) must
         // replace the stale entry, not add a second one alongside it - this
-        // is exactly what happened live when the binary was renamed to cmux
+        // is exactly what happened live when the binary was renamed to mtyx
         // and the old absolute path stopped existing.
         let _guard = ENV_LOCK.lock().unwrap();
         let dir = temp_state_dir("install-stale-path");
@@ -604,7 +647,7 @@ mod tests {
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(
             claude_dir.join("settings.json"),
-            r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/old/deleted/path/cmux claude hook"}]}]}}"#,
+            r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/old/deleted/path/mtyx claude hook"}]}]}}"#,
         )
         .unwrap();
         std::env::set_var("HOME", &dir);

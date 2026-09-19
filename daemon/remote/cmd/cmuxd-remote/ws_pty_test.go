@@ -168,9 +168,9 @@ func TestWebSocketPTYRequiresSessionMatchAndConsumesLeaseOnce(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	writeTestLease(t, leasePath, "cmux-secret", "sess-good", true, time.Now().Add(time.Minute))
+	writeTestLease(t, leasePath, "mtyx-secret", "sess-good", true, time.Now().Add(time.Minute))
 	conn := dialPTY(t, ctx, server.URL)
-	sendAuth(t, ctx, conn, "cmux-secret", "sess-other", 80, 24)
+	sendAuth(t, ctx, conn, "mtyx-secret", "sess-other", 80, 24)
 	_, _, err := conn.Read(ctx)
 	if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
 		t.Fatalf("wrong session should close with policy violation, got err=%v status=%v", err, websocket.CloseStatus(err))
@@ -180,7 +180,7 @@ func TestWebSocketPTYRequiresSessionMatchAndConsumesLeaseOnce(t *testing.T) {
 	}
 
 	conn = dialPTY(t, ctx, server.URL)
-	sendAuth(t, ctx, conn, "cmux-secret", "sess-good", 100, 30)
+	sendAuth(t, ctx, conn, "mtyx-secret", "sess-good", 100, 30)
 	msgType, payload, err := conn.Read(ctx)
 	if err != nil {
 		t.Fatalf("read ready: %v", err)
@@ -194,7 +194,7 @@ func TestWebSocketPTYRequiresSessionMatchAndConsumesLeaseOnce(t *testing.T) {
 	_ = conn.Close(websocket.StatusNormalClosure, "done")
 
 	conn = dialPTY(t, ctx, server.URL)
-	sendAuth(t, ctx, conn, "cmux-secret", "sess-good", 100, 30)
+	sendAuth(t, ctx, conn, "mtyx-secret", "sess-good", 100, 30)
 	_, _, err = conn.Read(ctx)
 	if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
 		t.Fatalf("replay should close with policy violation, got err=%v status=%v", err, websocket.CloseStatus(err))
@@ -220,11 +220,11 @@ func TestWebSocketPTYRunsShellOverBinaryFrames(t *testing.T) {
 		t.Fatalf("first frame should be ready text, type=%v payload=%q", msgType, string(payload))
 	}
 
-	if err := conn.Write(ctx, websocket.MessageBinary, []byte("printf '%b\\n' '\\103\\115\\125\\130\\137\\127\\123\\137\\117\\113'; exit\r")); err != nil {
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("printf '%b\\n' '\\115\\124\\131\\130\\137\\127\\123\\137\\117\\113'; exit\r")); err != nil {
 		t.Fatalf("write terminal command: %v", err)
 	}
 
-	output := waitForBinaryContains(t, ctx, conn, "CMUX_WS_OK", 15*time.Second)
+	output := waitForBinaryContains(t, ctx, conn, "MTYX_WS_OK", 15*time.Second)
 	waitForNormalCloseWithOutput(t, ctx, conn, 10*time.Second, output)
 }
 
@@ -239,7 +239,7 @@ func TestWebSocketPTYReconnectKeepsSessionProcess(t *testing.T) {
 	conn := dialPTY(t, ctx, server.URL)
 	sendAuthWithAttachment(t, ctx, conn, "first-token", "sess-reconnect", "same", 80, 24)
 	readReady(t, ctx, conn)
-	if err := conn.Write(ctx, websocket.MessageBinary, []byte("CMUX_RECONNECT_MARKER=alive; export CMUX_RECONNECT_MARKER; printf 'first-ready\\n'\r")); err != nil {
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("MTYX_RECONNECT_MARKER=alive; export MTYX_RECONNECT_MARKER; printf 'first-ready\\n'\r")); err != nil {
 		t.Fatalf("write first command: %v", err)
 	}
 	waitForBinaryContains(t, ctx, conn, "first-ready", 5*time.Second)
@@ -250,7 +250,7 @@ func TestWebSocketPTYReconnectKeepsSessionProcess(t *testing.T) {
 	defer conn.Close(websocket.StatusNormalClosure, "done")
 	sendAuthWithAttachment(t, ctx, conn, "second-token", "sess-reconnect", "same", 80, 24)
 	readReady(t, ctx, conn)
-	if err := conn.Write(ctx, websocket.MessageBinary, []byte("printf '%s\\n' \"$CMUX_RECONNECT_MARKER\"; exit\r")); err != nil {
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("printf '%s\\n' \"$MTYX_RECONNECT_MARKER\"; exit\r")); err != nil {
 		t.Fatalf("write reconnect command: %v", err)
 	}
 	waitForBinaryContains(t, ctx, conn, "alive", 5*time.Second)
@@ -392,10 +392,10 @@ func TestWebSocketPTYStressSessionCleanupAndBoundedScrollback(t *testing.T) {
 		conn := dialPTY(t, ctx, server.URL)
 		sendAuth(t, ctx, conn, token, sessionID, 80+i, 24)
 		readReady(t, ctx, conn)
-		if err := conn.Write(ctx, websocket.MessageBinary, []byte("printf '%8192s\\n' x; printf '%b\\n' '\\103\\115\\125\\130\\137\\110\\117\\114\\104'; read line; exit\r")); err != nil {
+		if err := conn.Write(ctx, websocket.MessageBinary, []byte("printf '%8192s\\n' x; printf '%b\\n' '\\115\\124\\131\\130\\137\\110\\117\\114\\104'; read line; exit\r")); err != nil {
 			t.Fatalf("write stress command %d: %v", i, err)
 		}
-		waitForBinaryContainsLabel(t, ctx, conn, "stress session "+sessionID+" hold marker", "CMUX_HOLD", 10*time.Second)
+		waitForBinaryContainsLabel(t, ctx, conn, "stress session "+sessionID+" hold marker", "MTYX_HOLD", 10*time.Second)
 		if got := hub.maxScrollbackBytes(); got != 4096 {
 			t.Fatalf("scrollback bytes = %d, want cap 4096", got)
 		}
@@ -440,7 +440,7 @@ func TestWebSocketPTYAnonymousAttachesAreIsolated(t *testing.T) {
 	defer a.Close(websocket.StatusNormalClosure, "done")
 	sendAuth(t, ctx, a, "anon-a-token", "sess-anon-shared", 80, 24)
 	readReady(t, ctx, a)
-	if err := a.Write(ctx, websocket.MessageBinary, []byte("CMUX_ANON_MARK=one; export CMUX_ANON_MARK; printf 'A_READY\\n'\r")); err != nil {
+	if err := a.Write(ctx, websocket.MessageBinary, []byte("MTYX_ANON_MARK=one; export MTYX_ANON_MARK; printf 'A_READY\\n'\r")); err != nil {
 		t.Fatalf("write anonymous A marker: %v", err)
 	}
 	waitForBinaryContains(t, ctx, a, "A_READY", 5*time.Second)
@@ -450,7 +450,7 @@ func TestWebSocketPTYAnonymousAttachesAreIsolated(t *testing.T) {
 	defer b.Close(websocket.StatusNormalClosure, "done")
 	sendAuth(t, ctx, b, "anon-b-token", "sess-anon-shared", 80, 24)
 	readReady(t, ctx, b)
-	if err := b.Write(ctx, websocket.MessageBinary, []byte("printf 'B_MARK:%s\\n' \"${CMUX_ANON_MARK-unset}\"; exit\r")); err != nil {
+	if err := b.Write(ctx, websocket.MessageBinary, []byte("printf 'B_MARK:%s\\n' \"${MTYX_ANON_MARK-unset}\"; exit\r")); err != nil {
 		t.Fatalf("write anonymous B marker: %v", err)
 	}
 	output := waitForBinaryContains(t, ctx, b, "B_MARK:unset", 5*time.Second)
@@ -474,7 +474,7 @@ func TestWebSocketPTYAnonymousSessionKeyCannotBeForged(t *testing.T) {
 	defer anon.Close(websocket.StatusNormalClosure, "done")
 	sendAuth(t, ctx, anon, "anon-forge-token", "sess-forge", 80, 24)
 	readReady(t, ctx, anon)
-	if err := anon.Write(ctx, websocket.MessageBinary, []byte("CMUX_FORGE_MARK=anon; export CMUX_FORGE_MARK; printf 'ANON_FORGE_READY\\n'\r")); err != nil {
+	if err := anon.Write(ctx, websocket.MessageBinary, []byte("MTYX_FORGE_MARK=anon; export MTYX_FORGE_MARK; printf 'ANON_FORGE_READY\\n'\r")); err != nil {
 		t.Fatalf("write anonymous forge marker: %v", err)
 	}
 	waitForBinaryContains(t, ctx, anon, "ANON_FORGE_READY", 5*time.Second)
@@ -484,7 +484,7 @@ func TestWebSocketPTYAnonymousSessionKeyCannotBeForged(t *testing.T) {
 	defer persistent.Close(websocket.StatusNormalClosure, "done")
 	sendAuthWithAttachment(t, ctx, persistent, "persistent-forge-token", "sess-forge:anon-0", "persist", 80, 24)
 	readReady(t, ctx, persistent)
-	if err := persistent.Write(ctx, websocket.MessageBinary, []byte("printf 'PERSISTENT_FORGE:%s\\n' \"${CMUX_FORGE_MARK-unset}\"; exit\r")); err != nil {
+	if err := persistent.Write(ctx, websocket.MessageBinary, []byte("printf 'PERSISTENT_FORGE:%s\\n' \"${MTYX_FORGE_MARK-unset}\"; exit\r")); err != nil {
 		t.Fatalf("write persistent forge probe: %v", err)
 	}
 	output := waitForBinaryContains(t, ctx, persistent, "PERSISTENT_FORGE:unset", 5*time.Second)
@@ -508,7 +508,7 @@ func TestWebSocketPTYAttachmentWithoutSessionIDIsAnonymous(t *testing.T) {
 	defer a.Close(websocket.StatusNormalClosure, "done")
 	sendAuthWithAttachment(t, ctx, a, "no-session-a-token", "", "same", 80, 24)
 	readReady(t, ctx, a)
-	if err := a.Write(ctx, websocket.MessageBinary, []byte("CMUX_NO_SESSION_MARK=one; export CMUX_NO_SESSION_MARK; printf 'NO_SESSION_A_READY\\n'\r")); err != nil {
+	if err := a.Write(ctx, websocket.MessageBinary, []byte("MTYX_NO_SESSION_MARK=one; export MTYX_NO_SESSION_MARK; printf 'NO_SESSION_A_READY\\n'\r")); err != nil {
 		t.Fatalf("write no-session A marker: %v", err)
 	}
 	waitForBinaryContains(t, ctx, a, "NO_SESSION_A_READY", 5*time.Second)
@@ -518,7 +518,7 @@ func TestWebSocketPTYAttachmentWithoutSessionIDIsAnonymous(t *testing.T) {
 	defer b.Close(websocket.StatusNormalClosure, "done")
 	sendAuthWithAttachment(t, ctx, b, "no-session-b-token", "", "same", 80, 24)
 	readReady(t, ctx, b)
-	if err := b.Write(ctx, websocket.MessageBinary, []byte("printf 'NO_SESSION_B:%s\\n' \"${CMUX_NO_SESSION_MARK-unset}\"; exit\r")); err != nil {
+	if err := b.Write(ctx, websocket.MessageBinary, []byte("printf 'NO_SESSION_B:%s\\n' \"${MTYX_NO_SESSION_MARK-unset}\"; exit\r")); err != nil {
 		t.Fatalf("write no-session B probe: %v", err)
 	}
 	output := waitForBinaryContains(t, ctx, b, "NO_SESSION_B:unset", 5*time.Second)
@@ -841,9 +841,9 @@ func TestDefaultWebSocketPTYEnvAddsStandardExecutableDirectories(t *testing.T) {
 		name          string
 		inheritedPath string
 	}{
-		{name: "restricted daemon PATH", inheritedPath: "/opt/cmux/bin"},
+		{name: "restricted daemon PATH", inheritedPath: "/opt/mtyx/bin"},
 		{name: "empty daemon PATH", inheritedPath: ""},
-		{name: "partially complete daemon PATH", inheritedPath: "/opt/cmux/bin:/usr/bin"},
+		{name: "partially complete daemon PATH", inheritedPath: "/opt/mtyx/bin:/usr/bin"},
 	}
 
 	for _, test := range tests {
@@ -901,7 +901,7 @@ func TestWebSocketPTYSeedsUTF8LocaleAndTerminalEnv(t *testing.T) {
 		t.Fatalf("first frame should be ready text, type=%v payload=%q", msgType, string(payload))
 	}
 
-	command := "printf '%s\\n' \"$LANG|$LC_CTYPE|$LC_ALL|$TERM|$COLORTERM|$TERM_PROGRAM|$CMUX_REMOTE_TRANSPORT\"; locale charmap; exit\r"
+	command := "printf '%s\\n' \"$LANG|$LC_CTYPE|$LC_ALL|$TERM|$COLORTERM|$TERM_PROGRAM|$MTYX_REMOTE_TRANSPORT\"; locale charmap; exit\r"
 	if err := conn.Write(ctx, websocket.MessageBinary, []byte(command)); err != nil {
 		t.Fatalf("write terminal command: %v", err)
 	}
