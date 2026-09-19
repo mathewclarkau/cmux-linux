@@ -1,0 +1,7 @@
+# Line-ending policy. Windows checkouts with autocrlf materialise text
+# files with CRLF, which breaks line-anchored tooling (the release.yml
+# version-sync perl is the case that shipped: run 35409753696). Pin
+# manifests to LF on every OS, every checkout. Deliberately scoped:
+# no broad `* eol=lf` here — patch files and friends have history
+# (see scripts/bootstrap.sh's CRLF patch ladder and commit 3479e64).
+*.toml text eol=lf
