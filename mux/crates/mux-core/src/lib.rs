@@ -63,9 +63,9 @@ pub use mux::{Mux, MuxEvent};
 pub use remote_pty::RemoteSpec;
 pub use short_id::assign_short_ids;
 pub use surface::{
-    AgentReport, AgentState, AgentStateSource, AttachFrame, AttachStream, BrowserAttachState,
-    BrowserFrame, BrowserFrameStream, BrowserSource, BrowserStatus, DefaultColors, SpawnOverrides,
-    Surface, SurfaceKind, SurfaceOptions,
+    parse_vt_size, AgentReport, AgentState, AgentStateSource, AttachFrame, AttachStream,
+    BrowserAttachState, BrowserFrame, BrowserFrameStream, BrowserSource, BrowserStatus,
+    DefaultColors, SpawnOverrides, Surface, SurfaceKind, SurfaceOptions,
 };
 pub use worktree::WorktreeRecord;
 

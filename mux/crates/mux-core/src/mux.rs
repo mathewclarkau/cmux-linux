@@ -225,8 +225,9 @@ impl Mux {
             opts.cwd = cwd;
         }
         // Spawn at the final size when the frontend knows it: starting at
-        // the default 80x24 and resizing a frame later makes shells emit
-        // artifacts (e.g. zsh's reverse-video %% partial-line marker).
+        // the headless default 120x40 (issue #99) and resizing a frame
+        // later makes shells emit artifacts (e.g. zsh's reverse-video %%
+        // partial-line marker).
         if let Some((cols, rows)) = size {
             opts.cols = cols.max(1);
             opts.rows = rows.max(1);

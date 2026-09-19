@@ -865,6 +865,17 @@ fn run_server(args: Args) -> anyhow::Result<()> {
     if let Some(term) = args.term {
         surface_options.term = term;
     }
+    // Issue #99: headless VT geometry from mux.json (`headless.vt_size`,
+    // e.g. "100x30") — the size surfaces spawn at when no client is
+    // attached. Only applied when `MTYX_MUX_VT_SIZE` (read in
+    // `SurfaceOptions::default`) is unset, so a per-process env override
+    // still wins over the config file.
+    if std::env::var_os("MTYX_MUX_VT_SIZE").is_none() {
+        if let Some((cols, rows)) = config.headless.vt_size {
+            surface_options.cols = cols;
+            surface_options.rows = rows;
+        }
+    }
     // Compute the socket path up front so surface children inherit it.
     let socket_path =
         args.socket.clone().unwrap_or_else(|| mux_core::server::default_socket_path(&args.session));

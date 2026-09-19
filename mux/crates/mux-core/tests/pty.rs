@@ -204,6 +204,43 @@ fn surface_resize_reports_whether_the_size_changed() {
     mux.close_surface(surface.id);
 }
 
+/// Issue #99: a surface spawned with no explicit size and no client
+/// attached uses the 120x40 headless default (adapting to a
+/// `MTYX_MUX_VT_SIZE` override when one is exported), an explicit
+/// `SurfaceOptions` geometry (what mux.json `headless.vt_size` layers on
+/// in `run_server`) wins, and a later attach-style resize still moves
+/// the surface cleanly.
+#[test]
+fn headless_spawn_uses_default_geometry_and_attach_resize_still_works() {
+    let expected = std::env::var("MTYX_MUX_VT_SIZE")
+        .ok()
+        .and_then(|value| mux_core::parse_vt_size(&value))
+        .unwrap_or((120, 40));
+
+    // Default: no size passed down the spawn path.
+    let mux = Mux::new(unique_session("test-headless-geometry"), shell_opts("sleep 30"));
+    let surface = mux.new_workspace(None, None).unwrap();
+    assert_eq!(surface.size(), expected, "headless default geometry");
+
+    // Override: explicit geometry yields exactly that size.
+    let opts = SurfaceOptions {
+        command: Some(vec!["/bin/cat".to_string()]),
+        cols: 100,
+        rows: 30,
+        ..Default::default()
+    };
+    let mux2 = Mux::new(unique_session("test-headless-geometry-override"), opts);
+    let surface2 = mux2.new_workspace(None, None).unwrap();
+    assert_eq!(surface2.size(), (100, 30), "explicit vt_size override");
+
+    // Attach-style resize from the default geometry still applies.
+    assert!(surface.resize(80, 50));
+    assert_eq!(surface.size(), (80, 50));
+
+    mux.close_surface(surface.id);
+    mux2.close_surface(surface2.id);
+}
+
 #[test]
 fn surface_exit_reaps_tree_and_emits_event() {
     let opts =
