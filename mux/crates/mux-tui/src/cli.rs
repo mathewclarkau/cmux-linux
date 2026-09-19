@@ -1300,12 +1300,35 @@ fn build_rename_session(flags: &FlagMap) -> Result<Value, UsageError> {
     Ok(value)
 }
 
+/// Runtime dir honoured by `global` for the name-keyed verbs
+/// (`kill-session`, `rename-session`): the parent of an explicit
+/// `--socket`, else the canonical `platform::runtime_dir()`.
+/// Deliberately NOT legacy-aware — those verbs address one exact
+/// directory; legacy probing belongs to [`discover_sessions`] and
+/// `mux_core::server::client_socket_path`.
 pub(crate) fn get_runtime_dir(global: &GlobalArgs) -> PathBuf {
     global
         .socket
         .as_ref()
         .and_then(|s| s.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(mux_core::platform::runtime_dir)
+}
+
+/// Directories [`discover_sessions`] scans, in precedence order
+/// (issue #83).
+///
+/// An explicit `--socket <parent>/x.sock` pins discovery to exactly that
+/// parent — verbatim, no legacy fallback: the caller asked for one
+/// specific location and must not see unrelated roots. Otherwise the
+/// canonical `mtyx-<uid>` root is scanned first, then the pre-rename
+/// `cmux-<uid>` root, so sessions still served by a live legacy daemon
+/// stay listable and attachable. The legacy root is probe-only: the
+/// server never binds it.
+fn discovery_roots(global: &GlobalArgs) -> Vec<PathBuf> {
+    match global.socket.as_ref().and_then(|s| s.parent()) {
+        Some(parent) => vec![parent.to_path_buf()],
+        None => vec![mux_core::platform::runtime_dir(), mux_core::platform::legacy_runtime_dir()],
+    }
 }
 
 pub(crate) fn read_pid_file(path: &std::path::Path) -> Option<u32> {
@@ -1330,42 +1353,58 @@ pub(crate) struct DiscoveredSession {
     pub(crate) mtime: Option<std::time::SystemTime>,
 }
 
-/// Socket-centric discovery of mtyx sessions in the runtime dir honoured
-/// by `global` (parent of `--socket`, else `platform::runtime_dir()`).
-/// One row per `*.sock`: derive the pid via `server::pid_path`, liveness via
-/// `server::is_session_socket_live`, and an mtime for uptime sort. Shared by
-/// `run_list_sessions`, `run_kill_stale`, `run_attach_session_list_json`,
-/// and the interactive picker. Returned unsorted (read_dir order is
-/// filesystem-dependent); callers sort as needed.
+/// Socket-centric discovery of mtyx sessions across the runtime roots
+/// selected by [`discovery_roots`] (issue #83): the canonical `mtyx-<uid>`
+/// dir AND, unless `--socket` pinned discovery to one parent, the legacy
+/// `cmux-<uid>` dir. One row per `*.sock`: derive the pid via
+/// `server::pid_path`, liveness via `server::is_session_socket_live`, and
+/// an mtime for uptime sort. Shared by `run_list_sessions`,
+/// `run_kill_stale`, `run_attach_session_list_json`, and the interactive
+/// picker. Returned unsorted (read_dir order is filesystem-dependent);
+/// callers sort as needed. Each row's `socket_path` names the root it was
+/// found in, so attach reconnects to the right (possibly legacy) socket.
 pub(crate) fn discover_sessions(global: &GlobalArgs) -> Vec<DiscoveredSession> {
-    let dir = get_runtime_dir(global);
-    let mut out = Vec::new();
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(_) => return out,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("sock") {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
+    discover_sessions_in_roots(&discovery_roots(global))
+}
+
+/// [`discover_sessions`] with an explicit, ordered root list. Roots are
+/// scanned in order and a session name already seen in an earlier root is
+/// skipped, so on a same-named collision the canonical root (scanned
+/// first) wins. Split out from `discover_sessions` so unit tests can drive
+/// two synthetic roots without mutating process-global environment.
+fn discover_sessions_in_roots(roots: &[PathBuf]) -> Vec<DiscoveredSession> {
+    let mut out: Vec<DiscoveredSession> = Vec::new();
+    for dir in roots {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
         };
-        let pid_p = mux_core::server::pid_path(&path);
-        let pid = read_pid_file(&pid_p);
-        let live = mux_core::server::is_session_socket_live(&path);
-        let mtime = std::fs::metadata(&pid_p)
-            .and_then(|m| m.modified())
-            .or_else(|_| std::fs::metadata(&path).and_then(|m| m.modified()))
-            .ok();
-        out.push(DiscoveredSession {
-            session: stem.to_string(),
-            socket_path: path,
-            pid,
-            live,
-            mtime,
-        });
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("sock") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if out.iter().any(|s| s.session == stem) {
+                continue;
+            }
+            let pid_p = mux_core::server::pid_path(&path);
+            let pid = read_pid_file(&pid_p);
+            let live = mux_core::server::is_session_socket_live(&path);
+            let mtime = std::fs::metadata(&pid_p)
+                .and_then(|m| m.modified())
+                .or_else(|_| std::fs::metadata(&path).and_then(|m| m.modified()))
+                .ok();
+            out.push(DiscoveredSession {
+                session: stem.to_string(),
+                socket_path: path,
+                pid,
+                live,
+                mtime,
+            });
+        }
     }
     out
 }
@@ -1396,10 +1435,18 @@ fn run_list_sessions(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
             3
         }
     } else {
+        // Optional issue-#83 affordance: badge rows whose socket lives in
+        // the legacy `cmux-<uid>` root so the origin is visible in human
+        // output too (--json carries socket_path per entry already).
+        let legacy_root = mux_core::platform::legacy_runtime_dir();
         for s in &sessions {
             let pid_str = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".to_string());
             let status = if s.live { "live" } else { "stale" };
-            println!("{} {} {}", s.session, pid_str, status);
+            if s.socket_path.parent() == Some(legacy_root.as_path()) {
+                println!("{} {} {} legacy", s.session, pid_str, status);
+            } else {
+                println!("{} {} {}", s.session, pid_str, status);
+            }
         }
         0
     }
@@ -1409,7 +1456,9 @@ fn run_list_sessions(global: &GlobalArgs, _flags: &FlagMap) -> i32 {
 /// discovery dump. Same shape as `run_list_sessions`'s JSON branch PLUS a
 /// `socket_path` per entry, so a caller can reconnect to the exact socket
 /// — important when discovery is scoped by `--socket <parent>/x.sock` and
-/// `runtime_dir()` would resolve elsewhere. Exit 0; 3 on write error.
+/// `runtime_dir()` would resolve elsewhere, and since issue #83 also for
+/// legacy `cmux-<uid>` sessions, whose `socket_path` names that root.
+/// Exit 0; 3 on write error.
 pub(crate) fn run_attach_session_list_json(global: &GlobalArgs) -> i32 {
     let mut sessions = discover_sessions(global);
     sessions.sort_by(|a, b| a.session.cmp(&b.session));
@@ -2387,5 +2436,115 @@ mod tests {
         let _ = std::fs::remove_file(&new_sock);
         let _ = std::fs::remove_file(server::pid_path(&new_sock));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- issue #83: legacy cmux-<uid> runtime-root discovery ---
+
+    /// Make `dir` and drop a zero-byte `<name>.sock` in it. A plain file is
+    /// enough: `is_session_socket_live` cannot connect to it, so it reads
+    /// as `stale` — discovery only cares that the row appears.
+    fn mk_sock_root(dir: &std::path::Path, names: &[&str]) {
+        std::fs::create_dir_all(dir).unwrap();
+        for name in names {
+            std::fs::write(dir.join(format!("{name}.sock")), b"").unwrap();
+        }
+    }
+
+    fn unique_tmp(tag: &str) -> PathBuf {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("mtyx-83-{tag}-{}-{stamp}", std::process::id()))
+    }
+
+    /// AC2: two synthetic roots (canonical + legacy) both contribute rows,
+    /// each carrying the socket_path of the root it was found in — so a
+    /// legacy row reconnects to the legacy socket.
+    #[test]
+    fn discover_sessions_in_roots_merges_canonical_and_legacy() {
+        let base = unique_tmp("merge");
+        let canonical = base.join("mtyx-1000");
+        let legacy = base.join("cmux-1000");
+        mk_sock_root(&canonical, &["alpha"]);
+        mk_sock_root(&legacy, &["beta"]);
+
+        let found = discover_sessions_in_roots(&[canonical.clone(), legacy.clone()]);
+        let mut names: Vec<String> = found.iter().map(|s| s.session.clone()).collect();
+        names.sort();
+        assert_eq!(names, vec!["alpha", "beta"]);
+        assert_eq!(
+            found.iter().find(|s| s.session == "alpha").unwrap().socket_path,
+            canonical.join("alpha.sock")
+        );
+        assert_eq!(
+            found.iter().find(|s| s.session == "beta").unwrap().socket_path,
+            legacy.join("beta.sock"),
+            "legacy row must carry its legacy socket_path so attach connects there"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// AC2: a same-named session in both roots resolves to the canonical
+    /// one (the legacy row is dropped, not merged).
+    #[test]
+    fn discover_sessions_in_roots_canonical_wins_on_collision() {
+        let base = unique_tmp("collide");
+        let canonical = base.join("mtyx-1000");
+        let legacy = base.join("cmux-1000");
+        mk_sock_root(&canonical, &["demo"]);
+        mk_sock_root(&legacy, &["demo"]);
+
+        let found = discover_sessions_in_roots(&[canonical.clone(), legacy]);
+        assert_eq!(found.len(), 1, "collision must dedupe to one row");
+        assert_eq!(found[0].session, "demo");
+        assert_eq!(found[0].socket_path, canonical.join("demo.sock"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An explicit `--socket <parent>/x.sock` pins discovery to that one
+    /// parent, verbatim — no legacy root appended (issue #83: must not
+    /// regress).
+    #[test]
+    fn discovery_roots_pins_explicit_socket_parent() {
+        let global = GlobalArgs {
+            session: None,
+            socket: Some(PathBuf::from("/tmp/mtyx-explicit/x.sock")),
+            json: false,
+        };
+        assert_eq!(discovery_roots(&global), vec![PathBuf::from("/tmp/mtyx-explicit")]);
+    }
+
+    /// AC2 (env variant): `XDG_RUNTIME_DIR` pointing at a temp base that
+    /// holds both `mtyx-<uid>/` and `cmux-<uid>/` subdirs makes the public
+    /// `discover_sessions` see both roots. The env mutation is restored
+    /// before any assertion so a panic cannot leak it to sibling tests.
+    #[test]
+    fn discover_sessions_from_env_roots_includes_legacy() {
+        let base = unique_tmp("env");
+        std::fs::create_dir_all(&base).unwrap();
+        let prev = std::env::var_os("XDG_RUNTIME_DIR");
+        std::env::set_var("XDG_RUNTIME_DIR", &base);
+        let canonical = mux_core::platform::runtime_dir();
+        let legacy = mux_core::platform::legacy_runtime_dir();
+        mk_sock_root(&canonical, &["newdemo"]);
+        mk_sock_root(&legacy, &["olddemo"]);
+
+        let global = GlobalArgs { session: None, socket: None, json: false };
+        let found = discover_sessions(&global);
+
+        match prev {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
+
+        let mut names: Vec<String> = found.iter().map(|s| s.session.clone()).collect();
+        names.sort();
+        assert_eq!(names, vec!["newdemo", "olddemo"]);
+        assert_eq!(
+            found.iter().find(|s| s.session == "olddemo").unwrap().socket_path,
+            legacy.join("olddemo.sock")
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
