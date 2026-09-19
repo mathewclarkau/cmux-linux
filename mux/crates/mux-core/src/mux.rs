@@ -570,7 +570,11 @@ close it first or apply under a new name"
         let first_tab = &ws.screens[0].panes[0].tabs[0];
         let first_surface = match first_tab {
             crate::layout_doc::LayoutTab::Remote {
-                host, slot, session_id, local_binary_path, ..
+                host,
+                slot,
+                session_id,
+                local_binary_path,
+                ..
             } => {
                 let spec = crate::remote_pty::RemoteSpec {
                     host: host.clone(),
@@ -582,11 +586,7 @@ close it first or apply under a new name"
             }
             tab => {
                 let overrides = layout_tab_overrides(tab);
-                self.new_workspace_with_overrides(
-                    Some(name.to_string()),
-                    None,
-                    overrides.as_ref(),
-                )?
+                self.new_workspace_with_overrides(Some(name.to_string()), None, overrides.as_ref())?
             }
         };
         let ws_id = self.with_state(|s| s.workspaces.last().unwrap().id);
@@ -603,8 +603,9 @@ close it first or apply under a new name"
 
         // Screen 0 already exists around `first_surface`.
         let bootstrap_pane = self.with_state(|s| s.pane_of(first_surface.id).unwrap());
-        let screen0_id =
-            self.with_state(|s| s.screen_of(bootstrap_pane).map(|(wi, si)| s.workspaces[wi].screens[si].id).unwrap());
+        let screen0_id = self.with_state(|s| {
+            s.screen_of(bootstrap_pane).map(|(wi, si)| s.workspaces[wi].screens[si].id).unwrap()
+        });
         self.apply_layout_screen(&ws.screens[0], screen0_id, bootstrap_pane, Some(bootstrap_pane))?;
 
         for screen in &ws.screens[1..] {
@@ -612,8 +613,7 @@ close it first or apply under a new name"
             // the recorded argv/env when that tab is a pty.
             let first = &screen.panes[leftmost_layout_index(&screen.layout)].tabs[0];
             let overrides = layout_tab_overrides(first);
-            let surface =
-                self.new_screen_with_overrides(Some(ws_id), None, overrides.as_ref())?;
+            let surface = self.new_screen_with_overrides(Some(ws_id), None, overrides.as_ref())?;
             let (screen_id, pane_id) = self.with_state(|s| {
                 let pane_id = s.pane_of(surface.id).unwrap();
                 let (wi, si) = s.screen_of(pane_id).unwrap();
@@ -703,16 +703,25 @@ reattaching to remote session {session_id} on {host} \
                         let overrides = layout_tab_overrides(tab)
                             .expect("a pty layout tab always maps to spawn overrides");
                         let surface = self
-                            .new_tab_with_overrides(Some(pane_id), None, None, Some(&overrides), None)
-                            .map_err(|e| anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}"))?;
+                            .new_tab_with_overrides(
+                                Some(pane_id),
+                                None,
+                                None,
+                                Some(&overrides),
+                                None,
+                            )
+                            .map_err(|e| {
+                                anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}")
+                            })?;
                         if let Some(name) = name {
                             self.rename_surface(surface.id, name.clone());
                         }
                     }
                     crate::layout_doc::LayoutTab::Browser { name, url } => {
-                        let surface = self
-                            .new_browser_tab(url.clone(), Some(pane_id), None)
-                            .map_err(|e| anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}"))?;
+                        let surface =
+                            self.new_browser_tab(url.clone(), Some(pane_id), None).map_err(
+                                |e| anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}"),
+                            )?;
                         if let Some(name) = name {
                             self.rename_surface(surface.id, name.clone());
                         }
@@ -723,9 +732,9 @@ reattaching to remote session {session_id} on {host} \
 reattaching to remote session {session_id} on {host} \
 (only a workspace's first pane can do that)"
                         )));
-                        let surface = self
-                            .new_tab(Some(pane_id), None, None)
-                            .map_err(|e| anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}"))?;
+                        let surface = self.new_tab(Some(pane_id), None, None).map_err(|e| {
+                            anyhow::anyhow!("pane {index} (pane-id {pane_id}): {e}")
+                        })?;
                         if let Some(name) = name {
                             self.rename_surface(surface.id, name.clone());
                         }
@@ -1135,8 +1144,7 @@ reattaching to remote session {session_id} on {host} \
                 None => state.active_pane(),
             }
         };
-        let start =
-            cwd.clone().or_else(|| target.and_then(|t| self.pane_surface_cwd(t)));
+        let start = cwd.clone().or_else(|| target.and_then(|t| self.pane_surface_cwd(t)));
         let Some(start) = start else {
             anyhow::bail!("cannot resolve a repository: no --cwd and no pane working directory");
         };
@@ -1651,8 +1659,7 @@ reattaching to remote session {session_id} on {host} \
     ) -> Option<AgentReport> {
         let surface = self.state.lock().unwrap().surfaces.get(&target).cloned()?;
         let previous = surface.agent_report().map(|r| r.state);
-        let (report, applied) =
-            surface.set_agent_report(state, source, session, agent, message)?;
+        let (report, applied) = surface.set_agent_report(state, source, session, agent, message)?;
         if applied {
             self.emit(MuxEvent::AgentStateChanged {
                 surface: target,
@@ -1723,7 +1730,11 @@ reattaching to remote session {session_id} on {host} \
         pattern.validate().map_err(anyhow::Error::msg)?;
         let mut custom = self.custom_agent_patterns.lock().unwrap();
         if custom.iter().any(|p| p == &pattern) {
-            anyhow::bail!("pattern {:?} for agent {:?} is already registered", pattern.pattern, pattern.name);
+            anyhow::bail!(
+                "pattern {:?} for agent {:?} is already registered",
+                pattern.pattern,
+                pattern.name
+            );
         }
         custom.push(pattern);
         Ok(())
@@ -1736,7 +1747,9 @@ reattaching to remote session {session_id} on {host} \
         let before = custom.len();
         custom.retain(|p| p.name != name);
         if custom.len() == before {
-            anyhow::bail!("no user pattern for agent {name:?} (bundled patterns cannot be removed)");
+            anyhow::bail!(
+                "no user pattern for agent {name:?} (bundled patterns cannot be removed)"
+            );
         }
         Ok(())
     }
@@ -1757,9 +1770,8 @@ reattaching to remote session {session_id} on {host} \
         if !settings.enabled {
             anyhow::bail!("agent detection disabled by configuration");
         }
-        let surface = self
-            .surface(surface)
-            .ok_or_else(|| anyhow::anyhow!("unknown surface {surface}"))?;
+        let surface =
+            self.surface(surface).ok_or_else(|| anyhow::anyhow!("unknown surface {surface}"))?;
         let detection = self.detect_on_surface(&surface)?;
         surface.set_detected_agent(detection.clone());
         self.emit(MuxEvent::TreeChanged);
@@ -1781,7 +1793,9 @@ reattaching to remote session {session_id} on {host} \
         let settings = self.agent_detection();
         let patterns = self.agent_pattern_list()?;
         if surface.kind() != crate::SurfaceKind::Pty {
-            return Ok(Detection::unknown("browser surface: no PTY process tree or screen to scan"));
+            return Ok(Detection::unknown(
+                "browser surface: no PTY process tree or screen to scan",
+            ));
         }
         // A cmuxd-remote surface's local child is the ssh transport, not
         // the pane's real processes — skip process evidence there; the
@@ -1830,9 +1844,8 @@ reattaching to remote session {session_id} on {host} \
     ) -> anyhow::Result<crate::worktree::WorktreeRecord> {
         use crate::worktree;
 
-        let repo_root = worktree::find_repo_root(Path::new(start_cwd)).ok_or_else(|| {
-            anyhow::anyhow!("{start_cwd:?} is not inside a git repository")
-        })?;
+        let repo_root = worktree::find_repo_root(Path::new(start_cwd))
+            .ok_or_else(|| anyhow::anyhow!("{start_cwd:?} is not inside a git repository"))?;
         let path = worktree::resolve_worktree_path(&repo_root, &self.worktree_pattern(), branch)?;
         worktree::git_worktree_add(&repo_root, branch, &path)?;
         Ok(crate::worktree::WorktreeRecord {
@@ -1855,17 +1868,13 @@ reattaching to remote session {session_id} on {host} \
     ) -> anyhow::Result<crate::worktree::WorktreeRecord> {
         let surface = {
             let state = self.state.lock().unwrap();
-            let Some(p) = state.panes.get(&pane) else {
-                anyhow::bail!("unknown pane {pane}")
-            };
+            let Some(p) = state.panes.get(&pane) else { anyhow::bail!("unknown pane {pane}") };
             let active = p
                 .active_surface()
                 .ok_or_else(|| anyhow::anyhow!("pane {pane} has no active tab"))?;
             state.surfaces.get(&active).cloned()
         };
-        let Some(surface) = surface else {
-            anyhow::bail!("pane {pane} has no active surface")
-        };
+        let Some(surface) = surface else { anyhow::bail!("pane {pane} has no active surface") };
         if surface.kind() != crate::SurfaceKind::Pty {
             anyhow::bail!("pane {pane}'s active tab is not a pty surface");
         }
@@ -1875,9 +1884,7 @@ reattaching to remote session {session_id} on {host} \
         let record = self.create_worktree(&cwd, branch, label)?;
         {
             let mut state = self.state.lock().unwrap();
-            let Some(p) = state.panes.get_mut(&pane) else {
-                anyhow::bail!("unknown pane {pane}")
-            };
+            let Some(p) = state.panes.get_mut(&pane) else { anyhow::bail!("unknown pane {pane}") };
             p.worktrees.push(record.clone());
         }
         // Same live `cd` the persist path uses (restore_tab): the pane
@@ -1897,9 +1904,7 @@ reattaching to remote session {session_id} on {host} \
         pane: PaneId,
     ) -> anyhow::Result<Vec<crate::worktree::WorktreeRecord>> {
         let state = self.state.lock().unwrap();
-        let Some(p) = state.panes.get(&pane) else {
-            anyhow::bail!("unknown pane {pane}")
-        };
+        let Some(p) = state.panes.get(&pane) else { anyhow::bail!("unknown pane {pane}") };
         Ok(p.worktrees.clone())
     }
 
@@ -1907,29 +1912,25 @@ reattaching to remote session {session_id} on {host} \
     /// `prune`, then drop the record. Refuses (error, no force flag)
     /// while the pane's working directory sits inside the target
     /// worktree; a dirty worktree fails via git's own error.
-    pub fn pane_worktree_remove(self: &Arc<Self>, pane: PaneId, branch: &str) -> anyhow::Result<()> {
+    pub fn pane_worktree_remove(
+        self: &Arc<Self>,
+        pane: PaneId,
+        branch: &str,
+    ) -> anyhow::Result<()> {
         use crate::worktree;
 
         let (record, cwd) = {
             let state = self.state.lock().unwrap();
-            let Some(p) = state.panes.get(&pane) else {
-                anyhow::bail!("unknown pane {pane}")
-            };
+            let Some(p) = state.panes.get(&pane) else { anyhow::bail!("unknown pane {pane}") };
             let Some(record) = p.worktrees.iter().find(|w| w.branch == branch) else {
                 anyhow::bail!("no worktree for branch {branch:?} on pane {pane}")
             };
             let record = record.clone();
-            let cwd = p
-                .active_surface()
-                .and_then(|s| state.surfaces.get(&s))
-                .and_then(|s| s.cwd());
+            let cwd = p.active_surface().and_then(|s| state.surfaces.get(&s)).and_then(|s| s.cwd());
             (record, cwd)
         };
         if cwd.as_deref().is_some_and(|cwd| Path::new(cwd).starts_with(record.path.as_str())) {
-            anyhow::bail!(
-                "pane {pane} is inside {}; cd elsewhere before removing it",
-                record.path
-            );
+            anyhow::bail!("pane {pane} is inside {}; cd elsewhere before removing it", record.path);
         }
         // Resolve the MAIN repository through the worktree's own `.git`
         // pointer so remove/prune run from a stable repo context even if
@@ -2412,9 +2413,39 @@ mod tests {
             }],
             active_workspace: 0,
             panes: HashMap::from([
-                (p1, Pane { id: p1, name: None, tabs: vec![1], active_tab: 0, active_at: 1, worktrees: Vec::new() }),
-                (p2, Pane { id: p2, name: None, tabs: vec![2], active_tab: 0, active_at: 2, worktrees: Vec::new() }),
-                (p3, Pane { id: p3, name: None, tabs: vec![3], active_tab: 0, active_at: 3, worktrees: Vec::new() }),
+                (
+                    p1,
+                    Pane {
+                        id: p1,
+                        name: None,
+                        tabs: vec![1],
+                        active_tab: 0,
+                        active_at: 1,
+                        worktrees: Vec::new(),
+                    },
+                ),
+                (
+                    p2,
+                    Pane {
+                        id: p2,
+                        name: None,
+                        tabs: vec![2],
+                        active_tab: 0,
+                        active_at: 2,
+                        worktrees: Vec::new(),
+                    },
+                ),
+                (
+                    p3,
+                    Pane {
+                        id: p3,
+                        name: None,
+                        tabs: vec![3],
+                        active_tab: 0,
+                        active_at: 3,
+                        worktrees: Vec::new(),
+                    },
+                ),
             ]),
             surfaces: HashMap::new(),
         };
@@ -2692,8 +2723,9 @@ mod tests {
 
         assert!(mux.list_agents(None, None).is_empty());
 
-        let report =
-            mux.report_agent(surface, AgentState::Working, AgentStateSource::Socket, None, None, None).unwrap();
+        let report = mux
+            .report_agent(surface, AgentState::Working, AgentStateSource::Socket, None, None, None)
+            .unwrap();
         assert_eq!(report.state, AgentState::Working);
         assert_eq!(report.source, AgentStateSource::Socket);
 
@@ -2712,8 +2744,9 @@ mod tests {
         assert_eq!(report.source, AgentStateSource::Hook);
 
         // A socket report cannot override an existing hook report.
-        let report =
-            mux.report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None, None, None).unwrap();
+        let report = mux
+            .report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None, None, None)
+            .unwrap();
         assert_eq!(
             report.state,
             AgentState::Blocked,
@@ -2752,18 +2785,21 @@ mod tests {
             s.panes[&pane].tabs[0]
         });
 
-        mux.report_agent(surface, AgentState::Working, AgentStateSource::Hook, None, None, None).unwrap();
+        mux.report_agent(surface, AgentState::Working, AgentStateSource::Hook, None, None, None)
+            .unwrap();
         let events = mux.subscribe();
 
         // Rejected: socket cannot override the existing hook report, so no
         // event should fire.
-        mux.report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None, None, None).unwrap();
+        mux.report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None, None, None)
+            .unwrap();
         assert!(
             events.try_iter().count() == 0,
             "a rejected report must not emit agent-state-changed"
         );
 
-        mux.report_agent(surface, AgentState::Done, AgentStateSource::Hook, None, None, None).unwrap();
+        mux.report_agent(surface, AgentState::Done, AgentStateSource::Hook, None, None, None)
+            .unwrap();
         let fired = events.try_iter().any(|e| {
             matches!(e, MuxEvent::AgentStateChanged { report, .. } if report.state == AgentState::Done)
         });
@@ -2773,8 +2809,7 @@ mod tests {
     // -- issue #76: layout apply ------------------------------------------
 
     use crate::layout_doc::{
-        LayoutDir, LayoutDocument, LayoutNode, LayoutPane, LayoutScreen, LayoutTab,
-        LayoutWorkspace,
+        LayoutDir, LayoutDocument, LayoutNode, LayoutPane, LayoutScreen, LayoutTab, LayoutWorkspace,
     };
     use crate::LAYOUT_SCHEMA_VERSION;
     use std::collections::BTreeMap;
@@ -2953,11 +2988,7 @@ mod tests {
             },
             vec![
                 LayoutPane { name: None, active_tab: 0, tabs: vec![layout_cat_tab()] },
-                LayoutPane {
-                    name: None,
-                    active_tab: 0,
-                    tabs: vec![layout_cat_tab(), bad_tab],
-                },
+                LayoutPane { name: None, active_tab: 0, tabs: vec![layout_cat_tab(), bad_tab] },
             ],
         );
         let err = mux.apply_layout("faildoc", &doc).unwrap_err().to_string();
@@ -3062,14 +3093,7 @@ mod tests {
         // name addressing survives interim reports) but clears the
         // message (last report wins).
         let report = mux
-            .report_agent(
-                surface,
-                AgentState::Idle,
-                AgentStateSource::Socket,
-                None,
-                None,
-                None,
-            )
+            .report_agent(surface, AgentState::Idle, AgentStateSource::Socket, None, None, None)
             .unwrap();
         assert_eq!(report.message, None);
         assert_eq!(report.agent.as_deref(), Some("worker-1"));
@@ -3105,14 +3129,28 @@ mod tests {
         assert!(mux.resolve_agent_target("999999").is_err());
 
         // One surface named "worker": exact match wins, id still works.
-        mux.report_agent(s1, AgentState::Working, AgentStateSource::Socket, None, Some("worker".into()), None)
-            .unwrap();
+        mux.report_agent(
+            s1,
+            AgentState::Working,
+            AgentStateSource::Socket,
+            None,
+            Some("worker".into()),
+            None,
+        )
+        .unwrap();
         assert_eq!(mux.resolve_agent_target("worker").unwrap(), s1);
         assert_eq!(mux.resolve_agent_target(&s1.to_string()).unwrap(), s1);
 
         // Two surfaces named "worker": ambiguous, listing both ids.
-        mux.report_agent(s2, AgentState::Working, AgentStateSource::Socket, None, Some("worker".into()), None)
-            .unwrap();
+        mux.report_agent(
+            s2,
+            AgentState::Working,
+            AgentStateSource::Socket,
+            None,
+            Some("worker".into()),
+            None,
+        )
+        .unwrap();
         let err = mux.resolve_agent_target("worker").unwrap_err().to_string();
         assert!(err.contains("ambiguous"), "got: {err}");
         assert!(err.contains(&s1.to_string()) && err.contains(&s2.to_string()), "got: {err}");
@@ -3159,11 +3197,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let out = std::process::Command::new("git").arg("init").arg(&dir).output().unwrap();
-        assert!(
-            out.status.success(),
-            "git init failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        assert!(out.status.success(), "git init failed: {}", String::from_utf8_lossy(&out.stderr));
         let out = std::process::Command::new("git")
             .args(["-c", "user.email=mtyx@test", "-c", "user.name=mtyx"])
             .args(["commit", "--allow-empty", "-m", "init"])
@@ -3241,7 +3275,10 @@ mod tests {
             .unwrap();
         assert!(out.status.success());
         let listing = String::from_utf8_lossy(&out.stdout);
-        assert!(!listing.contains("feat-auth"), "git worktree list should drop feat-auth: {listing}");
+        assert!(
+            !listing.contains("feat-auth"),
+            "git worktree list should drop feat-auth: {listing}"
+        );
 
         // Removing again finds no record.
         assert!(mux.pane_worktree_remove(pane, "feat-auth").is_err());
@@ -3338,7 +3375,11 @@ mod tests {
             let active = s.panes[&pane].active_surface().unwrap();
             s.surfaces[&active].cwd()
         });
-        assert_eq!(cwd.as_deref(), Some(repo.to_string_lossy().as_ref()), "pane cwd unchanged (AC7)");
+        assert_eq!(
+            cwd.as_deref(),
+            Some(repo.to_string_lossy().as_ref()),
+            "pane cwd unchanged (AC7)"
+        );
 
         // Not-in-a-repo also propagates cleanly.
         let bare = std::env::temp_dir().join(format!("mtyx-mux-wt-bare-{}", std::process::id()));

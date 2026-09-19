@@ -372,7 +372,11 @@ impl Surface {
         // shell start wherever it normally would," not "assume it starts
         // in this machine's $HOME."
         let initial_cwd = opts.cwd.clone().or_else(|| {
-            opts.remote.is_none().then(platform::home_dir).flatten().map(|p| p.display().to_string())
+            opts.remote
+                .is_none()
+                .then(platform::home_dir)
+                .flatten()
+                .map(|p| p.display().to_string())
         });
         if let Some(cwd) = initial_cwd.as_deref() {
             cmd.cwd(cwd);
@@ -394,10 +398,7 @@ impl Surface {
             crate::win::assign_pid_to_kill_on_close_job(pid);
         }
         let killer = child.clone_killer();
-        let mut reader = pty
-            .master
-            .try_clone_reader()
-            .context("cloning pty master reader")?;
+        let mut reader = pty.master.try_clone_reader().context("cloning pty master reader")?;
         let writer = pty.master.take_writer().context("taking pty master writer")?;
 
         // Query responses generated while parsing pty output are queued
@@ -432,11 +433,7 @@ impl Surface {
             term.set_default_colors(colors.fg, colors.bg);
         }
         let surface = Arc::new(Surface::Pty(PtySurface {
-            meta: SurfaceMeta {
-                id,
-                name: Mutex::new(None),
-                detected_agent: Mutex::new(None),
-            },
+            meta: SurfaceMeta { id, name: Mutex::new(None), detected_agent: Mutex::new(None) },
             term: Mutex::new(term),
             writer: Mutex::new(writer),
             master: Mutex::new(pty.master),
@@ -503,7 +500,11 @@ impl Surface {
                                     None,
                                     None,
                                 );
-                                mux.emit(MuxEvent::OscNotification { surface: surface.id, title, body });
+                                mux.emit(MuxEvent::OscNotification {
+                                    surface: surface.id,
+                                    title,
+                                    body,
+                                });
                             }
                         }
                     }
@@ -669,7 +670,8 @@ impl Surface {
     /// Best-known working directory: the shell's live OSC 7 report when
     /// available, otherwise the directory the surface was spawned in.
     pub fn cwd(&self) -> Option<String> {
-        self.as_pty().and_then(|pty| pty.pwd.lock().unwrap().clone().or_else(|| pty.initial_cwd.clone()))
+        self.as_pty()
+            .and_then(|pty| pty.pwd.lock().unwrap().clone().or_else(|| pty.initial_cwd.clone()))
     }
 
     /// The `RemoteSpec` this surface was spawned with, if it's a

@@ -1723,7 +1723,9 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             let confidence = match confidence.as_deref() {
                 None | Some("medium") => crate::agent_detect::Confidence::Medium,
                 Some(other) => crate::agent_detect::Confidence::parse(other).ok_or_else(|| {
-                    anyhow::anyhow!("bad confidence {other:?} (want \"high\", \"medium\", or \"low\")")
+                    anyhow::anyhow!(
+                        "bad confidence {other:?} (want \"high\", \"medium\", or \"low\")"
+                    )
                 })?,
             };
             let pattern = crate::agent_detect::AgentPattern {
@@ -1737,11 +1739,8 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             Ok(agent_pattern_json(&pattern))
         }
         Command::AgentPatternList => {
-            let patterns = mux
-                .agent_pattern_list()?
-                .iter()
-                .map(agent_pattern_json)
-                .collect::<Vec<_>>();
+            let patterns =
+                mux.agent_pattern_list()?.iter().map(agent_pattern_json).collect::<Vec<_>>();
             Ok(json!({ "patterns": patterns }))
         }
         Command::AgentPatternRemove { name } => {
@@ -1753,11 +1752,8 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             Ok(json!({ "pane": pane, "branch": record.branch, "path": record.path }))
         }
         Command::PaneWorktreeList { pane } => {
-            let worktrees = mux
-                .pane_worktree_list(pane)?
-                .iter()
-                .map(worktree_record_json)
-                .collect::<Vec<_>>();
+            let worktrees =
+                mux.pane_worktree_list(pane)?.iter().map(worktree_record_json).collect::<Vec<_>>();
             Ok(json!({ "worktrees": worktrees }))
         }
         Command::PaneWorktreeRemove { pane, branch } => {
@@ -2310,7 +2306,10 @@ mod tests {
         let mux = MUX.get_or_init(|| {
             Mux::new(
                 "wt-wire",
-                SurfaceOptions { command: Some(vec!["/bin/cat".to_string()]), ..Default::default() },
+                SurfaceOptions {
+                    command: Some(vec!["/bin/cat".to_string()]),
+                    ..Default::default()
+                },
             )
         });
         let dir = temp_git_repo("wire");
@@ -2327,9 +2326,9 @@ mod tests {
             .unwrap()
             .iter()
             .find(|p| {
-                p["tabs"].as_array().is_some_and(|tabs| {
-                    tabs.iter().any(|t| t["surface"].as_u64() == Some(surface))
-                })
+                p["tabs"]
+                    .as_array()
+                    .is_some_and(|tabs| tabs.iter().any(|t| t["surface"].as_u64() == Some(surface)))
             })
             .expect("pane holding the workspace surface")
             .get("id")
@@ -2384,8 +2383,7 @@ mod tests {
         assert_eq!(listed["data"]["worktrees"].as_array().unwrap().len(), 0);
 
         // Unknown pane is ok:false, not a silent empty list.
-        let unknown =
-            rpc(&sock, json!({"cmd": "pane-worktree-list", "id": 9, "pane": 9999}));
+        let unknown = rpc(&sock, json!({"cmd": "pane-worktree-list", "id": 9, "pane": 9999}));
         assert_eq!(unknown["ok"], json!(false));
         assert!(unknown["error"].as_str().unwrap().contains("unknown pane"));
 
