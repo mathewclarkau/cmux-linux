@@ -94,8 +94,12 @@ jobs:
           # sed -i because BSD sed (macOS legs) has no `0,/re/` address
           # form and a different -i syntax; perl -pi is identical on
           # GNU/Linux, macOS and Windows runners.
+          # `\r?$` + [^"]*: Windows checkouts materialise text files
+          # with CRLF (autocrlf; see also .gitattributes), so tolerate
+          # a trailing CR and rewrite the line LF-only, keeping the
+          # grep -qx gate below exact.
           MTYX_EXPECTED_VERSION="$version" perl -pi -e '
-            if (!$done && /^version = ".*"$/) {
+            if (!$done && /^version = "[^"]*"\r?$/) {
               $_ = qq(version = "$ENV{MTYX_EXPECTED_VERSION}"\n);
               $done = 1;
             }
