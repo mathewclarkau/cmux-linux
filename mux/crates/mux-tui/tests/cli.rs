@@ -1,6 +1,6 @@
 #![cfg(unix)] // the pre-parity suite is unix-flavoured end to end:
-// /bin/sh panes, printf probes, symlink fixtures, UnixListener, /proc.
-// Windows coverage lives in tests/windows_parity.rs.
+              // /bin/sh panes, printf probes, symlink fixtures, UnixListener, /proc.
+              // Windows coverage lives in tests/windows_parity.rs.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -106,8 +106,6 @@ impl HeadlessServer {
         panic!("headless server did not create socket at {}", self.socket.display());
     }
 }
-
-
 
 impl Drop for HeadlessServer {
     fn drop(&mut self) {
@@ -361,10 +359,8 @@ fn detect_agent_reports_screen_marker_evidence() {
     assert_success(&workspace);
     let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
 
-    let send = cli(
-        &server,
-        &["send", "--surface", &surface.to_string(), "--text", "printf 'codex> '\n"],
-    );
+    let send =
+        cli(&server, &["send", "--surface", &surface.to_string(), "--text", "printf 'codex> '\n"]);
     assert_success(&send);
     let _ = wait_for_screen(&server, surface, "codex>");
 
@@ -503,10 +499,8 @@ fn list_workspaces_json_exposes_agent_name_per_tab() {
     assert_success(&other);
     let other_surface: u64 = String::from_utf8(other.stdout).unwrap().trim().parse().unwrap();
 
-    let send = cli(
-        &server,
-        &["send", "--surface", &surface.to_string(), "--text", "printf 'codex> '\n"],
-    );
+    let send =
+        cli(&server, &["send", "--surface", &surface.to_string(), "--text", "printf 'codex> '\n"]);
     assert_success(&send);
     let _ = wait_for_screen(&server, surface, "codex>");
 
@@ -765,7 +759,16 @@ fn wait_agent_status_returns_immediately_when_state_matches() {
 
     let wait = cli(
         &server,
-        &["--json", "wait-agent-status", "--target", "finisher", "--status", "done", "--timeout", "5000"],
+        &[
+            "--json",
+            "wait-agent-status",
+            "--target",
+            "finisher",
+            "--status",
+            "done",
+            "--timeout",
+            "5000",
+        ],
     );
     assert_success(&wait);
     let value: serde_json::Value = serde_json::from_slice(&wait.stdout).unwrap();
@@ -788,7 +791,15 @@ fn wait_agent_status_blocks_until_report() {
     let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
     let report = cli(
         &server,
-        &["report-agent", "--surface", &surface.to_string(), "--state", "working", "--agent", "worker-w"],
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "working",
+            "--agent",
+            "worker-w",
+        ],
     );
     assert_success(&report);
 
@@ -799,7 +810,15 @@ fn wait_agent_status_blocks_until_report() {
         let _ = Command::new(bin())
             .args(["--socket"])
             .arg(&socket)
-            .args(["report-agent", "--surface", &surface_str, "--state", "idle", "--source", "hook"])
+            .args([
+                "report-agent",
+                "--surface",
+                &surface_str,
+                "--state",
+                "idle",
+                "--source",
+                "hook",
+            ])
             .env_remove("MTYX_MUX_SOCKET")
             .env_remove("CMUX_MUX_SOCKET")
             .output()
@@ -809,7 +828,16 @@ fn wait_agent_status_blocks_until_report() {
     let started = Instant::now();
     let wait = cli(
         &server,
-        &["--json", "wait-agent-status", "--target", "worker-w", "--status", "idle", "--timeout", "15000"],
+        &[
+            "--json",
+            "wait-agent-status",
+            "--target",
+            "worker-w",
+            "--status",
+            "idle",
+            "--timeout",
+            "15000",
+        ],
     );
     let wall = started.elapsed();
     assert_success(&wait);
@@ -832,7 +860,15 @@ fn wait_agent_status_times_out_exit_1() {
     let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
     let report = cli(
         &server,
-        &["report-agent", "--surface", &surface.to_string(), "--state", "working", "--agent", "stuck-w"],
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "working",
+            "--agent",
+            "stuck-w",
+        ],
     );
     assert_success(&report);
 
@@ -844,7 +880,10 @@ fn wait_agent_status_times_out_exit_1() {
     assert_eq!(wait.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&wait.stderr);
     assert!(stderr.contains("timeout"), "stderr: {stderr}");
-    assert!(started.elapsed() < Duration::from_secs(5), "must fail at its own timeout, not a transport one");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "must fail at its own timeout, not a transport one"
+    );
 }
 
 #[test]
@@ -856,14 +895,31 @@ fn wait_agent_status_zero_timeout_is_single_check() {
     let surface = String::from_utf8(workspace.stdout).unwrap().trim().parse::<u64>().unwrap();
     let report = cli(
         &server,
-        &["report-agent", "--surface", &surface.to_string(), "--state", "idle", "--agent", "zero-w"],
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "idle",
+            "--agent",
+            "zero-w",
+        ],
     );
     assert_success(&report);
 
     // Matching state: immediate success even with a zero budget.
     let hit = cli(
         &server,
-        &["--json", "wait-agent-status", "--target", "zero-w", "--status", "idle", "--timeout", "0"],
+        &[
+            "--json",
+            "wait-agent-status",
+            "--target",
+            "zero-w",
+            "--status",
+            "idle",
+            "--timeout",
+            "0",
+        ],
     );
     assert_success(&hit);
 
@@ -892,7 +948,15 @@ fn agent_target_resolution_rejects_unknown_and_ambiguous_names() {
     for surface in [s1, s2] {
         let report = cli(
             &server,
-            &["report-agent", "--surface", &surface.to_string(), "--state", "idle", "--agent", "dupe"],
+            &[
+                "report-agent",
+                "--surface",
+                &surface.to_string(),
+                "--state",
+                "idle",
+                "--agent",
+                "dupe",
+            ],
         );
         assert_success(&report);
     }
@@ -959,10 +1023,7 @@ fn agent_read_recent_source_includes_scrollback() {
         if screen.lines().any(|l| l.trim() == "BOTMARK-7Q") {
             break;
         }
-        assert!(
-            Instant::now() < deadline,
-            "loop output never rendered; screen: {screen:?}"
-        );
+        assert!(Instant::now() < deadline, "loop output never rendered; screen: {screen:?}");
         std::thread::sleep(Duration::from_millis(100));
     }
 
@@ -970,14 +1031,23 @@ fn agent_read_recent_source_includes_scrollback() {
     // out of the 24-row viewport.
     let visible = cli(
         &server,
-        &["--json", "agent-read", "--target", &surface.to_string(), "--source", "visible", "--lines", "200"],
+        &[
+            "--json",
+            "agent-read",
+            "--target",
+            &surface.to_string(),
+            "--source",
+            "visible",
+            "--lines",
+            "200",
+        ],
     );
     assert_success(&visible);
-    let visible_text =
-        serde_json::from_slice::<serde_json::Value>(&visible.stdout).unwrap()["text"]
-            .as_str()
-            .unwrap()
-            .to_string();
+    let visible_text = serde_json::from_slice::<serde_json::Value>(&visible.stdout).unwrap()
+        ["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
     assert!(
         !visible_text.contains("TOPMARK-7Q"),
         "sanity failed: marker still visible in the viewport; got {visible_text:?}"
@@ -988,7 +1058,16 @@ fn agent_read_recent_source_includes_scrollback() {
     for source in ["recent", "recent-unwrapped"] {
         let read = cli(
             &server,
-            &["--json", "agent-read", "--target", &surface.to_string(), "--source", source, "--lines", "300"],
+            &[
+                "--json",
+                "agent-read",
+                "--target",
+                &surface.to_string(),
+                "--source",
+                source,
+                "--lines",
+                "300",
+            ],
         );
         assert_success(&read);
         let value = serde_json::from_slice::<serde_json::Value>(&read.stdout).unwrap();
@@ -997,14 +1076,29 @@ fn agent_read_recent_source_includes_scrollback() {
             text.contains("TOPMARK-7Q"),
             "--source {source} must reach scrollback (marker missing); got:\n{text}"
         );
-        assert!(text.contains("xFILLERx"), "--source {source} must include the filler; got:\n{text}");
-        assert!(text.contains("BOTMARK-7Q"), "--source {source} must include the tail; got:\n{text}");
+        assert!(
+            text.contains("xFILLERx"),
+            "--source {source} must include the filler; got:\n{text}"
+        );
+        assert!(
+            text.contains("BOTMARK-7Q"),
+            "--source {source} must include the tail; got:\n{text}"
+        );
     }
 
     // And --lines still tails the recent window (top marker cut off).
     let tail = cli(
         &server,
-        &["--json", "agent-read", "--target", &surface.to_string(), "--source", "recent", "--lines", "3"],
+        &[
+            "--json",
+            "agent-read",
+            "--target",
+            &surface.to_string(),
+            "--source",
+            "recent",
+            "--lines",
+            "3",
+        ],
     );
     assert_success(&tail);
     let value = serde_json::from_slice::<serde_json::Value>(&tail.stdout).unwrap();
@@ -1069,10 +1163,7 @@ fn wait_agent_status_errors_when_surface_exits() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("exited while waiting"),
-        "expected an early exit error, got: {stderr}"
-    );
+    assert!(stderr.contains("exited while waiting"), "expected an early exit error, got: {stderr}");
     assert!(
         started.elapsed() < Duration::from_secs(8),
         "must error well before the 10s timeout; took {:?}",
@@ -1098,7 +1189,15 @@ fn agent_send_types_text_without_enter() {
 
     let report = cli(
         &server,
-        &["report-agent", "--surface", &surface.to_string(), "--state", "working", "--agent", "sender-1"],
+        &[
+            "report-agent",
+            "--surface",
+            &surface.to_string(),
+            "--state",
+            "working",
+            "--agent",
+            "sender-1",
+        ],
     );
     assert_success(&report);
 
@@ -1117,13 +1216,17 @@ fn agent_send_types_text_without_enter() {
 
     // Submitting separately (plain `send` + CR) runs it — proving the
     // no-Enter assertion above was about the missing CR, not the text.
-    let submit = cli(&server, &["send", "--surface", &surface.to_string(), "--text", "", "--send-cr", "1"]);
+    let submit =
+        cli(&server, &["send", "--surface", &surface.to_string(), "--text", "", "--send-cr", "1"]);
     assert_success(&submit);
     let deadline = Instant::now() + Duration::from_secs(10);
     while !std::path::Path::new(&marker_file).exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
     }
-    assert!(std::path::Path::new(&marker_file).exists(), "CR submit should execute the typed command");
+    assert!(
+        std::path::Path::new(&marker_file).exists(),
+        "CR submit should execute the typed command"
+    );
     let _ = std::fs::remove_file(&marker_file);
 
     // Unknown target: exit 1.
@@ -1492,9 +1595,8 @@ fn grok_install_hooks_writes_native_schema() {
     assert!(path.is_file(), "expected hooks at {}", path.display());
     let value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    let command = value["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-        .as_str()
-        .expect("command string");
+    let command =
+        value["hooks"]["PreToolUse"][0]["hooks"][0]["command"].as_str().expect("command string");
     assert_eq!(value["hooks"]["PreToolUse"][0]["hooks"][0]["type"], "command");
     assert!(command.contains("--source hook"), "{command}");
     assert!(!command.contains("--source grok"), "{command}");
@@ -1503,11 +1605,8 @@ fn grok_install_hooks_writes_native_schema() {
         "must not write the legacy ~/.grok/hooks.json path"
     );
 
-    let listed = Command::new(bin())
-        .args(["agents", "list"])
-        .current_dir(&project)
-        .output()
-        .unwrap();
+    let listed =
+        Command::new(bin()).args(["agents", "list"]).current_dir(&project).output().unwrap();
     assert_success(&listed);
     let output = String::from_utf8(listed.stdout).unwrap();
     let grok = output.lines().find(|row| row.starts_with("grok\t")).unwrap();
@@ -1847,22 +1946,14 @@ fn git_repo_fixture(name: &str) -> PathBuf {
     let dir = unique_temp_dir(name);
     fs::create_dir_all(&dir).unwrap();
     let out = Command::new("git").arg("init").arg(&dir).output().unwrap();
-    assert!(
-        out.status.success(),
-        "git init failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert!(out.status.success(), "git init failed: {}", String::from_utf8_lossy(&out.stderr));
     let out = Command::new("git")
         .args(["-c", "user.email=mtyx@test", "-c", "user.name=mtyx"])
         .args(["commit", "--allow-empty", "-m", "init"])
         .current_dir(&dir)
         .output()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "git commit failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert!(out.status.success(), "git commit failed: {}", String::from_utf8_lossy(&out.stderr));
     dir
 }
 
@@ -1878,9 +1969,9 @@ fn pane_of_surface(server: &HeadlessServer, surface: u64) -> u64 {
         .flat_map(|ws| ws["screens"].as_array().into_iter().flatten())
         .flat_map(|screen| screen["panes"].as_array().into_iter().flatten())
         .find(|pane| {
-            pane["tabs"].as_array().is_some_and(|tabs| {
-                tabs.iter().any(|tab| tab["surface"].as_u64() == Some(surface))
-            })
+            pane["tabs"]
+                .as_array()
+                .is_some_and(|tabs| tabs.iter().any(|tab| tab["surface"].as_u64() == Some(surface)))
         })
         .expect("surface present in list-workspaces")
         .get("id")
@@ -1919,11 +2010,9 @@ fn pane_worktree_create_list_remove_round_trip() {
     let repo = git_repo_fixture("pane-worktree-repo");
     let workspace = cli(&server, &["new-workspace", "--name", "wt-test"]);
     assert_success(&workspace);
-    let surface: u64 =
-        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
     // Park the pane's active tab in the repo so create can resolve it.
-    let parked =
-        cli(&server, &["new-tab", "--cwd", repo.to_str().unwrap()]);
+    let parked = cli(&server, &["new-tab", "--cwd", repo.to_str().unwrap()]);
     assert_success(&parked);
     let pane = pane_of_surface(&server, surface);
 
@@ -1948,11 +2037,7 @@ fn pane_worktree_create_list_remove_round_trip() {
     let path = value["path"].as_str().expect("worktree path").to_string();
     assert!(PathBuf::from(&path).is_dir(), "worktree {path} should exist on disk");
     // git itself knows the worktree.
-    let out = Command::new("git")
-        .args(["worktree", "list"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    let out = Command::new("git").args(["worktree", "list"]).current_dir(&repo).output().unwrap();
     assert!(out.status.success());
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("feat-auth"),
@@ -1960,10 +2045,7 @@ fn pane_worktree_create_list_remove_round_trip() {
     );
 
     // List (AC2): JSON shape + one-line-per-record plain output.
-    let listed = cli(
-        &server,
-        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
-    );
+    let listed = cli(&server, &["--json", "pane-worktree-list", "--pane", &pane.to_string()]);
     assert_success(&listed);
     let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     let worktrees = value["worktrees"].as_array().unwrap();
@@ -2015,10 +2097,7 @@ fn pane_worktree_create_list_remove_round_trip() {
     );
     assert_success(&removed);
     assert!(!PathBuf::from(&path).exists(), "worktree dir should be gone after remove");
-    let listed = cli(
-        &server,
-        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
-    );
+    let listed = cli(&server, &["--json", "pane-worktree-list", "--pane", &pane.to_string()]);
     let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     let remaining: Vec<&str> = value["worktrees"]
         .as_array()
@@ -2029,10 +2108,8 @@ fn pane_worktree_create_list_remove_round_trip() {
     assert_eq!(remaining, vec!["feat-plain"], "only feat-plain should remain");
 
     // Removing an unknown branch errors with exit 1.
-    let missing = cli(
-        &server,
-        &["pane-worktree-remove", "--pane", &pane.to_string(), "--branch", "nope"],
-    );
+    let missing =
+        cli(&server, &["pane-worktree-remove", "--pane", &pane.to_string(), "--branch", "nope"]);
     assert_eq!(missing.status.code(), Some(1));
 
     // Best-effort cleanup of the second worktree (inside repo's parent).
@@ -2046,8 +2123,7 @@ fn pane_worktree_create_failure_returns_exit_1_and_cwd_unchanged() {
     let repo = git_repo_fixture("pane-worktree-fail-repo");
     let workspace = cli(&server, &["new-workspace", "--name", "wt-fail"]);
     assert_success(&workspace);
-    let surface: u64 =
-        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
     let parked = cli(&server, &["new-tab", "--cwd", repo.to_str().unwrap()]);
     assert_success(&parked);
     let pane = pane_of_surface(&server, surface);
@@ -2056,14 +2132,7 @@ fn pane_worktree_create_failure_returns_exit_1_and_cwd_unchanged() {
 
     let failed = cli(
         &server,
-        &[
-            "--json",
-            "pane-worktree-create",
-            "--pane",
-            &pane.to_string(),
-            "--branch",
-            "bad..name",
-        ],
+        &["--json", "pane-worktree-create", "--pane", &pane.to_string(), "--branch", "bad..name"],
     );
     assert_eq!(
         failed.status.code(),
@@ -2077,10 +2146,7 @@ fn pane_worktree_create_failure_returns_exit_1_and_cwd_unchanged() {
 
     // Pane cwd unchanged (AC7) and no record was kept.
     assert_eq!(pane_cwds(&server), before, "pane cwd must be unchanged after failure");
-    let listed = cli(
-        &server,
-        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
-    );
+    let listed = cli(&server, &["--json", "pane-worktree-list", "--pane", &pane.to_string()]);
     assert_success(&listed);
     let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     assert_eq!(value["worktrees"].as_array().unwrap().len(), 0);
@@ -2100,8 +2166,7 @@ fn worktree_pattern_config_overrides_default() {
     let repo = git_repo_fixture("pane-worktree-config-repo");
     let workspace = cli(&server, &["new-workspace", "--name", "wt-config"]);
     assert_success(&workspace);
-    let surface: u64 =
-        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
     let parked = cli(&server, &["new-tab", "--cwd", repo.to_str().unwrap()]);
     assert_success(&parked);
     let pane = pane_of_surface(&server, surface);
@@ -2145,13 +2210,11 @@ fn new_tab_with_prompt_file_frontmatter_creates_worktree() {
     let repo = git_repo_fixture("wt-frontmatter-repo");
     let workspace = cli(&server, &["new-workspace", "--name", "wt-fm"]);
     assert_success(&workspace);
-    let surface: u64 =
-        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
     let pane = pane_of_surface(&server, surface);
 
     let prompt = server.dir.join("prompt.md");
-    fs::write(&prompt, "---\nbranch: feat-auth\nlabel: auth\n---\nFix the login flow.\n")
-        .unwrap();
+    fs::write(&prompt, "---\nbranch: feat-auth\nlabel: auth\n---\nFix the login flow.\n").unwrap();
     let tab = cli(
         &server,
         &[
@@ -2169,10 +2232,7 @@ fn new_tab_with_prompt_file_frontmatter_creates_worktree() {
 
     // The pane owns the record and its active tab started INSIDE the
     // worktree (cwd == record path; OSC 7 never fires under /bin/sh).
-    let listed = cli(
-        &server,
-        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
-    );
+    let listed = cli(&server, &["--json", "pane-worktree-list", "--pane", &pane.to_string()]);
     assert_success(&listed);
     let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     let worktrees = value["worktrees"].as_array().unwrap();
@@ -2221,10 +2281,7 @@ fn new_tab_with_prompt_file_frontmatter_creates_worktree() {
         ],
     );
     assert_success(&no_fm);
-    let listed = cli(
-        &server,
-        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
-    );
+    let listed = cli(&server, &["--json", "pane-worktree-list", "--pane", &pane.to_string()]);
     let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     let branches: Vec<&str> = value["worktrees"]
         .as_array()
@@ -2238,23 +2295,12 @@ fn new_tab_with_prompt_file_frontmatter_creates_worktree() {
     // combining --prompt-file with --branch is refused.
     let bad_prompt = server.dir.join("bad.md");
     fs::write(&bad_prompt, "---\ncommit: abc\n---\nbody\n").unwrap();
-    let bad = cli(
-        &server,
-        &["new-tab", "--prompt-file", bad_prompt.to_str().unwrap()],
-    );
+    let bad = cli(&server, &["new-tab", "--prompt-file", bad_prompt.to_str().unwrap()]);
     assert_eq!(bad.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&bad.stderr).contains("frontmatter"));
 
-    let conflict = cli(
-        &server,
-        &[
-            "new-tab",
-            "--prompt-file",
-            prompt.to_str().unwrap(),
-            "--branch",
-            "feat-x",
-        ],
-    );
+    let conflict =
+        cli(&server, &["new-tab", "--prompt-file", prompt.to_str().unwrap(), "--branch", "feat-x"]);
     assert_eq!(conflict.status.code(), Some(2));
 
     // split --branch gives the NEW pane its own worktree.
@@ -2275,10 +2321,7 @@ fn new_tab_with_prompt_file_frontmatter_creates_worktree() {
     let value: serde_json::Value = serde_json::from_slice(&split.stdout).unwrap();
     let split_surface = value["surface"].as_u64().unwrap();
     let split_pane = pane_of_surface(&server, split_surface);
-    let listed = cli(
-        &server,
-        &["--json", "pane-worktree-list", "--pane", &split_pane.to_string()],
-    );
+    let listed = cli(&server, &["--json", "pane-worktree-list", "--pane", &split_pane.to_string()]);
     let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     assert_eq!(
         value["worktrees"]
@@ -2291,10 +2334,7 @@ fn new_tab_with_prompt_file_frontmatter_creates_worktree() {
     );
 
     // Best-effort cleanup: drop the three worktrees (siblings of repo).
-    let listed = cli(
-        &server,
-        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
-    );
+    let listed = cli(&server, &["--json", "pane-worktree-list", "--pane", &pane.to_string()]);
     let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     for w in value["worktrees"].as_array().unwrap() {
         let _ = fs::remove_dir_all(w["path"].as_str().unwrap());
@@ -2308,8 +2348,7 @@ fn pane_worktree_three_word_alias_matches_flat_verb() {
     let repo = git_repo_fixture("pane-worktree-alias-repo");
     let workspace = cli(&server, &["new-workspace", "--name", "wt-alias"]);
     assert_success(&workspace);
-    let surface: u64 =
-        String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
+    let surface: u64 = String::from_utf8(workspace.stdout).unwrap().trim().parse().unwrap();
     let parked = cli(&server, &["new-tab", "--cwd", repo.to_str().unwrap()]);
     assert_success(&parked);
     let pane = pane_of_surface(&server, surface);
@@ -2335,14 +2374,9 @@ fn pane_worktree_three_word_alias_matches_flat_verb() {
     assert!(PathBuf::from(&path).is_dir());
 
     // Both list forms return the same JSON.
-    let via_alias = cli(
-        &server,
-        &["--json", "pane", "worktree", "list", "--pane", &pane.to_string()],
-    );
-    let via_flat = cli(
-        &server,
-        &["--json", "pane-worktree-list", "--pane", &pane.to_string()],
-    );
+    let via_alias =
+        cli(&server, &["--json", "pane", "worktree", "list", "--pane", &pane.to_string()]);
+    let via_flat = cli(&server, &["--json", "pane-worktree-list", "--pane", &pane.to_string()]);
     assert_success(&via_alias);
     assert_success(&via_flat);
     assert_eq!(via_alias.stdout, via_flat.stdout, "alias and flat verb must agree");
@@ -2358,17 +2392,9 @@ fn pane_worktree_three_word_alias_matches_flat_verb() {
     let _ = fs::remove_dir_all(&repo);
 }
 
-
-
-
-
-
 // Refuses when the install target is a symlink; exit non-zero, message
 // mentions "symlink", and the symlink target file is byte-identical after the
 // run (regression test for the symlink_metadata pre-check in claude_hook.rs).
-
-
-
 
 // Regression test for the symlink_metadata guard added to
 // grok_hook::run_install_skill (PR #24 follow-up). Sibling to the Claude
@@ -2377,9 +2403,6 @@ fn pane_worktree_three_word_alias_matches_flat_verb() {
 // so the fixture is built with `top = ".agents"`. Exercises the same
 // attack vector on the new grok install path: an attacker-placed symlink
 // must NOT silently redirect fs::write at the target file.
-
-
-
 
 fn cli(server: &HeadlessServer, args: &[&str]) -> Output {
     Command::new(bin())
@@ -2477,8 +2500,6 @@ impl SymlinkSkillFixture {
         Self { project_dir, symlink_path, target_path, original_content }
     }
 }
-
-
 
 impl Drop for SymlinkSkillFixture {
     fn drop(&mut self) {
@@ -3265,8 +3286,12 @@ fn version_flag_prints_build_version_and_exits_zero() {
     let expected = format!("mtyx {}", mux_core::VERSION);
 
     let run = |args: &[&str]| {
-        Command::new(bin()).args(args).env_remove("MTYX_MUX_SOCKET")
-.env_remove("CMUX_MUX_SOCKET").output().unwrap()
+        Command::new(bin())
+            .args(args)
+            .env_remove("MTYX_MUX_SOCKET")
+            .env_remove("CMUX_MUX_SOCKET")
+            .output()
+            .unwrap()
     };
 
     for args in [&["--version"][..], &["-V"][..], &["--headless", "--version"][..]] {
@@ -3365,8 +3390,7 @@ fn read_pid_file(path: &std::path::Path) -> u32 {
 fn run_against(socket: &std::path::Path, xdg: &std::path::Path, args: &[&str]) -> Output {
     let mut cmd = Command::new(bin());
     cmd.args(["--socket"]).arg(socket).args(args);
-    cmd.env("XDG_RUNTIME_DIR", xdg).env_remove("MTYX_MUX_SOCKET")
-.env_remove("CMUX_MUX_SOCKET");
+    cmd.env("XDG_RUNTIME_DIR", xdg).env_remove("MTYX_MUX_SOCKET").env_remove("CMUX_MUX_SOCKET");
     cmd.output().unwrap()
 }
 
@@ -3830,10 +3854,7 @@ fn overlay_fetch_workspaces_parses_remote_tree() {
     assert_success(&list_a);
     let value_a: serde_json::Value = serde_json::from_slice(&list_a.stdout).unwrap();
     let count_a = value_a["workspaces"].as_array().map(|a| a.len()).unwrap_or(0);
-    assert!(
-        count_a >= 2,
-        "alpha socket should report >=2 workspaces, got {count_a}"
-    );
+    assert!(count_a >= 2, "alpha socket should report >=2 workspaces, got {count_a}");
 
     let _ = child_a.kill();
     let _ = child_a.wait();
@@ -3901,8 +3922,7 @@ fn overlay_kill_unreachable_does_not_crash_discovery() {
     // Create a STALE socket/pid pair with no live process behind it.
     let stale_sock = dir.join("ghost.sock");
     let stale_pid = dir.join("ghost.pid");
-    std::os::unix::net::UnixListener::bind(&stale_sock)
-        .expect("bind stale socket");
+    std::os::unix::net::UnixListener::bind(&stale_sock).expect("bind stale socket");
     fs::write(&stale_pid, "999999").unwrap(); // a pid that is not alive
 
     // list-sessions --json reports both, ghost as stale.
@@ -4011,7 +4031,6 @@ fn first_attach_to_dead_socket_still_exits_nonzero() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-
 // -- issue #76: layout export/apply --------------------------------------
 
 /// Helper: the parsed `--json list-workspaces` payload.
@@ -4025,25 +4044,15 @@ fn layout_export_writes_versioned_workspace_json() {
     let pane = value["workspaces"][0]["screens"][0]["panes"][0]["id"].as_u64().unwrap();
     let split = cli(&server, &["split", "--pane", &pane.to_string(), "--dir", "right"]);
     assert_success(&split);
-    let ratio = cli(&server, &[
-        "set-ratio",
-        "--pane",
-        &pane.to_string(),
-        "--dir",
-        "right",
-        "--ratio",
-        "0.6",
-    ]);
+    let ratio = cli(
+        &server,
+        &["set-ratio", "--pane", &pane.to_string(), "--dir", "right", "--ratio", "0.6"],
+    );
     assert_success(&ratio);
 
     let out = server.dir.join("fleet.json");
-    let export = cli(&server, &[
-        "layout-export",
-        "--workspace",
-        "fleet",
-        "--output",
-        out.to_str().unwrap(),
-    ]);
+    let export =
+        cli(&server, &["layout-export", "--workspace", "fleet", "--output", out.to_str().unwrap()]);
     assert_success(&export);
     assert_eq!(
         String::from_utf8_lossy(&export.stdout).trim(),
@@ -4100,13 +4109,8 @@ fn layout_apply_round_trips_topology_and_argv() {
     assert_success(&split);
 
     let out = server.dir.join("fleet.json");
-    let export = cli(&server, &[
-        "layout-export",
-        "--workspace",
-        "fleet",
-        "--output",
-        out.to_str().unwrap(),
-    ]);
+    let export =
+        cli(&server, &["layout-export", "--workspace", "fleet", "--output", out.to_str().unwrap()]);
     assert_success(&export);
     let doc: serde_json::Value = serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
     let tabs = &doc["workspace"]["screens"][0]["panes"][0]["tabs"];
@@ -4121,13 +4125,8 @@ fn layout_apply_round_trips_topology_and_argv() {
     let close = cli(&server, &["close-workspace", "--workspace", &ws_id.to_string()]);
     assert_success(&close);
 
-    let apply = cli(&server, &[
-        "layout-apply",
-        "--input",
-        out.to_str().unwrap(),
-        "--workspace",
-        "fleet",
-    ]);
+    let apply =
+        cli(&server, &["layout-apply", "--input", out.to_str().unwrap(), "--workspace", "fleet"]);
     assert_success(&apply);
 
     // Topology is back: one workspace, two panes, the exec tab re-spawned.
@@ -4197,13 +4196,8 @@ fn layout_apply_rejects_unknown_schema_version_loudly() {
     )
     .unwrap();
 
-    let apply = cli(&server, &[
-        "layout-apply",
-        "--input",
-        bad.to_str().unwrap(),
-        "--workspace",
-        "w",
-    ]);
+    let apply =
+        cli(&server, &["layout-apply", "--input", bad.to_str().unwrap(), "--workspace", "w"]);
     assert_eq!(
         apply.status.code(),
         Some(1),
@@ -4222,37 +4216,26 @@ fn layout_apply_creates_missing_workspace() {
     let ws = cli(&server, &["new-workspace", "--name", "solo"]);
     assert_success(&ws);
     let out = server.dir.join("solo.json");
-    let export = cli(&server, &[
-        "layout-export",
-        "--workspace",
-        "solo",
-        "--output",
-        out.to_str().unwrap(),
-    ]);
+    let export =
+        cli(&server, &["layout-export", "--workspace", "solo", "--output", out.to_str().unwrap()]);
     assert_success(&export);
 
     // Applying under a NEW name creates that workspace (AC2).
-    let apply = cli(&server, &[
-        "layout-apply",
-        "--input",
-        out.to_str().unwrap(),
-        "--workspace",
-        "solo2",
-    ]);
+    let apply =
+        cli(&server, &["layout-apply", "--input", out.to_str().unwrap(), "--workspace", "solo2"]);
     assert_success(&apply);
     let value = list_workspaces_json(&server);
-    let names: Vec<&str> =
-        value["workspaces"].as_array().unwrap().iter().map(|w| w["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = value["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["name"].as_str().unwrap())
+        .collect();
     assert_eq!(names, vec!["solo", "solo2"], "both the original and the applied copy exist");
 
     // Applying onto an existing name is refused, loudly and non-destructively.
-    let again = cli(&server, &[
-        "layout-apply",
-        "--input",
-        out.to_str().unwrap(),
-        "--workspace",
-        "solo",
-    ]);
+    let again =
+        cli(&server, &["layout-apply", "--input", out.to_str().unwrap(), "--workspace", "solo"]);
     assert_eq!(again.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&again.stderr).contains("already exists"));
 }
@@ -4268,13 +4251,8 @@ fn layout_export_refuses_symlinked_output() {
     let link = server.dir.join("link.json");
     symlink(&target, &link).unwrap();
 
-    let export = cli(&server, &[
-        "layout-export",
-        "--workspace",
-        "sec",
-        "--output",
-        link.to_str().unwrap(),
-    ]);
+    let export =
+        cli(&server, &["layout-export", "--workspace", "sec", "--output", link.to_str().unwrap()]);
     assert_eq!(
         export.status.code(),
         Some(1),
@@ -4282,11 +4260,7 @@ fn layout_export_refuses_symlinked_output() {
         export.status.code()
     );
     assert!(String::from_utf8_lossy(&export.stderr).contains("symlink"));
-    assert_eq!(
-        fs::read_to_string(&target).unwrap(),
-        "",
-        "the symlink target must be untouched"
-    );
+    assert_eq!(fs::read_to_string(&target).unwrap(), "", "the symlink target must be untouched");
 }
 
 /// Fixture for the install-skill symlink-refusal test.
@@ -4299,11 +4273,6 @@ fn layout_export_refuses_symlinked_output() {
 /// On drop we remove the symlink, the target file, and the whole project dir,
 /// even if the test panicked — mirroring HeadlessServer::drop (tests/cli.rs:45-52).
 
-
-
-
-
-
 /// `mtyx attach --session-list --json` lists discovered sessions with a
 /// `socket_path` per entry (issue #63, layer L1). Same shape as
 /// `list-sessions --json` plus `socket_path`; exit 0. Modelled on
@@ -4313,7 +4282,6 @@ fn layout_export_refuses_symlinked_output() {
 /// `status == "stale"` and a `socket_path`, alongside live entries.
 
 /// An empty runtime dir yields `{"sessions":[]}` and exit 0.
-
 
 /// Issue #27 acceptance: `kill -9` on a headless daemon leaves zero
 /// leftover `.sock`/`.pid` files within ≤5s without operator action.
@@ -4471,7 +4439,6 @@ fn layout_export_refuses_symlinked_output() {
 /// today. This test pins that behavior so the fix cannot accidentally make a
 /// real first-attach silently loop instead of failing.
 
-
 // -- issue #76: layout export/apply --------------------------------------
 
 /// Helper: the parsed `--json list-workspaces` payload.
@@ -4480,7 +4447,6 @@ fn list_workspaces_json(server: &HeadlessServer) -> serde_json::Value {
     assert_success(&listed);
     serde_json::from_slice(&listed.stdout).unwrap()
 }
-
 
 #[cfg(target_os = "linux")] // stats /proc/self for the uid; no /proc on macOS
 mod legacy_socket_fallback {

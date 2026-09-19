@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 
 use crate::hook_merge;
 
@@ -27,7 +27,7 @@ fn config_path(global: bool) -> Option<PathBuf> {
 pub fn run(args: &[String]) -> i32 {
     let mut uninstall = false;
     let mut global = false;
-    
+
     for arg in args.iter().skip(1) {
         if arg == "--uninstall" {
             uninstall = true;
@@ -62,10 +62,7 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             // Fail-loud on malformed config: silent `unwrap_or_default()`
             // would overwrite the user's real config on schema drift.
             Err(hook_merge::LoadError::Parse(e)) => {
-                eprintln!(
-                    "error: malformed Antigravity config at {}: {e}",
-                    path.display()
-                );
+                eprintln!("error: malformed Antigravity config at {}: {e}", path.display());
                 return 1;
             }
             Err(hook_merge::LoadError::Io(e)) => {
@@ -98,10 +95,7 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             // Fail-loud on malformed config: silent `unwrap_or_default()`
             // would overwrite the user's real config on schema drift.
             Err(hook_merge::LoadError::Parse(e)) => {
-                eprintln!(
-                    "error: malformed Antigravity config at {}: {e}",
-                    path.display()
-                );
+                eprintln!("error: malformed Antigravity config at {}: {e}", path.display());
                 return 1;
             }
             Err(hook_merge::LoadError::Io(e)) => {
@@ -149,7 +143,13 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
 
 fn skill_path(global: bool) -> Option<PathBuf> {
     if global {
-        mux_core::platform::home_dir().map(|h| h.join(".gemini").join("antigravity-cli").join("skills").join("mtyx-orchestration").join("SKILL.md"))
+        mux_core::platform::home_dir().map(|h| {
+            h.join(".gemini")
+                .join("antigravity-cli")
+                .join("skills")
+                .join("mtyx-orchestration")
+                .join("SKILL.md")
+        })
     } else {
         Some(PathBuf::from(".agents").join("skills").join("mtyx-orchestration").join("SKILL.md"))
     }

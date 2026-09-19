@@ -506,12 +506,10 @@ mod tests {
         // a `<!-- CMUX-START/END -->` block. Re-running the installer must
         // strip the OLD block and append the fresh canonical one — never
         // leave two blocks behind.
-        let content = "preamble\n\n<!-- CMUX-START -->\nold cmux-era skill\n<!-- CMUX-END -->\n\ntail\n";
+        let content =
+            "preamble\n\n<!-- CMUX-START -->\nold cmux-era skill\n<!-- CMUX-END -->\n\ntail\n";
         let got = replace_marked_block(content, &MTYX_MARKERS, "new skill");
-        assert_eq!(
-            got,
-            "preamble\n\n\ntail\n<!-- MTYX-START -->\nnew skill\n<!-- MTYX-END -->\n"
-        );
+        assert_eq!(got, "preamble\n\n\ntail\n<!-- MTYX-START -->\nnew skill\n<!-- MTYX-END -->\n");
         assert!(!got.contains("CMUX-START"));
         assert!(!got.contains("old cmux-era skill"));
     }

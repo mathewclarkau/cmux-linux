@@ -33,7 +33,8 @@ export default async () => {
 
 fn plugin_path(global: bool) -> Option<PathBuf> {
     if global {
-        mux_core::platform::home_dir().map(|h| h.join(".config").join("opencode").join("plugin").join("mtyx.ts"))
+        mux_core::platform::home_dir()
+            .map(|h| h.join(".config").join("opencode").join("plugin").join("mtyx.ts"))
     } else {
         Some(PathBuf::from(".opencode").join("plugin").join("mtyx.ts"))
     }
@@ -73,7 +74,9 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("mtyx: usage: mtyx opencode <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!(
+                "mtyx: usage: mtyx opencode <install-hooks|install-skill> [--uninstall] [--global]"
+            );
             2
         }
     }
@@ -100,10 +103,10 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
                         return 1;
                     }
                 } else {
-                    let stripped = hook_merge::strip_marked_block(&content, &hook_merge::Markers {
-                        start: "MTYX-START",
-                        end: "MTYX-END",
-                    });
+                    let stripped = hook_merge::strip_marked_block(
+                        &content,
+                        &hook_merge::Markers { start: "MTYX-START", end: "MTYX-END" },
+                    );
                     if let Err(e) = fs::write(&path, stripped) {
                         eprintln!("error writing {}: {e}", path.display());
                         return 1;
@@ -171,7 +174,10 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
         0
     } else {
         let mut installed = 0;
-        for (p, content) in [(&path, crate::skill_content::ORCHESTRATION_SKILL), (&hotfix_path, crate::skill_content::HOTFIX_RACE_SKILL)] {
+        for (p, content) in [
+            (&path, crate::skill_content::ORCHESTRATION_SKILL),
+            (&hotfix_path, crate::skill_content::HOTFIX_RACE_SKILL),
+        ] {
             if let Some(parent) = p.parent() {
                 let _ = fs::create_dir_all(parent);
             }
@@ -192,7 +198,11 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
             installed += 1;
         }
         println!("Successfully installed {installed} mtyx skill(s) into opencode");
-        if installed > 0 { 0 } else { 1 }
+        if installed > 0 {
+            0
+        } else {
+            1
+        }
     }
 }
 
@@ -219,12 +229,10 @@ mod tests {
         // The uninstall path's strip must remove that block exactly
         // like a canonical one, so re-running the installer never
         // duplicates blocks (dual-parse lives in hook_merge::MarkerSet).
-        let legacy = "// unrelated header\n// CMUX-START\nexec(\"mtyx report-agent …\")\n// CMUX-END\n";
+        let legacy =
+            "// unrelated header\n// CMUX-START\nexec(\"mtyx report-agent …\")\n// CMUX-END\n";
         let markers = hook_merge::Markers { start: "MTYX-START", end: "MTYX-END" };
-        assert_eq!(
-            hook_merge::strip_marked_block(legacy, &markers),
-            "// unrelated header"
-        );
+        assert_eq!(hook_merge::strip_marked_block(legacy, &markers), "// unrelated header");
         let replaced = hook_merge::replace_marked_block(legacy, &markers, "fresh body");
         assert_eq!(replaced, "// unrelated header\nMTYX-START\nfresh body\nMTYX-END\n");
     }

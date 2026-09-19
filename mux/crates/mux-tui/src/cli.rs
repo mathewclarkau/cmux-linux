@@ -647,11 +647,8 @@ fn run_command(args: CliArgs) -> i32 {
         // `--timeout` ms, so give the socket read that budget plus
         // slack instead of the default 10 s (which would kill every
         // longer wait with a spurious "transport error").
-        let wait_ms = args
-            .flags
-            .optional("timeout")
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0);
+        let wait_ms =
+            args.flags.optional("timeout").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
         let _ = stream.set_read_timeout(Some(Duration::from_millis(wait_ms.saturating_add(5_000))));
     } else {
         let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
@@ -928,9 +925,7 @@ fn insert_exec_env(flags: &FlagMap, value: &mut Value) -> Result<(), UsageError>
 /// that parse errors propagate instead of silently defaulting: the
 /// block must close with a `---` line, only `branch`/`label` keys are
 /// allowed, keys may not repeat, and values must be non-empty.
-fn parse_prompt_frontmatter(
-    text: &str,
-) -> Result<(Option<String>, Option<String>), UsageError> {
+fn parse_prompt_frontmatter(text: &str) -> Result<(Option<String>, Option<String>), UsageError> {
     let mut lines = text.lines();
     if lines.next().map(|first| first.trim_end_matches('\r')) != Some("---") {
         return Ok((None, None));
@@ -1592,9 +1587,7 @@ fn rename_rpc(socket: &std::path::Path, new_name: &str) -> RenameOutcome {
             let pid = data.get("pid").and_then(Value::as_u64);
             match (socket_path, pid) {
                 (Some(p), Some(pid)) => RenameOutcome::Ok { socket_path: p, pid },
-                _ => {
-                    RenameOutcome::ServerErr("rename response missing socket_path/pid".into())
-                }
+                _ => RenameOutcome::ServerErr("rename response missing socket_path/pid".into()),
             }
         }
         OneShotOutcome::ServerErr(e) => RenameOutcome::ServerErr(e),
@@ -1843,8 +1836,7 @@ fn run_layout_apply(global: &GlobalArgs, flags: &FlagMap) -> i32 {
             return 2;
         }
     };
-    let request =
-        json!({ "cmd": "layout-apply", "workspace": workspace, "document": document, "id": REQUEST_ID });
+    let request = json!({ "cmd": "layout-apply", "workspace": workspace, "document": document, "id": REQUEST_ID });
     match one_shot_rpc(&resolve_socket(global), request) {
         OneShotOutcome::Ok(value) => {
             if global.json {
@@ -1915,7 +1907,9 @@ fn run_layout_export_all(global: &GlobalArgs, flags: &FlagMap) -> i32 {
                     eprintln!("mtyx: {e}");
                     return 1;
                 }
-                let pretty = match serde_json::to_string_pretty(file.get("document").unwrap_or(&Value::Null)) {
+                let pretty = match serde_json::to_string_pretty(
+                    file.get("document").unwrap_or(&Value::Null),
+                ) {
                     Ok(p) => p,
                     Err(e) => {
                         eprintln!("mtyx: encoding layout document: {e}");
@@ -2369,8 +2363,7 @@ mod tests {
     #[test]
     fn rename_session_at_renames_via_socket() {
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("mtyx-t11-{}-{stamp}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mtyx-t11-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let old_sock = dir.join("old.sock");
 

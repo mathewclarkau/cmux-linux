@@ -1,7 +1,7 @@
 use std::fs;
-use std::path::PathBuf;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 
 fn wrapper_path(global: bool) -> Option<PathBuf> {
     if global {
@@ -14,7 +14,7 @@ fn wrapper_path(global: bool) -> Option<PathBuf> {
 pub fn run(args: &[String]) -> i32 {
     let mut uninstall = false;
     let mut global = false;
-    
+
     for arg in args.iter().skip(1) {
         if arg == "--uninstall" {
             uninstall = true;
@@ -141,7 +141,9 @@ exit $RESULT
 
         println!("Successfully installed aider wrapper at {}", path.display());
         if !global {
-            println!("Note: Remember to run your agent using .bin/aider or prepend .bin to your PATH.");
+            println!(
+                "Note: Remember to run your agent using .bin/aider or prepend .bin to your PATH."
+            );
         }
         0
     }

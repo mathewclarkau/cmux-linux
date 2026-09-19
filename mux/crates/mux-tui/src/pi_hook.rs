@@ -5,7 +5,8 @@ use crate::hook_merge;
 
 fn extension_path(global: bool) -> Option<PathBuf> {
     if global {
-        mux_core::platform::home_dir().map(|h| h.join(".pi").join("agent").join("extensions").join("mtyx.ts"))
+        mux_core::platform::home_dir()
+            .map(|h| h.join(".pi").join("agent").join("extensions").join("mtyx.ts"))
     } else {
         Some(PathBuf::from(".pi").join("extensions").join("mtyx.ts"))
     }
@@ -14,7 +15,7 @@ fn extension_path(global: bool) -> Option<PathBuf> {
 pub fn run(args: &[String]) -> i32 {
     let mut uninstall = false;
     let mut global = false;
-    
+
     for arg in args.iter().skip(1) {
         if arg == "--uninstall" {
             uninstall = true;
@@ -27,7 +28,9 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("mtyx: usage: mtyx pi <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!(
+                "mtyx: usage: mtyx pi <install-hooks|install-skill> [--uninstall] [--global]"
+            );
             2
         }
     }

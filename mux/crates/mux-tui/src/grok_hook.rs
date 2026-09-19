@@ -129,7 +129,9 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("mtyx: usage: mtyx grok <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!(
+                "mtyx: usage: mtyx grok <install-hooks|install-skill> [--uninstall] [--global]"
+            );
             2
         }
     }
@@ -264,10 +266,7 @@ mod tests {
     #[test]
     fn config_path_is_the_grok_hooks_directory() {
         let project = config_path(false).expect("project path");
-        assert_eq!(
-            project,
-            PathBuf::from(".grok").join("hooks").join("mtyx-agent-state.json")
-        );
+        assert_eq!(project, PathBuf::from(".grok").join("hooks").join("mtyx-agent-state.json"));
     }
 
     #[test]

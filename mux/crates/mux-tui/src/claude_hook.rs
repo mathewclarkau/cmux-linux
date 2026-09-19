@@ -186,10 +186,7 @@ fn with_locked_store<T>(f: impl FnOnce(&mut Vec<SessionRecord>) -> T) -> Option<
         let _: serde_json::Value = match serde_json::from_str(&contents) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!(
-                    "mtyx: {} is not valid JSON ({e}); leaving it untouched",
-                    path.display()
-                );
+                eprintln!("mtyx: {} is not valid JSON ({e}); leaving it untouched", path.display());
                 unlock_store(&file);
                 return None;
             }
@@ -466,29 +463,16 @@ fn run_install_hooks(uninstall: bool) -> i32 {
         return 1;
     }
 
-    println!(
-        "{} hooks in {}",
-        if uninstall { "removed" } else { "installed" },
-        path.display()
-    );
+    println!("{} hooks in {}", if uninstall { "removed" } else { "installed" }, path.display());
     0
 }
 
 fn skill_path(global: bool) -> Option<PathBuf> {
     if global {
-        mux_core::platform::home_dir().map(|h| {
-            h.join(".claude")
-                .join("skills")
-                .join("mtyx-orchestration")
-                .join("SKILL.md")
-        })
+        mux_core::platform::home_dir()
+            .map(|h| h.join(".claude").join("skills").join("mtyx-orchestration").join("SKILL.md"))
     } else {
-        Some(
-            PathBuf::from(".claude")
-                .join("skills")
-                .join("mtyx-orchestration")
-                .join("SKILL.md"),
-        )
+        Some(PathBuf::from(".claude").join("skills").join("mtyx-orchestration").join("SKILL.md"))
     }
 }
 
@@ -606,9 +590,10 @@ mod tests {
         assert_eq!(run_install_hooks(false), 0);
         assert_eq!(run_install_hooks(false), 0, "installing twice must not duplicate entries");
 
-        let settings: Value =
-            serde_json::from_str(&std::fs::read_to_string(claude_dir.join("settings.json")).unwrap())
-                .unwrap();
+        let settings: Value = serde_json::from_str(
+            &std::fs::read_to_string(claude_dir.join("settings.json")).unwrap(),
+        )
+        .unwrap();
         let stop_entries = settings["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop_entries.len(), 2, "existing hook preserved, ours appended, not duplicated");
         assert_eq!(settings["model"], "sonnet", "unrelated settings must survive untouched");
@@ -620,9 +605,10 @@ mod tests {
         }
 
         assert_eq!(run_install_hooks(true), 0);
-        let settings: Value =
-            serde_json::from_str(&std::fs::read_to_string(claude_dir.join("settings.json")).unwrap())
-                .unwrap();
+        let settings: Value = serde_json::from_str(
+            &std::fs::read_to_string(claude_dir.join("settings.json")).unwrap(),
+        )
+        .unwrap();
         let stop_entries = settings["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop_entries.len(), 1, "uninstall removes ours, keeps the pre-existing hook");
         assert!(
@@ -654,9 +640,10 @@ mod tests {
 
         assert_eq!(run_install_hooks(false), 0);
 
-        let settings: Value =
-            serde_json::from_str(&std::fs::read_to_string(claude_dir.join("settings.json")).unwrap())
-                .unwrap();
+        let settings: Value = serde_json::from_str(
+            &std::fs::read_to_string(claude_dir.join("settings.json")).unwrap(),
+        )
+        .unwrap();
         let stop_entries = settings["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(
             stop_entries.len(),

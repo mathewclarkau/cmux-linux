@@ -1505,10 +1505,7 @@ min_confidence = "high"
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
         assert!(!config.agent_detection.enabled, "detection should resolve to disabled");
-        assert_eq!(
-            config.agent_detection.min_confidence,
-            mux_core::agent_detect::Confidence::High
-        );
+        assert_eq!(config.agent_detection.min_confidence, mux_core::agent_detect::Confidence::High);
     }
 
     /// Review fix F2: typos in `[[agent_detection]]` keys (e.g.
@@ -1520,9 +1517,8 @@ min_confidence = "high"
     #[test]
     fn agent_detection_rejects_unknown_keys() {
         // TOML: `enable` (missing `d`) and `min-confidences` (plural, hyphen).
-        let bad_toml: Result<RawConfig, _> = toml::from_str(
-            "[[agent_detection]]\nenable = false\nmin_confidences = \"high\"\n",
-        );
+        let bad_toml: Result<RawConfig, _> =
+            toml::from_str("[[agent_detection]]\nenable = false\nmin_confidences = \"high\"\n");
         assert!(bad_toml.is_err(), "unknown keys in [[agent_detection]] must be rejected");
 
         // JSON: `minConfidence` (camelCase) and `enable` (missing `d`).
@@ -1533,10 +1529,9 @@ min_confidence = "high"
 
         // Sanity: well-known keys still parse (this stays valid in both
         // directions; the negative case above is the lock-down).
-        let good_toml: RawConfig = toml::from_str(
-            "[[agent_detection]]\nenabled = false\nmin_confidence = \"high\"\n",
-        )
-        .unwrap();
+        let good_toml: RawConfig =
+            toml::from_str("[[agent_detection]]\nenabled = false\nmin_confidence = \"high\"\n")
+                .unwrap();
         assert_eq!(good_toml.agent_detection[0].enabled, Some(false));
         let good_json: RawConfig = serde_json::from_str(
             r##"{"agent_detection":[{"enabled":false,"min_confidence":"medium"}]}"##,

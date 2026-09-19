@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 
 use crate::hook_merge;
 
@@ -32,7 +32,7 @@ fn paths(global: bool) -> Option<(PathBuf, PathBuf)> {
 pub fn run(args: &[String]) -> i32 {
     let mut uninstall = false;
     let mut global = false;
-    
+
     for arg in args.iter().skip(1) {
         if arg == "--uninstall" {
             uninstall = true;
@@ -45,7 +45,9 @@ pub fn run(args: &[String]) -> i32 {
         Some("install-hooks") => run_install(uninstall, global),
         Some("install-skill") => run_install_skill(uninstall, global),
         _ => {
-            eprintln!("mtyx: usage: mtyx codex <install-hooks|install-skill> [--uninstall] [--global]");
+            eprintln!(
+                "mtyx: usage: mtyx codex <install-hooks|install-skill> [--uninstall] [--global]"
+            );
             2
         }
     }
@@ -66,10 +68,7 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             // Fail-loud on malformed config: silent `unwrap_or_default()`
             // would overwrite the user's real config on schema drift.
             Err(hook_merge::LoadError::Parse(e)) => {
-                eprintln!(
-                    "error: malformed Codex hooks config at {}: {e}",
-                    hooks_path.display()
-                );
+                eprintln!("error: malformed Codex hooks config at {}: {e}", hooks_path.display());
                 return 1;
             }
             Err(hook_merge::LoadError::Io(e)) => {
@@ -118,13 +117,10 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             String::new()
         };
 
-        let already_featured = config_content
-            .lines()
-            .any(|l| l.trim() == "codex_hooks = true");
+        let already_featured = config_content.lines().any(|l| l.trim() == "codex_hooks = true");
         if !already_featured {
-            if let Some(features_idx) = config_content
-                .lines()
-                .position(|l| l.trim() == "[features]")
+            if let Some(features_idx) =
+                config_content.lines().position(|l| l.trim() == "[features]")
             {
                 // Find the next blank line or section header after [features],
                 // insert after that. Default to appending at the section.
@@ -153,10 +149,7 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
             // Fail-loud on malformed config: silent `unwrap_or_default()`
             // would overwrite the user's real config on schema drift.
             Err(hook_merge::LoadError::Parse(e)) => {
-                eprintln!(
-                    "error: malformed Codex hooks config at {}: {e}",
-                    hooks_path.display()
-                );
+                eprintln!("error: malformed Codex hooks config at {}: {e}", hooks_path.display());
                 return 1;
             }
             Err(hook_merge::LoadError::Io(e)) => {
@@ -174,9 +167,18 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
         }
 
         let new_hooks = vec![
-            ("PreToolUse", "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state working --source codex"),
-            ("PostToolUse", "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state idle --source codex"),
-            ("Stop", "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state done --source codex"),
+            (
+                "PreToolUse",
+                "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state working --source codex",
+            ),
+            (
+                "PostToolUse",
+                "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state idle --source codex",
+            ),
+            (
+                "Stop",
+                "mtyx report-agent --surface \"$MTYX_MUX_SURFACE\" --state done --source codex",
+            ),
         ];
 
         for (event, command) in new_hooks {
@@ -205,7 +207,8 @@ fn run_install(uninstall: bool, global: bool) -> i32 {
 
 fn skill_path(global: bool) -> Option<PathBuf> {
     if global {
-        mux_core::platform::home_dir().map(|h| h.join(".codex").join("skills").join("mtyx-orchestration").join("SKILL.md"))
+        mux_core::platform::home_dir()
+            .map(|h| h.join(".codex").join("skills").join("mtyx-orchestration").join("SKILL.md"))
     } else {
         Some(PathBuf::from(".agents").join("skills").join("mtyx-orchestration").join("SKILL.md"))
     }
