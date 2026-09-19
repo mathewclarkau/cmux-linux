@@ -2117,6 +2117,144 @@ fn pane_worktree_create_list_remove_round_trip() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+/// Issue #100: the workspace id with `name`, from `list-workspaces`.
+fn workspace_id_by_name(server: &HeadlessServer, name: &str) -> u64 {
+    let tree = list_workspaces_json(server);
+    tree["workspaces"]
+        .as_array()
+        .expect("workspaces array")
+        .iter()
+        .find(|ws| ws["name"].as_str() == Some(name))
+        .unwrap_or_else(|| panic!("workspace {name:?} missing from tree: {tree}"))["id"]
+        .as_u64()
+        .unwrap()
+}
+
+/// Issue #100 fixture: workspace `parent` whose pane parks in `repo` and
+/// creates the worktree for `branch`; workspace `child` whose pane then
+/// spawns a tab inside that worktree. Returns
+/// (parent_id, child_id, worktree_path, child_inside_tab).
+fn worktree_child_fixture(
+    server: &HeadlessServer,
+    repo: &std::path::Path,
+    branch: &str,
+    parent_name: &str,
+    child_name: &str,
+) -> (u64, u64, String, u64) {
+    let parent = cli(server, &["new-workspace", "--name", parent_name]);
+    assert_success(&parent);
+    let parent_surface: u64 = String::from_utf8(parent.stdout).unwrap().trim().parse().unwrap();
+    let parked = cli(server, &["new-tab", "--cwd", repo.to_str().unwrap()]);
+    assert_success(&parked);
+    let parent_pane = pane_of_surface(server, parent_surface);
+
+    let created = cli(
+        server,
+        &["--json", "pane-worktree-create", "--pane", &parent_pane.to_string(), "--branch", branch],
+    );
+    assert_success(&created);
+    let value: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    let worktree = value["path"].as_str().expect("worktree path").to_string();
+    assert!(PathBuf::from(&worktree).is_dir(), "worktree {worktree} should exist");
+
+    let child = cli(server, &["new-workspace", "--name", child_name]);
+    assert_success(&child);
+    let inside = cli(server, &["new-tab", "--cwd", &worktree]);
+    assert_success(&inside);
+    let inside_tab: u64 = String::from_utf8(inside.stdout).unwrap().trim().parse().unwrap();
+
+    (
+        workspace_id_by_name(server, parent_name),
+        workspace_id_by_name(server, child_name),
+        worktree,
+        inside_tab,
+    )
+}
+
+#[test]
+fn close_workspace_worktree_child_guard_reports_and_groups() {
+    let server = HeadlessServer::start("close-ws-guard");
+    let repo = git_repo_fixture("close-ws-guard-repo");
+
+    // --- Default close (no --group): only the parent goes; the child
+    // survives and is REPORTED (JSON), with the running agent flagged.
+    let (parent1, child1, worktree1, inside1) =
+        worktree_child_fixture(&server, &repo, "feat-a", "parent-1", "child-1");
+    let agent =
+        cli(&server, &["report-agent", "--surface", &inside1.to_string(), "--state", "working"]);
+    assert_success(&agent);
+
+    let close = cli(&server, &["--json", "close-workspace", "--workspace", &parent1.to_string()]);
+    assert_success(&close);
+    let data: serde_json::Value = serde_json::from_slice(&close.stdout).unwrap();
+    let closed = data["closed"].as_array().expect("closed array");
+    assert_eq!(closed.len(), 1, "default close closes only the parent: {data}");
+    assert_eq!(closed[0]["id"].as_u64(), Some(parent1));
+    let survivors = data["survivors"].as_array().expect("survivors array");
+    assert_eq!(survivors.len(), 1, "the worktree child is reported: {data}");
+    assert_eq!(survivors[0]["workspace"].as_u64(), Some(child1));
+    assert_eq!(survivors[0]["name"].as_str(), Some("child-1"));
+    assert_eq!(survivors[0]["worktree_path"].as_str(), Some(worktree1.as_str()));
+    assert_eq!(survivors[0]["worktree_branch"].as_str(), Some("feat-a"));
+    assert_eq!(survivors[0]["running_agent"].as_bool(), Some(true));
+
+    // AC3: no silent orphan — the child's pane is still alive/readable.
+    let alive = cli(&server, &["read-screen", "--surface", &inside1.to_string()]);
+    assert_success(&alive);
+    let tree = list_workspaces_json(&server);
+    let names: Vec<&str> = tree["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|ws| ws["name"].as_str())
+        .collect();
+    assert!(names.contains(&"child-1") && !names.contains(&"parent-1"), "workspaces: {names:?}");
+
+    // --- Plain output also reports the survivor (never silent).
+    let (parent2, child2, worktree2, _inside2) =
+        worktree_child_fixture(&server, &repo, "feat-b", "parent-2", "child-2");
+    let plain = cli(&server, &["close-workspace", "--workspace", &parent2.to_string()]);
+    assert_success(&plain);
+    let text = String::from_utf8(plain.stdout).unwrap();
+    assert!(
+        text.contains("worktree child still open")
+            && text.contains("child-2")
+            && text.contains(&worktree2),
+        "plain close should name the surviving worktree child, got: {text}"
+    );
+    assert!(!text.contains("[agent running]"), "child-2 has no agent report: {text}");
+
+    // --- `--group` (bare boolean flag) closes parent AND child.
+    let (parent3, child3, _worktree3, _inside3) =
+        worktree_child_fixture(&server, &repo, "feat-c", "parent-3", "child-3");
+    let grouped =
+        cli(&server, &["close-workspace", "--workspace", &parent3.to_string(), "--group"]);
+    assert_success(&grouped);
+    let grouped_text = String::from_utf8(grouped.stdout).unwrap();
+    assert!(
+        grouped_text.contains("closed workspace") && grouped_text.contains("child-3"),
+        "--group output should list everything closed, got: {grouped_text}"
+    );
+    let tree = list_workspaces_json(&server);
+    let names: Vec<&str> = tree["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|ws| ws["name"].as_str())
+        .collect();
+    assert!(
+        !names.contains(&"parent-3") && !names.contains(&"child-3"),
+        "--group closed both; remaining workspaces: {names:?}"
+    );
+
+    // Best-effort cleanup: the worktrees are siblings of the repo dir
+    // (default pattern `../<repo>.<branch>`), not inside it.
+    for worktree in [&worktree1, &worktree2, &_worktree3] {
+        let _ = fs::remove_dir_all(worktree);
+    }
+    let _ = fs::remove_dir_all(&repo);
+}
+
 #[test]
 fn pane_worktree_create_failure_returns_exit_1_and_cwd_unchanged() {
     let server = HeadlessServer::start("pane-worktree-fail");

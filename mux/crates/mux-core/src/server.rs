@@ -443,6 +443,11 @@ enum Command {
     },
     CloseWorkspace {
         workspace: WorkspaceId,
+        /// Issue #100: also close this workspace's worktree-child
+        /// workspaces. Absent (older clients) or `false` closes only the
+        /// target and reports the surviving children in the response.
+        #[serde(default)]
+        group: bool,
     },
     RenamePane {
         pane: PaneId,
@@ -1177,6 +1182,17 @@ fn agent_pattern_json(pattern: &crate::agent_detect::AgentPattern) -> Value {
     })
 }
 
+/// One surviving worktree child in `close-workspace` JSON (issue #100).
+fn worktree_child_json(child: &crate::mux::WorktreeChild) -> Value {
+    json!({
+        "workspace": child.workspace,
+        "name": child.name,
+        "worktree_path": child.worktree_path,
+        "worktree_branch": child.worktree_branch,
+        "running_agent": child.running_agent,
+    })
+}
+
 /// One pane worktree record in wire/`list-workspaces` JSON (issue #77).
 fn worktree_record_json(record: &crate::worktree::WorktreeRecord) -> Value {
     json!({
@@ -1578,11 +1594,22 @@ fn handle_command(mux: &Arc<Mux>, cmd: Command, writer: &LineWriter) -> anyhow::
             }
             Ok(json!({}))
         }
-        Command::CloseWorkspace { workspace } => {
-            if !mux.close_workspace(workspace) {
+        Command::CloseWorkspace { workspace, group } => {
+            let Some(report) = mux.close_workspace_reported(workspace, group) else {
                 anyhow::bail!("unknown workspace {workspace}");
-            }
-            Ok(json!({}))
+            };
+            Ok(json!({
+                "closed": report
+                    .closed
+                    .iter()
+                    .map(|(id, name)| json!({ "id": id, "name": name }))
+                    .collect::<Vec<_>>(),
+                "survivors": report
+                    .survivors
+                    .iter()
+                    .map(worktree_child_json)
+                    .collect::<Vec<_>>(),
+            }))
         }
         Command::RenamePane { pane, name } => {
             if !mux.rename_pane(pane, name) {

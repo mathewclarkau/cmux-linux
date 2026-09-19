@@ -59,7 +59,7 @@ pub use layout_doc::{
     LayoutPane, LayoutScreen, LayoutTab, LayoutWorkspace, LAYOUT_SCHEMA_VERSION,
 };
 pub use model::{IconName, Node, Pane, Screen, State, Workspace};
-pub use mux::{Mux, MuxEvent};
+pub use mux::{CloseWorkspaceReport, Mux, MuxEvent, WorktreeChild};
 pub use remote_pty::RemoteSpec;
 pub use short_id::assign_short_ids;
 pub use surface::{

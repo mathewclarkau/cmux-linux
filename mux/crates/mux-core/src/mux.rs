@@ -64,6 +64,33 @@ pub enum MuxEvent {
     },
 }
 
+/// One surviving worktree child of a workspace close (issue #100): a
+/// workspace whose panes live under a worktree the closed workspace's
+/// panes created/own (see [`Mux::worktree_children`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeChild {
+    pub workspace: WorkspaceId,
+    pub name: String,
+    /// Path of the parent-pane worktree the child lives under.
+    pub worktree_path: String,
+    /// Branch of that worktree (from the owning pane's record).
+    pub worktree_branch: Option<String>,
+    /// Some pane in the child workspace has a live agent report
+    /// (`working`/`blocked`). Best-effort, purely informational - agent
+    /// state is whatever hooks/sockets last reported (issue #100).
+    pub running_agent: bool,
+}
+
+/// What a guarded workspace close did (issue #100).
+#[derive(Debug, Clone, Default)]
+pub struct CloseWorkspaceReport {
+    /// Workspaces closed by the call: the target first, then any
+    /// worktree children a `--group` close took with it.
+    pub closed: Vec<(WorkspaceId, String)>,
+    /// Worktree children that survived because `group` was not set.
+    pub survivors: Vec<WorktreeChild>,
+}
+
 /// The multiplexer. Shared by frontends and the control socket server.
 pub struct Mux {
     state: Mutex<State>,
@@ -1552,6 +1579,109 @@ reattaching to remote session {session_id} on {host} \
         true
     }
 
+    /// Worktree-child workspaces of `target` (issue #100): every other
+    /// workspace holding a pane that lives under a worktree recorded by
+    /// one of `target`'s panes. A pane counts as living in the worktree
+    /// when its own `Pane::worktrees` record or one of its tabs'
+    /// best-known cwd (the shell's OSC 7 report, else the spawn cwd)
+    /// resolves under an owned worktree path. The heuristic is
+    /// deliberately simple: detection only sees worktrees this session
+    /// created via the `pane-worktree-*` / `--branch` flows, and paths
+    /// compare lexically with no filesystem access - a same-named
+    /// sibling directory (`repo.feat-x2`) never matches `repo.feat-x`.
+    pub fn worktree_children(&self, target: WorkspaceId) -> Vec<WorktreeChild> {
+        let state = self.state.lock().unwrap();
+        let Some(parent) = state.workspaces.iter().find(|ws| ws.id == target) else {
+            return Vec::new();
+        };
+        // Worktrees the parent's panes created/own (absolute, normalised).
+        let owned: Vec<&crate::worktree::WorktreeRecord> = workspace_pane_ids(parent)
+            .iter()
+            .filter_map(|id| state.panes.get(id))
+            .flat_map(|pane| pane.worktrees.iter())
+            .collect();
+        if owned.is_empty() {
+            return Vec::new();
+        }
+        let mut children = Vec::new();
+        for ws in state.workspaces.iter().filter(|ws| ws.id != target) {
+            let mut matched: Option<&crate::worktree::WorktreeRecord> = None;
+            let mut running_agent = false;
+            for pane_id in workspace_pane_ids(ws) {
+                let Some(pane) = state.panes.get(&pane_id) else { continue };
+                // Recorded association: one of the pane's own worktrees
+                // is a parent-pane worktree.
+                if matched.is_none() {
+                    matched = pane.worktrees.iter().find_map(|record| {
+                        owned.iter().copied().find(|owner| path_is_under(&record.path, &owner.path))
+                    });
+                }
+                // cwd heuristic: a tab's best-known working directory
+                // lives inside a parent-pane worktree.
+                for tab in &pane.tabs {
+                    let Some(surface) = state.surfaces.get(tab) else { continue };
+                    if matched.is_none() {
+                        if let Some(cwd) = surface.cwd() {
+                            matched = owned
+                                .iter()
+                                .copied()
+                                .find(|owner| path_is_under(&cwd, &owner.path));
+                        }
+                    }
+                    if !running_agent {
+                        running_agent = surface.agent_report().is_some_and(|report| {
+                            matches!(report.state, AgentState::Working | AgentState::Blocked)
+                        });
+                    }
+                }
+            }
+            if let Some(owner) = matched {
+                children.push(WorktreeChild {
+                    workspace: ws.id,
+                    name: ws.name.clone(),
+                    worktree_path: owner.path.clone(),
+                    worktree_branch: Some(owner.branch.clone()),
+                    running_agent,
+                });
+            }
+        }
+        children
+    }
+
+    /// Close `target` with the worktree-child guard (issue #100):
+    /// without `group`, the close proceeds but worktree-child
+    /// workspaces survive and are reported, so they are never silently
+    /// orphaned; with `group`, they close together with the parent.
+    /// Returns `None` when `target` does not exist.
+    pub fn close_workspace_reported(
+        &self,
+        target: WorkspaceId,
+        group: bool,
+    ) -> Option<CloseWorkspaceReport> {
+        // Detect survivors BEFORE closing: detection walks the parent's
+        // own panes, which the close is about to remove.
+        let survivors = self.worktree_children(target);
+        let target_name = self.with_state(|s| {
+            s.workspaces.iter().find(|ws| ws.id == target).map(|ws| ws.name.clone())
+        })?;
+        if !self.close_workspace(target) {
+            return None;
+        }
+        let mut report = CloseWorkspaceReport { closed: vec![(target, target_name)], survivors };
+        if group {
+            for child in std::mem::take(&mut report.survivors) {
+                let name = child.name.clone();
+                if self.close_workspace(child.workspace) {
+                    report.closed.push((child.workspace, name));
+                }
+                // A child that vanished concurrently (another client
+                // closed it first) is neither closed by us nor a
+                // survivor; it is simply gone.
+            }
+        }
+        Some(report)
+    }
+
     pub fn rename_workspace(&self, target: WorkspaceId, name: String) -> bool {
         let renamed = {
             let mut state = self.state.lock().unwrap();
@@ -2182,6 +2312,23 @@ fn leftmost_layout_index(node: &crate::layout_doc::LayoutNode) -> usize {
     }
 }
 
+/// Every pane id in a workspace (all screens, in tree order).
+fn workspace_pane_ids(ws: &Workspace) -> Vec<PaneId> {
+    let mut panes = Vec::new();
+    for screen in &ws.screens {
+        screen.root.pane_ids(&mut panes);
+    }
+    panes
+}
+
+/// Lexical "path is inside `ancestor`" (or equals it): both sides are
+/// absolute, already-normalised paths, so a component-wise prefix
+/// check suffices - no filesystem access, no symlink resolution. A
+/// sibling like `/repo.feat-x2` is NOT under `/repo.feat-x` (issue #100).
+fn path_is_under(path: &str, ancestor: &str) -> bool {
+    Path::new(path).starts_with(Path::new(ancestor))
+}
+
 /// Every surface in a screen (all panes, all tabs).
 fn screen_tabs(state: &State, screen: &Screen) -> Vec<SurfaceId> {
     let mut pane_ids = Vec::new();
@@ -2711,6 +2858,144 @@ mod tests {
             assert_eq!(s.active_workspace, 0);
         });
         assert!(events.try_iter().count() > 0);
+    }
+
+    /// Issue #100 fixture: a temp "worktree" directory that exists on
+    /// disk (the child pane's tab is really spawned inside it — its cwd
+    /// is what detection reads).
+    fn worktree_dir_fixture(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let base = std::env::temp_dir().join(format!(
+            "mtyx-wtchild-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        (base.join("proj.feat-auth"), base.join("proj.feat-auth2"))
+    }
+
+    #[test]
+    fn close_workspace_reports_surviving_worktree_children() {
+        let (worktree, sibling) = worktree_dir_fixture("report");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&sibling).unwrap();
+        let worktree = worktree.to_string_lossy().to_string();
+        let sibling = sibling.to_string_lossy().to_string();
+
+        let mux = test_mux();
+        let parent = mux.new_workspace(Some("parent".into()), None).unwrap();
+        let child = mux.new_workspace(Some("child".into()), None).unwrap();
+        let elsewhere = mux.new_workspace(Some("elsewhere".into()), None).unwrap();
+        let (parent_id, child_id) = mux.with_state(|s| {
+            (
+                s.workspaces.iter().find(|ws| ws.name == "parent").unwrap().id,
+                s.workspaces.iter().find(|ws| ws.name == "child").unwrap().id,
+            )
+        });
+        let parent_pane = mux.with_state(|s| s.pane_of(parent.id).unwrap());
+        let child_pane = mux.with_state(|s| s.pane_of(child.id).unwrap());
+        let elsewhere_pane = mux.with_state(|s| s.pane_of(elsewhere.id).unwrap());
+
+        // The parent's pane owns a worktree record (the pane-worktree-*
+        // flow would have created it for real). `with_state` is &State,
+        // so seed the registry under the lock directly.
+        {
+            let mut state = mux.state.lock().unwrap();
+            state.panes.get_mut(&parent_pane).unwrap().worktrees.push(
+                crate::worktree::WorktreeRecord {
+                    branch: "feat-auth".into(),
+                    path: worktree.clone(),
+                    label: None,
+                    created_at_ms: 1,
+                },
+            );
+        }
+        // The child pane lives inside the worktree; `elsewhere` sits in
+        // a sibling-named directory that must NOT match.
+        let inside = mux.new_tab(Some(child_pane), Some(worktree.clone()), None).unwrap();
+        mux.new_tab(Some(elsewhere_pane), Some(sibling.clone()), None).unwrap();
+        // A running agent in the child is flagged in the report.
+        mux.report_agent(
+            inside.id,
+            AgentState::Working,
+            AgentStateSource::Socket,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // No owned worktrees on the child → no children of its own.
+        assert!(mux.worktree_children(child_id).is_empty());
+
+        let children = mux.worktree_children(parent_id);
+        assert_eq!(children.len(), 1, "only the cwd-matched child, not `elsewhere`");
+        assert_eq!(children[0].workspace, child_id);
+        assert_eq!(children[0].name, "child");
+        assert_eq!(children[0].worktree_path, worktree);
+        assert_eq!(children[0].worktree_branch.as_deref(), Some("feat-auth"));
+        assert!(children[0].running_agent, "a working agent pane must be flagged");
+
+        // Default close: parent only; the child survives and is reported.
+        let report = mux.close_workspace_reported(parent_id, false).unwrap();
+        assert_eq!(report.closed, vec![(parent_id, "parent".to_string())]);
+        assert_eq!(report.survivors, children);
+        mux.with_state(|s| {
+            let names: Vec<&str> = s.workspaces.iter().map(|ws| ws.name.as_str()).collect();
+            assert_eq!(names, vec!["child", "elsewhere"]);
+            // No silent orphan: the child's panes and tabs are alive.
+            assert!(s.panes.contains_key(&child_pane));
+            assert!(s.panes[&child_pane].tabs.contains(&inside.id));
+        });
+
+        // Closing the child (no children of its own) reports no survivors.
+        let report = mux.close_workspace_reported(child_id, false).unwrap();
+        assert_eq!(report.closed, vec![(child_id, "child".to_string())]);
+        assert!(report.survivors.is_empty());
+
+        // Unknown workspace: no report, `close_workspace` behaviour.
+        assert!(mux.close_workspace_reported(9999, false).is_none());
+
+        std::fs::remove_dir_all(std::path::Path::new(&worktree).parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn close_workspace_group_closes_worktree_children_together() {
+        let (worktree, _) = worktree_dir_fixture("group");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let worktree = worktree.to_string_lossy().to_string();
+        let base = std::path::Path::new(&worktree).parent().unwrap().to_path_buf();
+
+        let mux = test_mux();
+        let parent = mux.new_workspace(Some("parent".into()), None).unwrap();
+        let child = mux.new_workspace(Some("child".into()), None).unwrap();
+        let (parent_id, child_id) = mux.with_state(|s| {
+            (
+                s.workspaces.iter().find(|ws| ws.name == "parent").unwrap().id,
+                s.workspaces.iter().find(|ws| ws.name == "child").unwrap().id,
+            )
+        });
+        let parent_pane = mux.with_state(|s| s.pane_of(parent.id).unwrap());
+        let child_pane = mux.with_state(|s| s.pane_of(child.id).unwrap());
+        {
+            let mut state = mux.state.lock().unwrap();
+            state.panes.get_mut(&parent_pane).unwrap().worktrees.push(
+                crate::worktree::WorktreeRecord {
+                    branch: "feat-auth".into(),
+                    path: worktree.clone(),
+                    label: None,
+                    created_at_ms: 1,
+                },
+            );
+        }
+        mux.new_tab(Some(child_pane), Some(worktree), None).unwrap();
+
+        let report = mux.close_workspace_reported(parent_id, true).unwrap();
+        let closed_ids: Vec<WorkspaceId> = report.closed.iter().map(|(id, _)| *id).collect();
+        assert_eq!(closed_ids, vec![parent_id, child_id], "group closes both");
+        assert!(report.survivors.is_empty());
+        mux.with_state(|s| assert!(s.workspaces.is_empty()));
+
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

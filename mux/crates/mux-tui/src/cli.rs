@@ -27,6 +27,12 @@ pub(crate) struct GlobalArgs {
     pub(crate) json: bool,
 }
 
+/// Verb flags that are boolean and accept the bare form (`--group`) —
+/// a missing or flag-looking following token means `true` instead of an
+/// error or swallowing the next flag as a value (issue #100). Valued
+/// forms (`--group 1`, `--group 0`) still work.
+const BARE_BOOL_FLAGS: &[&str] = &["group"];
+
 #[derive(Default)]
 struct FlagMap {
     values: BTreeMap<String, String>,
@@ -168,9 +174,9 @@ const VERBS: &[VerbSpec] = &[
     },
     VerbSpec {
         name: "close-workspace",
-        allowed: &["workspace"],
-        build: build_workspace,
-        print: print_empty,
+        allowed: &["workspace", "group"],
+        build: build_close_workspace,
+        print: print_close_workspace,
         stream: false,
     },
     VerbSpec {
@@ -585,11 +591,13 @@ fn parse(args: &[String]) -> Result<Parsed, UsageError> {
                 if !spec.allowed.contains(&name) {
                     return Err(UsageError(format!("unknown flag {arg:?} for {}", spec.name)));
                 }
-                let value = value_after(args, i, arg)?;
+                let bare_bool = BARE_BOOL_FLAGS.contains(&name)
+                    && args.get(i + 1).map(|s| s.starts_with("--")).unwrap_or(true);
+                let value = if bare_bool { "true".to_string() } else { value_after(args, i, arg)? };
                 if flags.values.insert(name.to_string(), value).is_some() {
                     return Err(UsageError(format!("duplicate flag {arg:?}")));
                 }
-                i += 2;
+                i += if bare_bool { 1 } else { 2 };
             }
             _ if verb.is_some() => {
                 return Err(UsageError(format!("unexpected argument {arg:?}")));
@@ -823,6 +831,18 @@ fn build_screen(flags: &FlagMap) -> Result<Value, UsageError> {
 
 fn build_workspace(flags: &FlagMap) -> Result<Value, UsageError> {
     Ok(json!({ "workspace": flags.required_u64("workspace")? }))
+}
+
+/// Issue #100: `--group` closes the workspace's worktree-child
+/// workspaces too; without it they survive and the response reports
+/// them. May be passed bare (`--group`) or with a value
+/// (`--group 1` / `--group 0`).
+fn build_close_workspace(flags: &FlagMap) -> Result<Value, UsageError> {
+    let mut value = json!({ "workspace": flags.required_u64("workspace")? });
+    if let Some(group) = flags.optional_bool("group") {
+        value["group"] = json!(group);
+    }
+    Ok(value)
 }
 
 fn build_send(flags: &FlagMap) -> Result<Value, UsageError> {
@@ -2128,6 +2148,37 @@ fn parse_isize(name: &str, value: &str) -> Result<isize, UsageError> {
 }
 
 fn print_empty(_: &Value, _: &mut dyn Write) -> io::Result<()> {
+    Ok(())
+}
+
+/// Issue #100: `close-workspace` output. A default close lists the
+/// worktree-child workspaces that SURVIVED (flagging any with a running
+/// agent) so orphans are never silent; a `--group` close (closed.len()
+/// > 1) also lists every workspace that went with the parent.
+fn print_close_workspace(data: &Value, out: &mut dyn Write) -> io::Result<()> {
+    let survivors = data["survivors"].as_array().cloned().unwrap_or_default();
+    for child in &survivors {
+        let id = child["workspace"].as_u64().unwrap_or(0);
+        let name = child["name"].as_str().unwrap_or("?");
+        let path = child["worktree_path"].as_str().unwrap_or("?");
+        let agent =
+            if child["running_agent"].as_bool() == Some(true) { " [agent running]" } else { "" };
+        match child["worktree_branch"].as_str() {
+            Some(branch) => writeln!(
+                out,
+                "worktree child still open: workspace {id} ({name}) in {path} (branch {branch}){agent}"
+            )?,
+            None => writeln!(out, "worktree child still open: workspace {id} ({name}) in {path}{agent}")?,
+        }
+    }
+    let closed = data["closed"].as_array().cloned().unwrap_or_default();
+    if closed.len() > 1 {
+        for ws in &closed {
+            let id = ws["id"].as_u64().unwrap_or(0);
+            let name = ws["name"].as_str().unwrap_or("?");
+            writeln!(out, "closed workspace {id} ({name})")?;
+        }
+    }
     Ok(())
 }
 
