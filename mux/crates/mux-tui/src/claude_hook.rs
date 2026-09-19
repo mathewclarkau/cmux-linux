@@ -356,10 +356,7 @@ fn claude_settings_path() -> Option<PathBuf> {
 }
 
 fn hook_command() -> String {
-    let bin = std::env::current_exe()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "mtyx".to_string());
-    format!("{bin} claude hook")
+    format!("{} claude hook", crate::hook_merge::hook_bin())
 }
 
 fn run_install_hooks(uninstall: bool) -> i32 {
@@ -529,11 +526,12 @@ fn run_install_skill(uninstall: bool, global: bool) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
     /// HOME/XDG_STATE_HOME are process-global; tests that set them must
-    /// not run concurrently with each other (mirrors config.rs's pattern).
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    /// not run concurrently with each other — including the equivalent
+    /// tests in the *other* hook modules, which is why the lock lives in
+    /// `hook_merge::test_support` rather than here.
+    use crate::hook_merge::test_support::ENV_LOCK;
 
     #[test]
     fn agent_state_maps_known_events_and_ignores_unknown() {
