@@ -205,7 +205,11 @@ mod tests {
     }
 
     fn current_exe_str() -> String {
-        std::env::current_exe().map(|p| p.display().to_string()).unwrap()
+        // The .ts extension embeds the path JSON-escaped via js_quote, so the
+        // comparison value must be escaped too — raw Windows backslashes
+        // (`D:\a\...`) never appear verbatim in the emitted file.
+        let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap();
+        serde_json::to_string(&exe).unwrap().trim_matches('"').to_string()
     }
 
     /// Issue #97 AC1: the installed extension invokes the running binary

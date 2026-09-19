@@ -280,9 +280,13 @@ mod tests {
     #[test]
     fn plugin_invokes_the_running_binary_absolute_path() {
         let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap();
+        // The plugin embeds the path JSON-escaped (js_quote), so compare
+        // against the escaped literal — raw Windows backslashes never
+        // appear verbatim in the file.
+        let exe_json = serde_json::to_string(&exe).unwrap();
         let plugin = mtyx_plugin();
         assert!(
-            plugin.contains(&format!("const MTYX_BIN = \"{}\"", exe)),
+            plugin.contains(&format!("const MTYX_BIN = {}", exe_json)),
             "execFile target must be the running binary's absolute path:\n{plugin}"
         );
         assert!(
@@ -314,8 +318,11 @@ mod tests {
         assert_eq!(run_install(false, true), 0);
 
         let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap();
+        // The plugin embeds the path JSON-escaped (js_quote); on Windows the
+        // raw backslashes never appear verbatim in the file.
+        let exe_json = serde_json::to_string(&exe).unwrap().trim_matches('"').to_string();
         let content = fs::read_to_string(&plugin).unwrap();
-        assert!(content.contains(&exe), "{content}");
+        assert!(content.contains(&exe_json), "{content}");
         assert!(!content.contains("/old/deleted/path/"), "{content}");
 
         std::env::remove_var("HOME");

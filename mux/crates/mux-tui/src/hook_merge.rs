@@ -434,7 +434,13 @@ mod tests {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "mtyx".to_string());
         assert_eq!(hook_bin(), expected);
-        assert!(hook_bin().starts_with('/'), "expected an absolute path, got {}", hook_bin());
+        // Platform-neutral absolute check: Windows current_exe() is `D:\...`,
+        // so a leading-slash assert can never pass there.
+        assert!(
+            std::path::Path::new(hook_bin().as_str()).is_absolute(),
+            "expected an absolute path, got {}",
+            hook_bin()
+        );
     }
 
     #[test]

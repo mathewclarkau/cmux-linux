@@ -275,7 +275,11 @@ mod tests {
     #[test]
     fn native_hooks_invoke_the_running_binary_absolute_path() {
         let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap();
-        let quoted = hook_merge::shell_quote(&exe);
+        // The hooks are compared as serde_json text, where backslashes in
+        // Windows paths are escaped (`\\`). Compare against the escaped
+        // form so the assert is platform-neutral.
+        let exe_json = serde_json::to_string(&exe).unwrap().trim_matches('"').to_string();
+        let quoted = hook_merge::shell_quote(&exe_json);
         let hooks = grok_native_hooks();
         let text = serde_json::to_string(&hooks).unwrap();
         assert!(text.contains(&quoted), "commands must name the running binary: {text}");
